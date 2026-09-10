@@ -31,8 +31,6 @@ export type RegistrationFormSave = {
   banner_url: string | null;
   redirect_url: string | null;
   redirect_delay: number;
-  email_subject: string | null;
-  email_body: string | null;
   checkin_pin: string | null;
   checkin_theme: CheckinTheme | null;
   scoring_config: ScoringConfig | null;
@@ -322,8 +320,6 @@ export async function saveRegistrationForm(surveyId: string, payload: Registrati
         banner_url: payload.banner_url,
         redirect_url: payload.redirect_url,
         redirect_delay: payload.redirect_delay,
-        email_subject: payload.email_subject,
-        email_body: payload.email_body,
         checkin_pin: payload.checkin_pin,
         checkin_theme: payload.checkin_theme,
         scoring_config: payload.scoring_config,
@@ -358,8 +354,6 @@ export async function saveRegistrationForm(surveyId: string, payload: Registrati
             banner_url: payload.banner_url,
             redirect_url: payload.redirect_url,
             redirect_delay: payload.redirect_delay,
-            email_subject: payload.email_subject,
-            email_body: payload.email_body,
             checkin_pin: payload.checkin_pin,
             checkin_theme: payload.checkin_theme,
             ...(missingScoringConfig ? {} : { scoring_config: payload.scoring_config }),

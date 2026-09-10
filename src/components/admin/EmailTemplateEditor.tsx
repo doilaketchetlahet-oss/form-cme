@@ -140,7 +140,7 @@ export function EmailTemplateEditor({
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
       <div className="space-y-3">
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-slate-300">Tiêu đề email</span>
@@ -207,7 +207,7 @@ export function EmailTemplateEditor({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-sky-100 bg-slate-50 p-3">
+      <div className="rounded-2xl border border-sky-100 bg-slate-50 p-3 xl:sticky xl:top-6">
         <div className="mb-2 text-[10px] uppercase tracking-widest text-slate-400">Preview</div>
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="border-b border-slate-100 px-4 py-3">

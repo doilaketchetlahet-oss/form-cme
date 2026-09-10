@@ -3,16 +3,16 @@ import { useMemo, useState } from "react";
 import { motion, AnimatePresence, Reorder, useDragControls, useMotionValue } from "framer-motion";
 import {
   X, Plus, Trash2, Star, BarChart3, AlignLeft, Hash,
-  GripVertical, ChevronDown, Phone, Calendar, MapPin, ListChecks, Type, ImageIcon, Upload, Minus, Pencil, Copy, ShieldCheck, Trophy, CreditCard,
+  GripVertical, ChevronDown, Phone, Calendar, MapPin, ListChecks, Type, ImageIcon, Upload, Minus, Pencil, Copy, ShieldCheck, Trophy, CreditCard, Mail, ArrowRight,
 } from "lucide-react";
 import type { Survey, SurveyFormType, SurveyQuestion, SurveyQuestionType, SurveyQuestionUpsert, CheckinTheme, ScoringConfig, PaymentConfig } from "@/lib/surveys";
+import Link from "next/link";
 import { ThemeImageUpload } from "./ThemeImageUpload";
-import { EmailTemplateEditor } from "./EmailTemplateEditor";
 import { QRCodeView } from "@/components/ui/QRCodeView";
 
 interface Props {
   initial?: Survey & { questions?: SurveyQuestion[] };
-  onSave: (data: { title: string; form_type: SurveyFormType; is_anonymous: boolean; thank_you_message: string; banner_url: string | null; redirect_url: string | null; redirect_delay: number; email_subject: string | null; email_body: string | null; checkin_pin: string | null; checkin_theme: CheckinTheme | null; scoring_config: ScoringConfig | null; payment_config: PaymentConfig | null; vip_checkin_enabled: boolean; questions: SurveyQuestionUpsert[] }) => void | Promise<void>;
+  onSave: (data: { title: string; form_type: SurveyFormType; is_anonymous: boolean; thank_you_message: string; banner_url: string | null; redirect_url: string | null; redirect_delay: number; checkin_pin: string | null; checkin_theme: CheckinTheme | null; scoring_config: ScoringConfig | null; payment_config: PaymentConfig | null; vip_checkin_enabled: boolean; questions: SurveyQuestionUpsert[] }) => void | Promise<void>;
   onCancel: () => void;
   saving?: boolean;
 }
@@ -176,8 +176,8 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
   const [bannerUrl, setBannerUrl] = useState(initial?.banner_url ?? "");
   const [redirectUrl, setRedirectUrl] = useState(initial?.redirect_url ?? "");
   const [redirectDelay, setRedirectDelay] = useState(initial?.redirect_delay ?? 5);
-  const [emailSubject, setEmailSubject] = useState(initial?.email_subject ?? "");
-  const [emailBody, setEmailBody] = useState(initial?.email_body ?? "");
+  const emailSubject = initial?.email_subject ?? "";
+  const emailBody = initial?.email_body ?? "";
   const [checkinPin, setCheckinPin] = useState((initial as { checkin_pin?: string } | undefined)?.checkin_pin ?? "");
   const [theme, setTheme] = useState<CheckinTheme>((initial as { checkin_theme?: CheckinTheme } | undefined)?.checkin_theme ?? {});
   const patchTheme = (p: Partial<CheckinTheme>) => setTheme((t) => ({ ...t, ...p }));
@@ -318,8 +318,6 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
       banner_url: bannerUrl.trim() || null,
       redirect_url: isCheckinEnabled ? redirectUrl.trim() || null : null,
       redirect_delay: Math.max(1, Math.min(30, redirectDelay)),
-      email_subject: isCheckinEnabled ? emailSubject.trim() || null : null,
-      email_body: isCheckinEnabled ? emailBody.trim() || null : null,
       checkin_pin: isCheckinEnabled ? checkinPin.trim() || null : null,
       checkin_theme: isCheckinEnabled && Object.values(theme).some((v) => v !== undefined && v !== null && v !== "") ? theme : null,
       scoring_config: isScoringEnabled ? cleanScoringConfig(scoring, questions) : null,
@@ -447,27 +445,23 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
           <p className="text-[10px] admin-subtle mt-1">Số giây đếm ngược trước khi tự chuyển trang (1-30s). Để trống URL = không chuyển.</p>
         </CollapsibleSetting>
 
-        <div className="rounded-2xl border border-sky-100 bg-white p-4">
-          <div className="mb-3">
-            <div className="text-sm font-semibold text-slate-800">Thư mời / email check-in</div>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              Soạn email bằng khối nội dung, ảnh và QR. Bấm token để chèn dữ liệu attendee. Để trống tiêu đề = dùng mẫu mặc định.
-            </p>
-          </div>
-          <EmailTemplateEditor
-            subject={emailSubject}
-            body={emailBody}
-            surveyTitle={title}
-            questions={questions.map((question) => ({
-              id: question.id,
-              text: question.text,
-              type: question.type,
-              options: question.options,
-            }))}
-            onSubjectChange={setEmailSubject}
-            onBodyChange={setEmailBody}
-          />
-        </div>
+        {initial?.id && (
+          <Link
+            href={`/admin/forms/${initial.id}/email`}
+            className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-4 hover:border-sky-300"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+              <Mail size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-slate-800">Soạn thư mời</div>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {emailSubject || emailBody ? "Đã có mẫu thư. Mở trang riêng để chỉnh khối, ảnh, QR và preview." : "Mở trang riêng để soạn tiêu đề, ảnh, QR và nội dung gửi attendee."}
+              </p>
+            </div>
+            <ArrowRight size={16} className="text-slate-400" />
+          </Link>
+        )}
 
       </div>
       )}
@@ -1056,7 +1050,7 @@ function hasAny(value: string, needles: string[]) {
 
 function getTabLabel(tab: EditorTab) {
   if (tab === "payment") return "Thanh toán";
-  if (tab === "email") return "Email & QR";
+  if (tab === "email") return "Sau khi gửi";
   if (tab === "checkin") return "Check-in";
   if (tab === "scoring") return "Chấm điểm";
   if (tab === "appearance") return "Giao diện";
