@@ -1,16 +1,18 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlignCenter, AlignLeft, AlignRight, ChevronDown, ChevronUp, Heading, ImageIcon,
+  AlignCenter, AlignLeft, AlignRight, Bold, ChevronDown, ChevronUp, Heading, ImageIcon,
   Link2, Loader2, Minus, QrCode, Square, Trash2, Type, Upload,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ThemeImageUpload } from "./ThemeImageUpload";
 import {
   compileEmailHtml,
   defaultEmailBlocks,
   fillMergeTokens,
   listMergeFields,
   newEmailBlockId,
+  normalizeEmailTheme,
   parseEmailTemplate,
   sampleMergeValues,
   serializeEmailTemplate,
@@ -18,6 +20,7 @@ import {
   type EmailBlockAlign,
   type EmailBlockType,
   type EmailMergeQuestion,
+  type EmailTheme,
 } from "@/lib/email-template";
 
 type Props = {
@@ -66,33 +69,41 @@ export function EmailTemplateEditor({
   onSubjectChange,
   onBodyChange,
 }: Props) {
-  const [blocks, setBlocks] = useState<EmailBlock[]>(() => parseEmailTemplate(body).blocks);
-  const [focusId, setFocusId] = useState<string | null>(blocks[0]?.id ?? null);
+  const parsed = useMemo(() => parseEmailTemplate(body), []);
+  const [blocks, setBlocks] = useState<EmailBlock[]>(() => parsed.blocks);
+  const [theme, setTheme] = useState<EmailTheme>(() => normalizeEmailTheme(parsed.theme));
+  const [focusId, setFocusId] = useState<string | null>(parsed.blocks[0]?.id ?? null);
   const initialized = useRef(false);
+
+  const commit = (nextBlocks: EmailBlock[], nextTheme = theme) => {
+    setBlocks(nextBlocks);
+    setTheme(nextTheme);
+    onBodyChange(serializeEmailTemplate({ v: 1, blocks: nextBlocks, theme: nextTheme }));
+  };
+
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
     if (!body.trim()) {
-      onBodyChange(serializeEmailTemplate({ v: 1, blocks }));
+      onBodyChange(serializeEmailTemplate({ v: 1, blocks, theme }));
     }
-  }, [body, blocks, onBodyChange]);
+  }, [body, blocks, theme, onBodyChange]);
 
   const mergeFields = useMemo(() => listMergeFields(questions), [questions]);
   const previewHtml = useMemo(() => {
     const values = sampleMergeValues(surveyTitle || "Sự kiện");
     const qrPreview = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=preview";
     values.qr_image = qrPreview;
-    const serialized = serializeEmailTemplate({ v: 1, blocks });
+    const serialized = serializeEmailTemplate({ v: 1, blocks, theme });
     return compileEmailHtml(serialized, values, qrPreview);
-  }, [blocks, surveyTitle]);
-
-  const commit = (next: EmailBlock[]) => {
-    setBlocks(next);
-    onBodyChange(serializeEmailTemplate({ v: 1, blocks: next }));
-  };
+  }, [blocks, theme, surveyTitle]);
 
   const updateBlock = (id: string, patch: Partial<EmailBlock>) => {
     commit(blocks.map((block) => block.id === id ? { ...block, ...patch } : block));
+  };
+
+  const patchTheme = (patch: Partial<EmailTheme>) => {
+    commit(blocks, { ...theme, ...patch });
   };
 
   const addBlock = (type: EmailBlockType) => {
@@ -103,6 +114,7 @@ export function EmailTemplateEditor({
       text: type === "heading" ? "Tiêu đề email" : type === "text" ? "Nhập nội dung..." : type === "button" ? "Mở mã check-in" : "",
       url: type === "button" ? "{{checkin_url}}" : "",
       height: type === "spacer" ? 16 : undefined,
+      qrSize: type === "qr" ? 220 : undefined,
     };
     const index = focusId ? blocks.findIndex((block) => block.id === focusId) : blocks.length - 1;
     const next = [...blocks];
@@ -135,7 +147,8 @@ export function EmailTemplateEditor({
 
   const resetDefault = () => {
     const next = defaultEmailBlocks();
-    commit(next);
+    const nextTheme = normalizeEmailTheme();
+    commit(next, nextTheme);
     setFocusId(next[0]?.id ?? null);
   };
 
@@ -143,7 +156,7 @@ export function EmailTemplateEditor({
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
       <div className="space-y-3">
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-slate-300">Tiêu đề email</span>
+          <span className="mb-1.5 block text-xs font-medium text-slate-500">Tiêu đề email</span>
           <input
             value={subject}
             onChange={(event) => onSubjectChange(event.target.value)}
@@ -151,6 +164,29 @@ export function EmailTemplateEditor({
             className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none"
           />
         </label>
+
+        <div className="rounded-2xl border border-sky-100 bg-white p-3">
+          <div className="mb-3 text-[10px] uppercase tracking-widest text-slate-400">Giao diện thư</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ColorField label="Màu chủ đạo" value={theme.accent || "#0ea5e9"} onChange={(accent) => patchTheme({ accent, buttonColor: accent })} />
+            <ColorField label="Màu nền" value={theme.background || "#f1f5f9"} onChange={(background) => patchTheme({ background })} />
+            <ColorField label="Màu nút" value={theme.buttonColor || theme.accent || "#0ea5e9"} onChange={(buttonColor) => patchTheme({ buttonColor })} />
+            <ColorField label="Màu chữ" value={theme.textColor || "#334155"} onChange={(textColor) => patchTheme({ textColor })} />
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+            <ThemeImageUpload label="Logo đầu thư" value={theme.logoUrl} onChange={(logoUrl) => patchTheme({ logoUrl })} maxWidth={600} aspect="square" />
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] text-slate-400">Footer / liên hệ</span>
+              <textarea
+                value={theme.footer || ""}
+                onChange={(event) => patchTheme({ footer: event.target.value })}
+                rows={4}
+                placeholder={"Ban tổ chức\nHotline: 0900 000 000\nĐịa điểm: ..."}
+                className="admin-field w-full rounded-xl px-3 py-2 text-sm admin-placeholder focus:outline-none"
+              />
+            </label>
+          </div>
+        </div>
 
         <div className="flex flex-wrap gap-1.5">
           {BLOCK_OPTIONS.map((option) => (
@@ -195,6 +231,7 @@ export function EmailTemplateEditor({
             <BlockEditor
               key={block.id}
               block={block}
+              theme={theme}
               focused={focusId === block.id}
               canMoveUp={index > 0}
               canMoveDown={index < blocks.length - 1}
@@ -216,15 +253,28 @@ export function EmailTemplateEditor({
               {fillMergeTokens(subject || "Mã check-in: {{survey_title}}", sampleMergeValues(surveyTitle))}
             </div>
           </div>
-          <div className="max-h-[640px] overflow-auto" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+          <div className="max-h-[760px] overflow-auto" dangerouslySetInnerHTML={{ __html: previewHtml }} />
         </div>
       </div>
     </div>
   );
 }
 
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[11px] text-slate-400">{label}</span>
+      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+        <input type="color" value={value} onChange={(event) => onChange(event.target.value)} className="h-7 w-8 cursor-pointer rounded border-0 bg-transparent p-0" />
+        <span className="text-xs font-medium text-slate-600">{value}</span>
+      </div>
+    </label>
+  );
+}
+
 function BlockEditor({
   block,
+  theme,
   focused,
   canMoveUp,
   canMoveDown,
@@ -234,6 +284,7 @@ function BlockEditor({
   onRemove,
 }: {
   block: EmailBlock;
+  theme: EmailTheme;
   focused: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -266,13 +317,43 @@ function BlockEditor({
       </div>
 
       {(block.type === "heading" || block.type === "text" || block.type === "html") && (
-        <textarea
-          value={block.text || ""}
-          onFocus={onFocus}
-          onChange={(event) => onChange({ text: event.target.value })}
-          rows={block.type === "heading" ? 2 : 4}
-          className="admin-field w-full rounded-xl px-3 py-2 text-sm admin-placeholder focus:outline-none"
-        />
+        <>
+          <textarea
+            value={block.text || ""}
+            onFocus={onFocus}
+            onChange={(event) => onChange({ text: event.target.value })}
+            rows={block.type === "heading" ? 2 : 4}
+            className="admin-field w-full rounded-xl px-3 py-2 text-sm admin-placeholder focus:outline-none"
+          />
+          {block.type !== "html" && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                Cỡ
+                <input
+                  type="number"
+                  min={block.type === "heading" ? 16 : 12}
+                  max={block.type === "heading" ? 36 : 20}
+                  value={block.fontSize || (block.type === "heading" ? theme.headingSize || 22 : theme.textSize || 14)}
+                  onChange={(event) => onChange({ fontSize: Number(event.target.value) || undefined })}
+                  className="admin-field w-16 rounded-lg px-2 py-1 text-xs focus:outline-none"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => onChange({ bold: block.type === "heading" ? block.bold === false : !block.bold })}
+                className={`rounded-lg p-1.5 ${(block.type === "heading" ? block.bold !== false : block.bold) ? "bg-sky-100 text-sky-700" : "text-slate-400 hover:text-slate-700"}`}
+              >
+                <Bold size={14} />
+              </button>
+              <input
+                type="color"
+                value={block.color || (block.type === "heading" ? theme.headingColor || "#0f172a" : theme.textColor || "#334155")}
+                onChange={(event) => onChange({ color: event.target.value })}
+                className="h-7 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+              />
+            </div>
+          )}
+        </>
       )}
 
       {block.type === "button" && (
@@ -291,6 +372,15 @@ function BlockEditor({
             placeholder="{{checkin_url}}"
             className="admin-field w-full rounded-xl px-3 py-2 text-sm admin-placeholder focus:outline-none"
           />
+          <label className="flex items-center gap-2 text-[11px] text-slate-500">
+            Màu nút
+            <input
+              type="color"
+              value={block.buttonColor || theme.buttonColor || "#0ea5e9"}
+              onChange={(event) => onChange({ buttonColor: event.target.value })}
+              className="h-7 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+            />
+          </label>
         </div>
       )}
 
@@ -299,7 +389,18 @@ function BlockEditor({
       )}
 
       {block.type === "qr" && (
-        <p className="text-xs text-slate-500">QR sẽ được tạo riêng cho từng attendee khi gửi email.</p>
+        <label className="flex items-center gap-2 text-xs text-slate-500">
+          Cỡ QR
+          <input
+            type="number"
+            min={140}
+            max={280}
+            value={block.qrSize || 220}
+            onChange={(event) => onChange({ qrSize: Number(event.target.value) || 220 })}
+            className="admin-field w-20 rounded-lg px-2 py-1 text-xs focus:outline-none"
+          />
+          px
+        </label>
       )}
 
       {block.type === "spacer" && (

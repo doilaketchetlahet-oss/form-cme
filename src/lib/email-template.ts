@@ -3,6 +3,19 @@ export const EMAIL_TEMPLATE_VERSION = 1;
 export type EmailBlockAlign = "left" | "center" | "right";
 export type EmailBlockType = "heading" | "text" | "image" | "button" | "qr" | "divider" | "spacer" | "html";
 
+export type EmailTheme = {
+  accent?: string;
+  background?: string;
+  card?: string;
+  buttonColor?: string;
+  headingColor?: string;
+  textColor?: string;
+  headingSize?: number;
+  textSize?: number;
+  logoUrl?: string | null;
+  footer?: string;
+};
+
 export type EmailBlock = {
   id: string;
   type: EmailBlockType;
@@ -11,11 +24,17 @@ export type EmailBlock = {
   alt?: string;
   align?: EmailBlockAlign;
   height?: number;
+  fontSize?: number;
+  bold?: boolean;
+  color?: string;
+  qrSize?: number;
+  buttonColor?: string;
 };
 
 export type EmailTemplate = {
   v: typeof EMAIL_TEMPLATE_VERSION;
   blocks: EmailBlock[];
+  theme?: EmailTheme;
 };
 
 export type EmailMergeQuestion = {
@@ -38,6 +57,44 @@ export type EmailMergeInput = {
 
 const SKIP_QUESTION_TYPES = new Set(["section", "image_banner", "face_checkin", "signature", "file_upload"]);
 
+const DEFAULT_THEME: Required<Omit<EmailTheme, "logoUrl" | "footer">> & { logoUrl: string | null; footer: string } = {
+  accent: "#0ea5e9",
+  background: "#f1f5f9",
+  card: "#ffffff",
+  buttonColor: "#0ea5e9",
+  headingColor: "#0f172a",
+  textColor: "#334155",
+  headingSize: 22,
+  textSize: 14,
+  logoUrl: null,
+  footer: "",
+};
+
+function cleanHex(value: string | undefined, fallback: string) {
+  const normalized = value?.trim() ?? "";
+  return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized : fallback;
+}
+
+function clamp(value: number | undefined, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(value ?? fallback, max));
+}
+
+export function normalizeEmailTheme(theme?: EmailTheme | null): typeof DEFAULT_THEME {
+  return {
+    accent: cleanHex(theme?.accent, DEFAULT_THEME.accent),
+    background: cleanHex(theme?.background, DEFAULT_THEME.background),
+    card: cleanHex(theme?.card, DEFAULT_THEME.card),
+    buttonColor: cleanHex(theme?.buttonColor || theme?.accent, DEFAULT_THEME.buttonColor),
+    headingColor: cleanHex(theme?.headingColor, DEFAULT_THEME.headingColor),
+    textColor: cleanHex(theme?.textColor, DEFAULT_THEME.textColor),
+    headingSize: clamp(theme?.headingSize, 16, 32, DEFAULT_THEME.headingSize),
+    textSize: clamp(theme?.textSize, 12, 18, DEFAULT_THEME.textSize),
+    logoUrl: theme?.logoUrl?.trim() || null,
+    footer: theme?.footer?.trim() || "",
+  };
+}
+
 export function newEmailBlockId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `blk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -52,13 +109,17 @@ export function defaultEmailBlocks(): EmailBlock[] {
       text: "Đăng ký của bạn đã được ghi nhận cho sự kiện {{survey_title}}.\nVui lòng xuất trình mã QR bên dưới khi đến sự kiện.",
       align: "left",
     },
-    { id: newEmailBlockId(), type: "qr", align: "center" },
+    { id: newEmailBlockId(), type: "qr", align: "center", qrSize: 220 },
     { id: newEmailBlockId(), type: "button", text: "Mở mã check-in", url: "{{checkin_url}}", align: "center" },
   ];
 }
 
 export function serializeEmailTemplate(template: EmailTemplate): string {
-  return JSON.stringify({ v: EMAIL_TEMPLATE_VERSION, blocks: template.blocks });
+  return JSON.stringify({
+    v: EMAIL_TEMPLATE_VERSION,
+    blocks: template.blocks,
+    theme: normalizeEmailTheme(template.theme),
+  });
 }
 
 export function isVisualEmailTemplate(raw: string | null | undefined): boolean {
@@ -78,12 +139,16 @@ function isValidBlock(value: unknown): value is EmailBlock {
 
 export function parseEmailTemplate(raw: string | null | undefined): EmailTemplate {
   const value = String(raw ?? "").trim();
-  if (!value) return { v: EMAIL_TEMPLATE_VERSION, blocks: defaultEmailBlocks() };
+  if (!value) return { v: EMAIL_TEMPLATE_VERSION, blocks: defaultEmailBlocks(), theme: normalizeEmailTheme() };
   try {
     const parsed = JSON.parse(value);
     if (parsed?.v === EMAIL_TEMPLATE_VERSION && Array.isArray(parsed.blocks)) {
       const blocks = parsed.blocks.filter(isValidBlock);
-      return { v: EMAIL_TEMPLATE_VERSION, blocks: blocks.length > 0 ? blocks : defaultEmailBlocks() };
+      return {
+        v: EMAIL_TEMPLATE_VERSION,
+        blocks: blocks.length > 0 ? blocks : defaultEmailBlocks(),
+        theme: normalizeEmailTheme(parsed.theme),
+      };
     }
   } catch {
     // legacy HTML
@@ -91,6 +156,7 @@ export function parseEmailTemplate(raw: string | null | undefined): EmailTemplat
   return {
     v: EMAIL_TEMPLATE_VERSION,
     blocks: [{ id: newEmailBlockId(), type: "html", text: value }],
+    theme: normalizeEmailTheme(),
   };
 }
 
@@ -221,14 +287,21 @@ function renderTextHtml(text: string) {
   return escapeHtml(text).replace(/\n/g, "<br />");
 }
 
-export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = ""): string {
+export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = "", themeInput?: EmailTheme | null): string {
+  const theme = normalizeEmailTheme(themeInput);
   const rows = blocks.map((block) => {
     const align = alignCss(block.align);
     if (block.type === "heading") {
-      return `<tr><td style="padding:0 0 12px;text-align:${align}"><h2 style="margin:0;color:#0f172a;font-size:22px;line-height:1.3">${renderTextHtml(block.text || "")}</h2></td></tr>`;
+      const size = clamp(block.fontSize, 16, 36, theme.headingSize);
+      const color = cleanHex(block.color, theme.headingColor);
+      const weight = block.bold === false ? 500 : 700;
+      return `<tr><td style="padding:0 0 12px;text-align:${align}"><h2 style="margin:0;color:${color};font-size:${size}px;line-height:1.3;font-weight:${weight}">${renderTextHtml(block.text || "")}</h2></td></tr>`;
     }
     if (block.type === "text") {
-      return `<tr><td style="padding:0 0 14px;text-align:${align};color:#334155;font-size:14px;line-height:1.6">${renderTextHtml(block.text || "")}</td></tr>`;
+      const size = clamp(block.fontSize, 12, 20, theme.textSize);
+      const color = cleanHex(block.color, theme.textColor);
+      const weight = block.bold ? 700 : 400;
+      return `<tr><td style="padding:0 0 14px;text-align:${align};color:${color};font-size:${size}px;line-height:1.6;font-weight:${weight}">${renderTextHtml(block.text || "")}</td></tr>`;
     }
     if (block.type === "image" && block.url) {
       const src = escapeHtml(block.url);
@@ -238,17 +311,19 @@ export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = ""): string {
     if (block.type === "button") {
       const href = escapeHtml(block.url || "{{checkin_url}}");
       const label = renderTextHtml(block.text || "Mở liên kết");
-      return `<tr><td style="padding:4px 0 18px;text-align:${align}"><a href="${href}" style="display:inline-block;background:#0ea5e9;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:700">${label}</a></td></tr>`;
+      const color = cleanHex(block.buttonColor, theme.buttonColor);
+      return `<tr><td style="padding:4px 0 18px;text-align:${align}"><a href="${href}" style="display:inline-block;background:${color};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:12px;font-size:14px;font-weight:700">${label}</a></td></tr>`;
     }
     if (block.type === "qr") {
+      const size = clamp(block.qrSize, 140, 280, 220);
       const src = escapeHtml(qrImgUrl || "{{qr_image}}");
-      return `<tr><td style="padding:8px 0 18px;text-align:${align}"><img src="${src}" alt="Mã QR check-in" width="220" height="220" style="width:220px;height:220px;border-radius:12px;border:1px solid #e2e8f0" /></td></tr>`;
+      return `<tr><td style="padding:8px 0 18px;text-align:${align}"><img src="${src}" alt="Mã QR check-in" width="${size}" height="${size}" style="width:${size}px;height:${size}px;border-radius:12px;border:1px solid #e2e8f0" /></td></tr>`;
     }
     if (block.type === "divider") {
       return `<tr><td style="padding:8px 0 18px"><hr style="border:none;border-top:1px solid #e2e8f0;margin:0" /></td></tr>`;
     }
     if (block.type === "spacer") {
-      const height = Math.max(8, Math.min(80, Number(block.height) || 16));
+      const height = clamp(block.height, 8, 80, 16);
       return `<tr><td style="height:${height}px;line-height:${height}px;font-size:1px">&nbsp;</td></tr>`;
     }
     if (block.type === "html") {
@@ -257,9 +332,20 @@ export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = ""): string {
     return "";
   }).join("");
 
+  const logo = theme.logoUrl
+    ? `<div style="text-align:center;padding:0 0 18px"><img src="${escapeHtml(theme.logoUrl)}" alt="" style="max-height:56px;max-width:180px;height:auto" /></div>`
+    : "";
+  const footer = theme.footer
+    ? `<p style="color:#94a3b8;font-size:12px;line-height:1.6;text-align:center;margin:18px 0 0">${renderTextHtml(theme.footer)}</p>`
+    : "";
+
   return `
-    <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#334155;line-height:1.55">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+    <div style="background:${theme.background};padding:24px 12px">
+      <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;background:${theme.card};padding:28px 24px;border-radius:16px;color:${theme.textColor};line-height:1.55">
+        ${logo}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+        ${footer}
+      </div>
     </div>
   `;
 }
@@ -269,7 +355,7 @@ export function compileEmailHtml(raw: string | null | undefined, values: Record<
   if (!source) return "";
   if (isVisualEmailTemplate(source)) {
     const template = parseEmailTemplate(source);
-    return fillMergeTokens(renderEmailBlocks(template.blocks, qrImgUrl), values, qrImgUrl);
+    return fillMergeTokens(renderEmailBlocks(template.blocks, qrImgUrl, template.theme), values, qrImgUrl);
   }
   return fillMergeTokens(source, values, qrImgUrl);
 }

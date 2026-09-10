@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Lock, Mail } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Lock, Mail, Send } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getRegistrationForm } from "@/lib/forms";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +16,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [sendingTest, setSendingTest] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -67,6 +68,46 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
     }
   };
 
+  const handleTestSend = async () => {
+    if (!canManageForms || sendingTest) return;
+    setSendingTest(true);
+    setMessage(null);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const userEmail = sessionData.session?.user.email;
+      if (!token) {
+        setMessage({ type: "error", text: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." });
+        return;
+      }
+      const response = await fetch(`/api/admin/forms/${formId}/email/test`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: userEmail,
+          email_subject: subject.trim() || null,
+          email_body: body.trim() || null,
+        }),
+      });
+      const result = await response.json().catch(() => ({ ok: false, error: "Không đọc được phản hồi từ server." }));
+      if (!result.ok) {
+        setMessage({ type: "error", text: result.error ?? "Gửi thử thất bại." });
+        return;
+      }
+      setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to}.` });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Gửi thử thất bại.",
+      });
+    } finally {
+      setSendingTest(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="px-4 py-8 sm:px-8">
@@ -101,14 +142,24 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           <p className="mt-1 text-sm text-slate-600">{form.title}</p>
         </div>
         {canManageForms && isCheckinForm && (
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-on-brand hover:bg-sky-400 disabled:opacity-50"
-          >
-            {saving ? "Đang lưu..." : "Lưu thư mời"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleTestSend}
+              disabled={sendingTest || saving}
+              className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+            >
+              <Send size={15} /> {sendingTest ? "Đang gửi..." : "Gửi thử cho tôi"}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-on-brand hover:bg-sky-400 disabled:opacity-50"
+            >
+              {saving ? "Đang lưu..." : "Lưu thư mời"}
+            </button>
+          </div>
         )}
       </div>
 
