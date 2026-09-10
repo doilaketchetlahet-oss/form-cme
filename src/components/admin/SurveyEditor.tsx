@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { Survey, SurveyFormType, SurveyQuestion, SurveyQuestionType, SurveyQuestionUpsert, CheckinTheme, ScoringConfig, PaymentConfig } from "@/lib/surveys";
 import { ThemeImageUpload } from "./ThemeImageUpload";
+import { EmailTemplateEditor } from "./EmailTemplateEditor";
 import { QRCodeView } from "@/components/ui/QRCodeView";
 
 interface Props {
@@ -446,24 +447,27 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
           <p className="text-[10px] admin-subtle mt-1">Số giây đếm ngược trước khi tự chuyển trang (1-30s). Để trống URL = không chuyển.</p>
         </CollapsibleSetting>
 
-        <CollapsibleSetting label="Email check-in tự động" hint={emailSubject ? "✓" : ""} icon="📧">
-          <input
-            value={emailSubject}
-            onChange={(e) => setEmailSubject(e.target.value)}
-            placeholder="Tiêu đề email (mặc định: Mã check-in: [tên survey])"
-            className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none transition-colors mb-2"
+        <div className="rounded-2xl border border-sky-100 bg-white p-4">
+          <div className="mb-3">
+            <div className="text-sm font-semibold text-slate-800">Thư mời / email check-in</div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Soạn email bằng khối nội dung, ảnh và QR. Bấm token để chèn dữ liệu attendee. Để trống tiêu đề = dùng mẫu mặc định.
+            </p>
+          </div>
+          <EmailTemplateEditor
+            subject={emailSubject}
+            body={emailBody}
+            surveyTitle={title}
+            questions={questions.map((question) => ({
+              id: question.id,
+              text: question.text,
+              type: question.type,
+              options: question.options,
+            }))}
+            onSubjectChange={setEmailSubject}
+            onBodyChange={setEmailBody}
           />
-          <textarea
-            value={emailBody}
-            onChange={(e) => setEmailBody(e.target.value)}
-            placeholder={"Nội dung email (HTML). Dùng {{name}}, {{survey_title}}, {{checkin_url}}. Chèn {{qr_url}} để tự hiển thị ảnh QR. Để trống = mặc định."}
-            rows={4}
-            className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none transition-colors resize-none"
-          />
-          <p className="text-[10px] admin-subtle mt-1">
-            Token: {"{{name}}"} tên khách, {"{{qr_url}}"} ảnh QR, {"{{checkin_url}}"} link check-in, {"{{survey_title}}"} tên sự kiện. Để trống = dùng template mặc định.
-          </p>
-        </CollapsibleSetting>
+        </div>
 
       </div>
       )}

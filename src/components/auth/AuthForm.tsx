@@ -140,14 +140,23 @@ export function AuthForm({ mode }: Props) {
           </form>
         </GlassCard>
 
-        {isSignup && (
-          <p className="text-center text-sm text-slate-600 mt-6">
-            Đã có tài khoản?{" "}
-            <Link href={`/login${nextUrl !== "/admin" ? `?next=${encodeURIComponent(nextUrl)}` : ""}`} className="text-sky-600 hover:text-sky-500 transition-colors font-medium">
-              Đăng nhập
-            </Link>
-          </p>
-        )}
+        <p className="text-center text-sm text-slate-600 mt-6">
+          {isSignup ? (
+            <>
+              Đã có tài khoản?{" "}
+              <Link href={`/login${nextUrl !== "/admin" ? `?next=${encodeURIComponent(nextUrl)}` : ""}`} className="text-sky-600 hover:text-sky-500 transition-colors font-medium">
+                Đăng nhập
+              </Link>
+            </>
+          ) : (
+            <>
+              Chưa có tài khoản?{" "}
+              <Link href={`/signup${nextUrl !== "/admin" ? `?next=${encodeURIComponent(nextUrl)}` : ""}`} className="text-sky-600 hover:text-sky-500 transition-colors font-medium">
+                Đăng ký
+              </Link>
+            </>
+          )}
+        </p>
       </motion.div>
     </div>
   );

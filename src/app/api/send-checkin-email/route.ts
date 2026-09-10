@@ -3,35 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import type { QRBranding } from "@/lib/surveys";
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function fillTemplate(template: string, values: Record<string, string>) {
-  return Object.entries(values).reduce(
-    (body, [key, value]) => body.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value),
-    template,
-  );
-}
-
-function fillEmailBodyTemplate(template: string, values: { name: string; qrImgUrl: string; checkinUrl: string; surveyTitle: string }) {
-  const qrImageHtml = `<div style="text-align:center;margin:22px 0"><img src="${values.qrImgUrl}" alt="Mã QR check-in" width="220" height="220" style="width:220px;height:220px;border-radius:12px;border:1px solid #e2e8f0" /></div>`;
-
-  return template
-    .replace(/\{\{name\}\}/g, values.name)
-    .replace(/\{\{survey_title\}\}/g, values.surveyTitle)
-    .replace(/\{\{checkin_url\}\}/g, values.checkinUrl)
-    .replace(/src=(["'])\{\{qr_url\}\}\1/g, `src=$1${values.qrImgUrl}$1`)
-    .replace(/href=(["'])\{\{qr_url\}\}\1/g, `href=$1${values.qrImgUrl}$1`)
-    .replace(/\{\{qr_image\}\}/g, values.qrImgUrl)
-    .replace(/\{\{qr_url\}\}/g, qrImageHtml);
-}
+import {
+  buildMergeValues,
+  compileEmailHtml,
+  fillMergeTokens,
+  findAttendeeName,
+  type EmailMergeQuestion,
+} from "@/lib/email-template";
 
 function stripHtml(html: string) {
   return html
@@ -88,8 +66,41 @@ async function markEmailStatus(
   }
 }
 
+function defaultHtml(values: { heading: string; intro: string; title: string; name: string; qrImgUrl: string; checkinUrl: string }) {
+  return `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#334155;line-height:1.55">
+      <h2 style="color:#0f172a;margin:0 0 6px;font-size:22px">${values.heading}</h2>
+      <p style="color:#64748b;font-size:14px;margin:0 0 18px">${values.title}</p>
+      <p style="font-size:15px;margin:0 0 12px">Xin chào <strong>${values.name}</strong>,</p>
+      <p style="font-size:14px;margin:0 0 20px">${values.intro}</p>
+      <div style="text-align:center;margin:22px 0">
+        <img src="${values.qrImgUrl}" alt="Mã QR check-in" width="220" height="220" style="width:220px;height:220px;border-radius:12px;border:1px solid #e2e8f0" />
+      </div>
+      <p style="color:#475569;font-size:13px;text-align:center;margin:0 0 6px">📌 Hoặc vào link sau để hiển thị QR:</p>
+      <p style="font-size:12px;text-align:center;word-break:break-all;margin:0">
+        <a href="${values.checkinUrl}" style="color:#0f766e">${values.checkinUrl}</a>
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0" />
+      <p style="color:#94a3b8;font-size:11px;text-align:center;margin:0">Email này được gửi từ hệ thống đăng ký ${values.title}.</p>
+    </div>
+  `;
+}
+
 export async function POST(req: NextRequest) {
-  const { to, name, checkinUrl, surveyTitle, customSubject, customBody, mode, responseId, qrStyle } = await req.json();
+  const body = await req.json();
+  const {
+    to,
+    name,
+    checkinUrl,
+    surveyTitle,
+    customSubject,
+    customBody,
+    mode,
+    responseId,
+    qrStyle,
+    answers,
+    hall,
+  } = body;
 
   if (!to || !checkinUrl) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
@@ -101,76 +112,90 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email not configured", hint: "RESEND_API_KEY missing" }, { status: 500 });
   }
 
-  const isReminder = mode === "reminder";
-  const title = String(surveyTitle || "Sự kiện");
-  const recipientName = String(name || "bạn");
-  const safeTitle = escapeHtml(title);
-  const safeName = escapeHtml(recipientName);
-  const safeCheckinUrl = escapeHtml(String(checkinUrl));
-  const origin = getRequestSiteUrl(req.nextUrl.origin);
-  const qrImgUrl = `${origin}${buildQrImagePath(String(checkinUrl), 220, qrStyle as QRBranding | null | undefined)}`;
-  const safeQrImgUrl = escapeHtml(qrImgUrl);
+  const supabase = getSupabaseAdmin();
+  let resolvedAnswers = (answers ?? {}) as Record<string, unknown>;
+  let resolvedHall = String(hall || "");
+  let resolvedEmail = String(to || "");
+  let resolvedName = String(name || "");
+  let resolvedTitle = String(surveyTitle || "Sự kiện");
+  let resolvedSubject = String(customSubject || "");
+  let resolvedBody = String(customBody || "");
+  let resolvedQrStyle = qrStyle as QRBranding | null | undefined;
+  let questions: EmailMergeQuestion[] = [];
 
-  let html: string;
-  if (customBody) {
-    html = fillEmailBodyTemplate(String(customBody), {
-      name: safeName,
-      qrImgUrl: safeQrImgUrl,
-      checkinUrl: safeCheckinUrl,
-      surveyTitle: safeTitle,
-    });
-  } else {
-    const heading = isReminder ? "🔔 Nhắc lịch sự kiện" : "✅ Xác nhận đăng ký thành công";
-    const intro = isReminder
-      ? "Sự kiện sắp diễn ra. Vui lòng mang theo mã QR check-in bên dưới khi tham dự."
-      : "Đăng ký của bạn đã được ghi nhận. Vui lòng xuất trình mã QR bên dưới khi đến sự kiện.";
+  if (supabase && responseId) {
+    const { data: response } = await supabase
+      .from("survey_responses")
+      .select("id, survey_id, answers, email, hall")
+      .eq("id", responseId)
+      .maybeSingle();
 
-    html = `
-      <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#334155;line-height:1.55">
-        <h2 style="color:#0f172a;margin:0 0 6px;font-size:22px">${heading}</h2>
-        <p style="color:#64748b;font-size:14px;margin:0 0 18px">${safeTitle}</p>
-        <p style="font-size:15px;margin:0 0 12px">Xin chào <strong>${safeName}</strong>,</p>
-        <p style="font-size:14px;margin:0 0 20px">${intro}</p>
-        <div style="text-align:center;margin:22px 0">
-          <img src="${safeQrImgUrl}" alt="Mã QR check-in" width="220" height="220" style="width:220px;height:220px;border-radius:12px;border:1px solid #e2e8f0" />
-        </div>
-        <p style="color:#475569;font-size:13px;text-align:center;margin:0 0 6px">📌 Hoặc vào link sau để hiển thị QR:</p>
-        <p style="font-size:12px;text-align:center;word-break:break-all;margin:0">
-          <a href="${safeCheckinUrl}" style="color:#0f766e">${safeCheckinUrl}</a>
-        </p>
-        <p style="font-size:13px;color:#64748b;margin:22px 0 0">
-          Nếu cần hỗ trợ, vui lòng liên hệ Ban tổ chức qua email
-          <a href="mailto:huna2026@hoithaotructuyen.net" style="color:#0f766e">huna2026@hoithaotructuyen.net</a>
-          hoặc số điện thoại <a href="tel:0900039870" style="color:#0f766e">0900 039 870</a> - Bình.
-        </p>
-        <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0" />
-        <p style="color:#94a3b8;font-size:11px;text-align:center;margin:0">Email này được gửi từ hệ thống đăng ký ${safeTitle}.</p>
-      </div>
-    `;
+    if (response) {
+      resolvedAnswers = (response.answers ?? resolvedAnswers) as Record<string, unknown>;
+      resolvedHall = response.hall || resolvedHall;
+      resolvedEmail = response.email || resolvedEmail;
+      const { data: survey } = await supabase
+        .from("surveys")
+        .select("title, email_subject, email_body, checkin_theme")
+        .eq("id", response.survey_id)
+        .maybeSingle();
+      const { data: questionRows } = await supabase
+        .from("survey_questions")
+        .select("id, text, type, options")
+        .eq("survey_id", response.survey_id)
+        .order("position");
+
+      questions = (questionRows ?? []) as EmailMergeQuestion[];
+      resolvedTitle = survey?.title || resolvedTitle;
+      resolvedSubject = resolvedSubject || survey?.email_subject || "";
+      resolvedBody = resolvedBody || survey?.email_body || "";
+      resolvedQrStyle = resolvedQrStyle ?? (survey?.checkin_theme as { qr?: QRBranding } | null)?.qr;
+      if (!resolvedName) resolvedName = findAttendeeName(resolvedAnswers, questions);
+    }
   }
 
-  const subject = customSubject
-    ? fillTemplate(String(customSubject), { name: recipientName, survey_title: title }).trim()
-    : isReminder
-      ? `🔔 Nhắc lịch: ${title}`
-      : `✅ Mã check-in: ${title}`;
+  const isReminder = mode === "reminder";
+  const origin = getRequestSiteUrl(req.nextUrl.origin);
+  const qrImgUrl = `${origin}${buildQrImagePath(String(checkinUrl), 220, resolvedQrStyle)}`;
+  const mergeInput = {
+    name: resolvedName,
+    email: resolvedEmail,
+    hall: resolvedHall,
+    surveyTitle: resolvedTitle,
+    checkinUrl: String(checkinUrl),
+    qrImgUrl,
+    answers: resolvedAnswers,
+    questions,
+  };
+  const htmlValues = buildMergeValues(mergeInput, true);
+  const textValues = buildMergeValues(mergeInput, false);
 
-  const text = [
-    isReminder ? "🔔 Nhắc lịch sự kiện" : "✅ Xác nhận đăng ký thành công",
-    "",
-    title,
-    "",
-    `Xin chào ${recipientName},`,
-    isReminder
-      ? "Sự kiện sắp diễn ra. Vui lòng mang theo mã QR check-in khi tham dự."
-      : "Đăng ký của bạn đã được ghi nhận. Vui lòng xuất trình mã QR khi đến sự kiện.",
-    "",
-    `📌 Hoặc vào link sau để hiển thị QR: ${checkinUrl}`,
-    "",
-    "Nếu cần hỗ trợ, vui lòng liên hệ Ban tổ chức qua email huna2026@hoithaotructuyen.net hoặc số điện thoại 0900 039 870 - Bình.",
-    "",
-    customBody ? stripHtml(html) : "",
-  ].filter(Boolean).join("\n");
+  let html = compileEmailHtml(resolvedBody, htmlValues, qrImgUrl);
+  if (!html) {
+    html = defaultHtml({
+      heading: isReminder ? "🔔 Nhắc lịch sự kiện" : "✅ Xác nhận đăng ký thành công",
+      intro: isReminder
+        ? "Sự kiện sắp diễn ra. Vui lòng mang theo mã QR check-in bên dưới khi tham dự."
+        : "Đăng ký của bạn đã được ghi nhận. Vui lòng xuất trình mã QR bên dưới khi đến sự kiện.",
+      title: htmlValues.survey_title,
+      name: htmlValues.name,
+      qrImgUrl: htmlValues.qr_image,
+      checkinUrl: htmlValues.checkin_url,
+    });
+  }
+
+  const subject = resolvedSubject
+    ? fillMergeTokens(resolvedSubject, textValues).trim()
+    : isReminder
+      ? `🔔 Nhắc lịch: ${resolvedTitle}`
+      : `✅ Mã check-in: ${resolvedTitle}`;
+
+  const text = stripHtml(html) || [
+    isReminder ? "Nhắc lịch sự kiện" : "Xác nhận đăng ký thành công",
+    resolvedTitle,
+    `Xin chào ${textValues.name}`,
+    `Link check-in: ${checkinUrl}`,
+  ].join("\n");
 
   await markEmailStatus(responseId, "pending");
 
@@ -179,7 +204,7 @@ export async function POST(req: NextRequest) {
     headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: process.env.RESEND_FROM || "Hội thảo HUNA 2026 <huna2026@hoithaotructuyen.net>",
-      to: [to],
+      to: [resolvedEmail],
       reply_to: process.env.RESEND_REPLY_TO || "huna2026@hoithaotructuyen.net",
       subject,
       html,

@@ -336,6 +336,8 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
             customBody: (survey as unknown as Record<string, unknown>)?.email_body || "",
             responseId: result.responseId,
             qrStyle: survey?.checkin_theme?.qr ?? null,
+            answers: normalized,
+            hall: hallValue,
           }),
         })
           .then(async (response) => {
