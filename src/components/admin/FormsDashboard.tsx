@@ -1,204 +1,349 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { BarChart3, ClipboardList, Plus, QrCode, Users, UserCheck, ShieldCheck, ArrowRight, Trophy } from "lucide-react";
+import {
+  AlertTriangle, ArrowRight, BarChart3, CheckCircle2, ClipboardList, CreditCard,
+  QrCode, ShieldCheck, Trophy, UserCheck, Users,
+} from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
-import { createRegistrationForm, listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms";
-import type { SurveyFormType } from "@/lib/surveys";
+import { supabase } from "@/lib/supabase";
+import { loadDashboardData, type DashboardData } from "@/lib/dashboard";
 import { PageHeader } from "./PageHeader";
+
+const EMPTY: DashboardData = { forms: [], responses: [], logs: [], pins: {} };
+
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "vừa xong";
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
+}
+
+function actionLabel(action: string) {
+  if (action === "undo_checkin") return "Hoàn tác check-in";
+  if (action === "session_checkin") return "Check-in buổi";
+  if (action === "session_uncheckin") return "Hoàn tác buổi";
+  return "Check-in";
+}
+
+function methodLabel(method: string) {
+  if (method === "qr") return "QR";
+  if (method === "face") return "Face";
+  if (method === "bulk") return "Hàng loạt";
+  return "Thủ công";
+}
 
 export function FormsDashboard() {
   const { user } = useAuth();
   const { canManageForms } = useAdminAccess();
-  const [forms, setForms] = useState<RegistrationFormSummary[]>([]);
+  const [data, setData] = useState<DashboardData>(EMPTY);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState<SurveyFormType | null>(null);
+
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    const next = await loadDashboardData();
+    setData(next);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    if (!user?.id) {
-      Promise.resolve().then(() => {
-        if (!active) return;
-        setForms([]);
-        setLoading(false);
-      });
-      return () => { active = false; };
-    }
-    listRegistrationForms().then((items) => {
+    const run = async () => {
+      await Promise.resolve();
       if (!active) return;
-      setForms(items);
-      setLoading(false);
-    });
+      if (!user?.id) {
+        setData(EMPTY);
+        setLoading(false);
+        return;
+      }
+      await refresh();
+    };
+    void run();
     return () => { active = false; };
-  }, [user?.id]);
+  }, [user?.id, refresh]);
 
-  const stats = useMemo(() => ({
-    forms: forms.length,
-    responses: forms.reduce((sum, item) => sum + item.responseCount, 0),
-    checkins: forms.reduce((sum, item) => sum + item.checkinCount, 0),
-    vip: forms.filter((item) => item.vipCheckinEnabled).length,
-  }), [forms]);
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel("dashboard-checkins")
+      .on("postgres_changes", { event: "*", schema: "public", table: "checkin_logs" }, () => { void refresh(true); })
+      .subscribe();
+    const interval = window.setInterval(() => { void refresh(true); }, 20000);
+    return () => {
+      supabase.removeChannel(channel);
+      window.clearInterval(interval);
+    };
+  }, [user?.id, refresh]);
 
-  const handleCreate = async (formType: SurveyFormType = "registration") => {
-    if (!user?.id || creating || !canManageForms) return;
-    setCreating(formType);
-    const id = await createRegistrationForm(
-      user.id,
-      formType === "poster_scoring" ? "Form chấm điểm poster" : "Form đăng ký CME",
-      formType,
+  const metrics = useMemo(() => {
+    const responses = data.responses;
+    const totalResponses = responses.length;
+    const totalCheckins = responses.filter((row) => row.checked_in).length;
+    const today = new Date();
+    const checkinToday = responses.filter((row) => row.checked_in_at && isSameDay(new Date(row.checked_in_at), today)).length;
+    const rate = totalResponses > 0 ? Math.round((totalCheckins / totalResponses) * 100) : 0;
+    const vipForms = data.forms.filter((form) => form.vipCheckinEnabled).length;
+    const revenue = responses
+      .filter((row) => row.payment_status === "paid")
+      .reduce((sum, row) => sum + (Number(row.payment_amount) || 0), 0);
+    const pendingPayments = responses.filter((row) => row.payment_status === "pending").length;
+    const emailFailed = responses.filter((row) => row.email_status === "failed").length;
+
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - (6 - index));
+      return day;
+    });
+    const chart = days.map((day) => ({
+      label: `${day.getDate()}/${day.getMonth() + 1}`,
+      value: responses.filter((row) => isSameDay(new Date(row.submitted_at), day)).length,
+    }));
+    const chartMax = Math.max(1, ...chart.map((point) => point.value));
+
+    const missingPin = data.forms.filter((form) => form.formType === "registration" && !data.pins[form.id]);
+
+    return {
+      forms: data.forms.length,
+      totalResponses,
+      totalCheckins,
+      checkinToday,
+      rate,
+      vipForms,
+      revenue,
+      pendingPayments,
+      emailFailed,
+      chart,
+      chartMax,
+      missingPin,
+    };
+  }, [data]);
+
+  const formTitleById = useMemo(
+    () => new Map(data.forms.map((form) => [form.id, form.title])),
+    [data.forms],
+  );
+
+  const activeForm = useMemo(
+    () => data.forms.find((form) => form.formType === "registration") ?? null,
+    [data.forms],
+  );
+
+  const alerts = useMemo(() => {
+    const list: { tone: "warning" | "danger" | "info"; text: string; href: string }[] = [];
+    if (metrics.missingPin.length > 0) {
+      list.push({
+        tone: "warning",
+        text: `${metrics.missingPin.length} form đăng ký chưa đặt PIN check-in.`,
+        href: `/admin/forms/${metrics.missingPin[0].id}`,
+      });
+    }
+    if (metrics.emailFailed > 0) {
+      list.push({ tone: "danger", text: `${metrics.emailFailed} email gửi thất bại cần gửi lại.`, href: "/admin/forms" });
+    }
+    if (metrics.pendingPayments > 0) {
+      list.push({ tone: "info", text: `${metrics.pendingPayments} đăng ký đang chờ thanh toán.`, href: "/admin/forms" });
+    }
+    return list;
+  }, [metrics]);
+
+  if (loading) {
+    return (
+      <div className="px-4 py-8 sm:px-8 sm:py-10 max-w-6xl">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-8">
+          {[0, 1, 2, 3, 4].map((item) => <div key={item} className="glass rounded-2xl h-28 animate-pulse" />)}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="glass rounded-2xl h-72 lg:col-span-2 animate-pulse" />
+          <div className="glass rounded-2xl h-72 animate-pulse" />
+        </div>
+      </div>
     );
-    setCreating(null);
-    if (id) window.location.href = `/admin/forms/${id}`;
-  };
+  }
 
   return (
     <div className="px-4 py-8 sm:px-8 sm:py-10 max-w-6xl">
       <PageHeader
-        title="Dashboard đăng ký CME"
-        subtitle="Quản lý form đăng ký, QR check-in, face check-in và danh sách khách tham dự."
+        title="Tổng quan"
+        subtitle="Tình hình đăng ký, check-in và vận hành sự kiện của toàn bộ form."
         action={
-          canManageForms ? (
-            <div className="flex flex-wrap gap-2">
-              <motion.button
-                onClick={() => handleCreate("registration")}
-                disabled={!!creating}
-                className="admin-primary flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold disabled:opacity-50"
-                whileTap={{ scale: 0.98 }}
-              >
-                <Plus size={18} /> {creating === "registration" ? "Đang tạo..." : "Tạo đăng ký"}
-              </motion.button>
-              <motion.button
-                onClick={() => handleCreate("poster_scoring")}
-                disabled={!!creating}
-                className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 font-semibold text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50"
-                whileTap={{ scale: 0.98 }}
-              >
-                <Trophy size={18} /> {creating === "poster_scoring" ? "Đang tạo..." : "Tạo chấm điểm"}
-              </motion.button>
-            </div>
-          ) : null
+          <Link
+            href="/admin/forms"
+            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10"
+          >
+            Quản lý form <ArrowRight size={15} />
+          </Link>
         }
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
-        <StatCard icon={ClipboardList} label="Form" value={stats.forms} loading={loading} color="#0ea5e9" />
-        <StatCard icon={Users} label="Đăng ký" value={stats.responses} loading={loading} color="#06b6d4" />
-        <StatCard icon={UserCheck} label="Check-in" value={stats.checkins} loading={loading} color="#6366f1" />
-        <StatCard icon={ShieldCheck} label="Face VIP" value={stats.vip} loading={loading} color="#f59e0b" />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+        <StatCard icon={Users} label="Tổng đăng ký" value={metrics.totalResponses.toLocaleString("vi-VN")} hint={`${metrics.forms} form`} color="#06b6d4" />
+        <StatCard icon={UserCheck} label="Check-in hôm nay" value={metrics.checkinToday.toLocaleString("vi-VN")} hint={`Tổng ${metrics.totalCheckins.toLocaleString("vi-VN")}`} color="#6366f1" />
+        <StatCard icon={BarChart3} label="Tỉ lệ check-in" value={`${metrics.rate}%`} hint={`${metrics.totalCheckins}/${metrics.totalResponses}`} color="#0ea5e9" />
+        <StatCard icon={ShieldCheck} label="VIP / Face" value={metrics.vipForms.toLocaleString("vi-VN")} hint="form bật face check-in" color="#f59e0b" />
+        <StatCard icon={CreditCard} label="Đã thu" value={`${metrics.revenue.toLocaleString("vi-VN")}đ`} hint={metrics.pendingPayments > 0 ? `${metrics.pendingPayments} chờ thanh toán` : "PayOS"} color="#10b981" />
       </div>
 
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-slate-900">Form gần đây</h2>
-        <Link href="/admin/forms" className="text-sm text-sky-600 hover:text-sky-500 transition-colors flex items-center gap-1">
-          Xem tất cả <ArrowRight size={14} />
-        </Link>
-      </div>
+      <div className="grid gap-4 lg:grid-cols-3 mb-4">
+        <section className="glass rounded-2xl p-5 lg:col-span-2">
+          <div className="mb-4 flex items-center gap-2">
+            <BarChart3 size={16} className="text-sky-500" />
+            <h2 className="text-base font-semibold text-slate-900">Đăng ký 7 ngày gần nhất</h2>
+          </div>
+          <div className="flex h-44 items-end gap-2">
+            {metrics.chart.map((point) => (
+              <div key={point.label} className="flex flex-1 flex-col items-center gap-2">
+                <div className="text-xs font-semibold tabular-nums text-slate-500">{point.value}</div>
+                <div className="flex w-full flex-1 items-end">
+                  <div
+                    className="w-full rounded-t-lg bg-gradient-to-t from-sky-500 to-cyan-400"
+                    style={{ height: `${Math.max(4, (point.value / metrics.chartMax) * 100)}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-slate-400">{point.label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
 
-      {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[0, 1, 2].map((i) => <div key={i} className="glass rounded-2xl h-36 animate-pulse" />)}
-        </div>
-      ) : forms.length === 0 ? (
-        <div className="glass rounded-2xl p-10 text-center max-w-xl">
-          <ClipboardList size={38} className="mx-auto mb-3 text-sky-400" />
-          <h3 className="text-base font-semibold text-slate-900 mb-1">Chưa có form nào</h3>
-          <p className="text-sm text-slate-600 mb-4">Tạo form đầu tiên để nhận đăng ký và check-in bằng QR.</p>
-          {canManageForms ? (
-            <button onClick={() => handleCreate("registration")} disabled={!!creating}
-              className="admin-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50">
-              <Plus size={16} /> Tạo form đầu tiên
-            </button>
+        <section className="glass rounded-2xl p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <QrCode size={16} className="text-indigo-500" />
+            <h2 className="text-base font-semibold text-slate-900">Vận hành tại quầy</h2>
+          </div>
+          {activeForm ? (
+            <>
+              <div className="mb-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                <div className="truncate text-sm font-semibold text-slate-800">{activeForm.title}</div>
+                <div className="text-xs text-slate-500">{activeForm.checkinCount}/{activeForm.responseCount} đã check-in</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Shortcut href={`/scan/${activeForm.id}`} icon={QrCode} label="Quét QR" />
+                <Shortcut href={`/attendees/${activeForm.id}`} icon={Users} label="Danh sách" />
+                {activeForm.vipCheckinEnabled && (
+                  <Shortcut href={`/face-checkin/${activeForm.id}`} icon={ShieldCheck} label="Face VIP" />
+                )}
+                <Shortcut href={`/admin/forms/${activeForm.id}`} icon={ClipboardList} label="Sửa form" />
+              </div>
+            </>
           ) : (
-            <p className="text-xs text-slate-600">Tài khoản của bạn chỉ có quyền xem.</p>
+            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-500">
+              Chưa có form đăng ký nào.
+              {canManageForms && (
+                <Link href="/admin/forms" className="mt-2 block text-sky-600 hover:text-sky-500">Tạo form mới</Link>
+              )}
+            </div>
           )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {forms.slice(0, 6).map((form, index) => (
-            <FormCard key={form.id} form={form} delay={index * 0.04} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FormCard({ form, delay }: { form: RegistrationFormSummary; delay: number }) {
-  const accent = form.accentColor ?? "#0ea5e9";
-  return (
-    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }}>
-      <div className="glass rounded-2xl p-5 hover:bg-sky-50/70 transition-colors">
-        <Link href={`/admin/forms/${form.id}`} className="block">
-          <div className="flex items-start gap-3 mb-4">
-            <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: `${accent}18`, border: `1px solid ${accent}35`, color: accent }}>
-              <ClipboardList size={20} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h3 className="font-semibold text-slate-900 truncate">{form.title}</h3>
-              <p className="text-xs text-slate-600 mt-0.5">{getFormTypeLabel(form.formType)} · {form.questionCount} câu hỏi</p>
-            </div>
-          </div>
-        </Link>
-        <div className="grid grid-cols-3 gap-2 text-center mb-4">
-          <MiniStat label={form.formType === "poster_scoring" ? "Lượt chấm" : "Đăng ký"} value={form.responseCount} />
-          <MiniStat label="Check-in" value={form.formType === "registration" ? form.checkinCount : 0} />
-          <MiniStat label="VIP" value={form.vipCheckinEnabled ? 1 : 0} />
-        </div>
-        <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
-          <span className="flex items-center gap-2">
-            {form.formType === "poster_scoring" ? <><Trophy size={13} /> Form chấm điểm</> : <><QrCode size={13} /> QR check-in sẵn sàng</>}
-          </span>
-          <div className="flex items-center gap-2">
-            <Link href={`/admin/forms/${form.id}/scoreboard`} className="inline-flex items-center gap-1 text-amber-600 hover:text-amber-500">
-              <Trophy size={13} /> Điểm
-            </Link>
-            <Link href={`/admin/forms/${form.id}/report`} className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-500">
-              <BarChart3 size={13} /> Report
-            </Link>
-          </div>
-        </div>
+        </section>
       </div>
-    </motion.div>
-  );
-}
 
-function getFormTypeLabel(type: SurveyFormType) {
-  if (type === "poster_scoring") return "Chấm điểm poster";
-  if (type === "feedback") return "Khảo sát";
-  return "Đăng ký/check-in";
-}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <section className="glass rounded-2xl p-5 lg:col-span-2">
+          <div className="mb-3 flex items-center gap-2">
+            <UserCheck size={16} className="text-emerald-500" />
+            <h2 className="text-base font-semibold text-slate-900">Hoạt động gần đây</h2>
+          </div>
+          {data.logs.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Chưa có hoạt động check-in nào.</p>
+          ) : (
+            <ul className="divide-y divide-white/10">
+              {data.logs.map((log) => (
+                <li key={log.id} className="flex items-center gap-3 py-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                    <UserCheck size={15} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-slate-800">
+                      {actionLabel(log.action)} · {methodLabel(log.method)}
+                    </div>
+                    <div className="truncate text-xs text-slate-500">
+                      {formTitleById.get(log.survey_id) ?? "Form"}
+                      {log.hall ? ` · ${log.hall}` : ""}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs text-slate-400">{timeAgo(log.created_at)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-function MiniStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2">
-      <div className="text-lg font-bold text-slate-900 tabular-nums">{value}</div>
-      <div className="text-[10px] text-slate-600">{label}</div>
+        <section className="glass rounded-2xl p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <AlertTriangle size={16} className="text-amber-500" />
+            <h2 className="text-base font-semibold text-slate-900">Cần chú ý</h2>
+          </div>
+          {alerts.length === 0 ? (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-4 text-sm text-emerald-700">
+              <CheckCircle2 size={16} /> Mọi thứ đang ổn.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {alerts.map((alert) => (
+                <li key={alert.text}>
+                  <Link
+                    href={alert.href}
+                    className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm ${
+                      alert.tone === "danger"
+                        ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                        : alert.tone === "warning"
+                          ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          : "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
+                    }`}
+                  >
+                    <AlertTriangle size={15} className="shrink-0" />
+                    <span className="flex-1">{alert.text}</span>
+                    <ArrowRight size={14} className="shrink-0" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            <Trophy size={13} className="text-amber-500" />
+            {metrics.vipForms} form bật face check-in VIP
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
 
-function StatCard({ icon: Icon, label, value, loading, color }: {
+function Shortcut({ href, icon: Icon, label }: { href: string; icon: React.ComponentType<{ size?: number; className?: string }>; label: string }) {
+  return (
+    <Link href={href} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-700">
+      <Icon size={15} className="text-sky-500" />
+      {label}
+    </Link>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, hint, color }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
   label: string;
-  value: number;
-  loading: boolean;
+  value: string;
+  hint?: string;
   color: string;
 }) {
   return (
-    <div className="glass rounded-2xl p-4 sm:p-5">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: `${color}18`, border: `1px solid ${color}35`, color }}>
-          <Icon size={16} />
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}18`, border: `1px solid ${color}35`, color }}>
+          <Icon size={15} />
         </div>
-        <span className="text-xs text-slate-600 uppercase tracking-widest">{label}</span>
+        <span className="text-[11px] uppercase tracking-widest text-slate-500">{label}</span>
       </div>
-      <div className="text-3xl font-bold text-slate-900 tabular-nums">
-        {loading ? <span className="text-slate-400">-</span> : value.toLocaleString("vi-VN")}
-      </div>
-    </div>
+      <div className="text-2xl font-bold tabular-nums text-slate-900">{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
+    </motion.div>
   );
 }

@@ -389,3 +389,60 @@ export async function deleteRegistrationForm(surveyId: string): Promise<void> {
   }
   await supabase.from("surveys").delete().eq("id", surveyId);
 }
+
+export async function duplicateRegistrationForm(surveyId: string): Promise<string | null> {
+  const source = await getRegistrationForm(surveyId);
+  if (!source) return null;
+
+  const { data: container } = await supabase
+    .from("quizzes")
+    .select("owner_id")
+    .eq("id", source.quiz_id)
+    .single();
+  const ownerId = (container as { owner_id?: string } | null)?.owner_id;
+  if (!ownerId) return null;
+
+  const newId = await createRegistrationForm(ownerId, `${source.title} (bản sao)`, source.form_type);
+  if (!newId) return null;
+
+  const { error: configError } = await supabase
+    .from("surveys")
+    .update({
+      thank_you_message: source.thank_you_message,
+      banner_url: source.banner_url,
+      accent_color: source.accent_color,
+      redirect_url: source.redirect_url,
+      redirect_delay: source.redirect_delay,
+      email_subject: source.email_subject,
+      email_body: source.email_body,
+      checkin_pin: source.checkin_pin,
+      checkin_theme: source.checkin_theme,
+      scoring_config: source.scoring_config,
+      payment_config: source.payment_config,
+      vip_checkin_enabled: source.vip_checkin_enabled,
+    })
+    .eq("id", newId);
+  if (configError) console.warn("Duplicate form config failed:", configError.message);
+
+  const idMap = new Map<string, string>();
+  source.questions.forEach((question) => idMap.set(question.id, newQuestionId()));
+
+  const questions: SurveyQuestionUpsert[] = source.questions.map((question, index) => ({
+    id: idMap.get(question.id),
+    position: index,
+    type: question.type,
+    text: question.text,
+    options: question.options,
+    required: question.required,
+    allow_multiple: question.allow_multiple,
+    show_if: question.show_if
+      ? { ...question.show_if, question_id: idMap.get(question.show_if.question_id) ?? question.show_if.question_id }
+      : null,
+    is_hall_selector: question.is_hall_selector ?? false,
+  }));
+
+  const result = await upsertSurveyQuestions(newId, questions);
+  if (!result.ok) console.warn("Duplicate form questions failed:", result.error);
+
+  return newId;
+}

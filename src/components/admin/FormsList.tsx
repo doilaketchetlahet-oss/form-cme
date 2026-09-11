@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { BarChart3, ClipboardList, Download, ExternalLink, Link2, Plus, QrCode, Search, Trash2, Trophy, X } from "lucide-react";
+import { BarChart3, ClipboardList, Copy, Download, ExternalLink, Link2, Loader2, Plus, QrCode, Search, Trash2, Trophy, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { buildSurveyResponsesCSV, type SurveyAnalytics, type SurveyFormType, type SurveyQuestion, type SurveyResponse } from "@/lib/surveys";
@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 import {
   createRegistrationForm,
   deleteRegistrationForm,
+  duplicateRegistrationForm,
   listRegistrationForms,
   type RegistrationFormSummary,
 } from "@/lib/forms";
@@ -23,6 +24,8 @@ export function FormsList() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState<SurveyFormType | null>(null);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | SurveyFormType>("all");
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   const refresh = async () => {
     if (!user?.id) return;
@@ -51,9 +54,12 @@ export function FormsList() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return forms;
-    return forms.filter((form) => form.title.toLowerCase().includes(q));
-  }, [forms, search]);
+    return forms.filter((form) => {
+      if (typeFilter !== "all" && form.formType !== typeFilter) return false;
+      if (!q) return true;
+      return form.title.toLowerCase().includes(q);
+    });
+  }, [forms, search, typeFilter]);
 
   const handleCreate = async (formType: SurveyFormType = "registration") => {
     if (!user?.id || creating || !canManageForms) return;
@@ -65,6 +71,18 @@ export function FormsList() {
     );
     setCreating(null);
     if (id) window.location.href = `/admin/forms/${id}`;
+  };
+
+  const handleDuplicate = async (form: RegistrationFormSummary) => {
+    if (!canManageForms || duplicatingId) return;
+    setDuplicatingId(form.id);
+    const id = await duplicateRegistrationForm(form.id);
+    setDuplicatingId(null);
+    if (id) {
+      await refresh();
+      return;
+    }
+    alert("Nhân bản form thất bại. Vui lòng thử lại.");
   };
 
   const handleDelete = async (form: RegistrationFormSummary) => {
@@ -98,8 +116,8 @@ export function FormsList() {
   return (
     <div className="px-4 py-8 sm:px-8 sm:py-10 max-w-6xl">
       <PageHeader
-        title="Form đăng ký"
-        subtitle="Tạo và quản lý form đăng ký CME, QR check-in và face check-in."
+        title="Quản lý form"
+        subtitle="Tạo, cấu hình, nhân bản và quản lý vòng đời các form đăng ký, chấm điểm, khảo sát."
         action={
           canManageForms ? (
             <div className="flex flex-wrap gap-2">
@@ -116,15 +134,35 @@ export function FormsList() {
         }
       />
 
-      <div className="relative max-w-md mb-6">
-        <Search size={16} className="admin-subtle absolute left-3 top-1/2 -translate-y-1/2" />
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm form..."
-          className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-9 py-2.5 text-sm text-white admin-placeholder focus:outline-none focus:border-emerald-500" />
-        {search && (
-          <button onClick={() => setSearch("")} className="admin-subtle absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center hover:text-white hover:bg-white/5">
-            <X size={14} />
-          </button>
-        )}
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search size={16} className="admin-subtle absolute left-3 top-1/2 -translate-y-1/2" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm form..."
+            className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-9 py-2.5 text-sm text-white admin-placeholder focus:outline-none focus:border-emerald-500" />
+          {search && (
+            <button onClick={() => setSearch("")} className="admin-subtle absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center hover:text-white hover:bg-white/5">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <div className="flex gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+          {([
+            { value: "all", label: "Tất cả" },
+            { value: "registration", label: "Đăng ký" },
+            { value: "poster_scoring", label: "Chấm điểm" },
+            { value: "feedback", label: "Khảo sát" },
+          ] as const).map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setTypeFilter(option.value)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                typeFilter === option.value ? "bg-sky-500 text-on-brand" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -157,7 +195,9 @@ export function FormsList() {
                   canManageForms={canManageForms}
                   onCopy={() => copyLink(form.id)}
                   onExport={() => handleExport(form)}
+                  onDuplicate={() => handleDuplicate(form)}
                   onDelete={() => handleDelete(form)}
+                  duplicating={duplicatingId === form.id}
                 />
               </motion.div>
             ))}
@@ -168,12 +208,14 @@ export function FormsList() {
   );
 }
 
-function FormCard({ form, canManageForms, onCopy, onExport, onDelete }: {
+function FormCard({ form, canManageForms, onCopy, onExport, onDuplicate, onDelete, duplicating }: {
   form: RegistrationFormSummary;
   canManageForms: boolean;
   onCopy: () => void;
   onExport: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
+  duplicating: boolean;
 }) {
   const accent = form.accentColor ?? "#0ea5e9";
   return (
@@ -223,6 +265,11 @@ function FormCard({ form, canManageForms, onCopy, onExport, onDelete }: {
         <button onClick={onExport} title="Xuất CSV" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-cyan-400 hover:bg-cyan-500/10">
           <Download size={15} />
         </button>
+        {canManageForms && (
+          <button onClick={onDuplicate} disabled={duplicating} title="Nhân bản form" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-sky-400 hover:bg-sky-500/10 disabled:opacity-50">
+            {duplicating ? <Loader2 size={15} className="animate-spin" /> : <Copy size={15} />}
+          </button>
+        )}
         {canManageForms && (
           <button onClick={onDelete} title="Xóa form" className="admin-subtle ml-auto w-9 h-9 rounded-lg flex items-center justify-center hover:text-red-400 hover:bg-red-500/10">
             <Trash2 size={15} />
