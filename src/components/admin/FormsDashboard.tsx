@@ -194,9 +194,10 @@ export function FormsDashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3 mb-4">
-        <section className="glass rounded-2xl p-5 lg:col-span-2">
+        <section className="glass relative overflow-hidden rounded-2xl p-5 lg:col-span-2">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #0ea5e9, #06b6d4, #0ea5e900)" }} />
           <div className="mb-4 flex items-center gap-2">
-            <BarChart3 size={16} className="text-sky-500" />
+            <SectionIcon icon={BarChart3} color="#0ea5e9" />
             <h2 className="text-base font-semibold text-slate-900">Đăng ký 7 ngày gần nhất</h2>
           </div>
           <div className="flex h-44 items-end gap-2">
@@ -205,8 +206,11 @@ export function FormsDashboard() {
                 <div className="text-xs font-semibold tabular-nums text-slate-500">{point.value}</div>
                 <div className="flex w-full flex-1 items-end">
                   <div
-                    className="w-full rounded-t-lg bg-gradient-to-t from-sky-500 to-cyan-400"
-                    style={{ height: `${Math.max(4, (point.value / metrics.chartMax) * 100)}%` }}
+                    className="w-full rounded-t-lg"
+                    style={{
+                      height: `${Math.max(4, (point.value / metrics.chartMax) * 100)}%`,
+                      background: "linear-gradient(180deg, #06b6d4, #0ea5e9)",
+                    }}
                   />
                 </div>
                 <div className="text-[10px] text-slate-400">{point.label}</div>
@@ -215,9 +219,10 @@ export function FormsDashboard() {
           </div>
         </section>
 
-        <section className="glass rounded-2xl p-5">
+        <section className="glass relative overflow-hidden rounded-2xl p-5">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #6366f1, #6366f100)" }} />
           <div className="mb-3 flex items-center gap-2">
-            <QrCode size={16} className="text-indigo-500" />
+            <SectionIcon icon={QrCode} color="#6366f1" />
             <h2 className="text-base font-semibold text-slate-900">Vận hành tại quầy</h2>
           </div>
           {activeForm ? (
@@ -247,9 +252,10 @@ export function FormsDashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <section className="glass rounded-2xl p-5 lg:col-span-2">
+        <section className="glass relative overflow-hidden rounded-2xl p-5 lg:col-span-2">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #10b981, #10b98100)" }} />
           <div className="mb-3 flex items-center gap-2">
-            <UserCheck size={16} className="text-emerald-500" />
+            <SectionIcon icon={UserCheck} color="#10b981" />
             <h2 className="text-base font-semibold text-slate-900">Hoạt động gần đây</h2>
           </div>
           {data.logs.length === 0 ? (
@@ -277,9 +283,10 @@ export function FormsDashboard() {
           )}
         </section>
 
-        <section className="glass rounded-2xl p-5">
+        <section className="glass relative overflow-hidden rounded-2xl p-5">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #f59e0b, #f59e0b00)" }} />
           <div className="mb-3 flex items-center gap-2">
-            <AlertTriangle size={16} className="text-amber-500" />
+            <SectionIcon icon={AlertTriangle} color="#f59e0b" />
             <h2 className="text-base font-semibold text-slate-900">Cần chú ý</h2>
           </div>
           {alerts.length === 0 ? (
@@ -318,6 +325,14 @@ export function FormsDashboard() {
   );
 }
 
+function SectionIcon({ icon: Icon, color }: { icon: React.ComponentType<{ size?: number; className?: string }>; color: string }) {
+  return (
+    <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: `${color}18`, border: `1px solid ${color}33`, color }}>
+      <Icon size={14} />
+    </div>
+  );
+}
+
 function Shortcut({ href, icon: Icon, label }: { href: string; icon: React.ComponentType<{ size?: number; className?: string }>; label: string }) {
   return (
     <Link href={href} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-700">
@@ -335,9 +350,15 @@ function StatCard({ icon: Icon, label, value, hint, color }: {
   color: string;
 }) {
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-4">
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass relative overflow-hidden rounded-2xl p-4"
+      style={{ background: `linear-gradient(135deg, ${color}14, rgba(255,255,255,0.88) 55%)` }}
+    >
+      <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${color}, ${color}00)` }} />
       <div className="mb-2 flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}18`, border: `1px solid ${color}35`, color }}>
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}22`, border: `1px solid ${color}44`, color }}>
           <Icon size={15} />
         </div>
         <span className="text-[11px] uppercase tracking-widest text-slate-500">{label}</span>

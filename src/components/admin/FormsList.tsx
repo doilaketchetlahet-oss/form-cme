@@ -219,7 +219,8 @@ function FormCard({ form, canManageForms, onCopy, onExport, onDuplicate, onDelet
 }) {
   const accent = form.accentColor ?? "#0ea5e9";
   return (
-    <div className="glass rounded-2xl p-5">
+    <div className="glass relative overflow-hidden rounded-2xl p-5">
+      <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${accent}, ${accent}00)` }} />
       <Link href={`/admin/forms/${form.id}`} className="block">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-11 h-11 rounded-xl flex items-center justify-center"
@@ -234,12 +235,12 @@ function FormCard({ form, canManageForms, onCopy, onExport, onDuplicate, onDelet
       </Link>
 
       <div className="grid grid-cols-2 gap-2 mb-4">
-        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-          <div className="text-xl font-bold text-slate-900">{form.responseCount}</div>
+        <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+          <div className="text-xl font-bold text-sky-700">{form.responseCount}</div>
           <div className="text-[10px] text-slate-600">{form.formType === "poster_scoring" ? "Lượt chấm" : "Đăng ký"}</div>
         </div>
-        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3">
-          <div className="text-xl font-bold text-slate-900">{form.checkinCount}</div>
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+          <div className="text-xl font-bold text-indigo-700">{form.checkinCount}</div>
           <div className="text-[10px] text-slate-600">Check-in</div>
         </div>
       </div>

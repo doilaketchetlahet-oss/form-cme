@@ -159,7 +159,7 @@ function SidebarContent({
                 <motion.div
                   layoutId="active-pill"
                   className="absolute inset-0 rounded-xl"
-                  style={{ background: "linear-gradient(135deg, rgba(14,165,233,0.14), rgba(6,182,212,0.06))", border: "1px solid rgba(14,165,233,0.28)" }}
+                  style={{ background: "linear-gradient(135deg, rgba(14,165,233,0.16), rgba(6,182,212,0.08))", border: "1px solid rgba(14,165,233,0.3)", boxShadow: "0 6px 18px rgba(14,165,233,0.18)" }}
                   transition={{ type: "spring", stiffness: 400, damping: 30 }}
                 />
               )}
