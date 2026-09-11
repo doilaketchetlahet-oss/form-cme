@@ -1,9 +1,10 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Loader2, Mail, Save, Trash2 } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { supabase } from "@/lib/supabase";
 import {
   defaultEmailBlocks,
@@ -29,12 +30,19 @@ function defaultBody() {
 export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
   const router = useRouter();
   const { canManageForms } = useAdminAccess();
+  const initialBody = useMemo(() => defaultBody(), []);
   const [loading, setLoading] = useState(!!templateId);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
-  const [body, setBody] = useState(defaultBody);
+  const [body, setBody] = useState(initialBody);
+  const [saved, setSaved] = useState({ name: "", subject: "", body: initialBody });
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const dirty = !loading
+    && (name !== saved.name || subject !== saved.subject || body !== saved.body);
+
+  useUnsavedChangesWarning(dirty && canManageForms, "Template có thay đổi chưa lưu. Rời trang?");
 
   const getToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -54,9 +62,11 @@ export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
         const result = await response.json().catch(() => null);
         const found = (result?.templates ?? []).find((item: { id: string }) => item.id === templateId);
         if (found) {
+          const nextBody = found.body || defaultBody();
           setName(found.name ?? "");
           setSubject(found.subject ?? "");
-          setBody(found.body || defaultBody());
+          setBody(nextBody);
+          setSaved({ name: found.name ?? "", subject: found.subject ?? "", body: nextBody });
         } else {
           setMessage({ type: "error", text: "Không tìm thấy template." });
         }
@@ -92,6 +102,7 @@ export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
         return;
       }
       setMessage({ type: "success", text: templateId ? "Đã cập nhật template." : "Đã tạo template." });
+      setSaved({ name, subject, body });
       if (!templateId && result.id) {
         router.replace(`/admin/templates/${result.id}`);
       }
@@ -135,7 +146,12 @@ export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
           <p className="mt-1 text-sm text-slate-600">Soạn nội dung, ảnh thiệp và file đính kèm rồi lưu để dùng lại.</p>
         </div>
         {canManageForms && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {dirty && (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                Chưa lưu
+              </span>
+            )}
             {templateId && (
               <button
                 type="button"

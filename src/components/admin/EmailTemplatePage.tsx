@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bookmark, CheckCircle2, ExternalLink, Lock, Mail, RefreshCw, Save, Send } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { getRegistrationForm } from "@/lib/forms";
 import { supabase } from "@/lib/supabase";
 import type { Survey, SurveyQuestion } from "@/lib/surveys";
@@ -31,6 +32,10 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
+  const [saved, setSaved] = useState({ subject: "", body: "" });
+
+  const dirty = !loading && (subject !== saved.subject || body !== saved.body);
+  useUnsavedChangesWarning(dirty && canManageForms, "Thư mời có thay đổi chưa lưu. Rời trang?");
 
   useEffect(() => {
     (async () => {
@@ -39,6 +44,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       setForm(next);
       setSubject(next?.email_subject ?? "");
       setBody(next?.email_body ?? "");
+      setSaved({ subject: next?.email_subject ?? "", body: next?.email_body ?? "" });
       setLoading(false);
     })();
   }, [formId]);
@@ -136,6 +142,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
         setMessage({ type: "error", text: result.error ?? "Lưu thư thất bại." });
         return;
       }
+      setSaved({ subject, body });
       setMessage({ type: "success", text: "Đã lưu thư mời." });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Lưu thư thất bại." });
@@ -218,7 +225,12 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           <p className="mt-1 text-sm text-slate-600">{form.title}</p>
         </div>
         {canManageForms && isCheckinForm && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {dirty && (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                Chưa lưu
+              </span>
+            )}
             <button
               type="button"
               onClick={handleTestSend}
