@@ -11,8 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger email campaign queue
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -sS -X GET "https://dangkyhoithao.online/api/cron/email-campaigns" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -w "HTTP %{http_code}\n" -o /tmp/resp.json
-          cat /tmp/resp.json
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET secret is not set in this repository"
+            exit 1
+          fi
+          curl -fsS -X GET "https://dangkyhoithao.online/api/cron/email-campaigns" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -w "\nHTTP %{http_code}\n"
