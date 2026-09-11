@@ -178,7 +178,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
-        setMessage({ type: "error", text: result.error ?? "Gửi thử thất bại." });
+        setMessage({ type: "error", text: result.detail ? `${result.error ?? "Gửi thử thất bại."} — ${result.detail}` : (result.error ?? "Gửi thử thất bại.") });
         return;
       }
       setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to}.` });

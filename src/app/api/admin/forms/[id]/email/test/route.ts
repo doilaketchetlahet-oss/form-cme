@@ -4,7 +4,7 @@ import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import { compileEmailHtml, fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
-import { defaultFrom, defaultReplyTo, sendEmail } from "@/lib/server/email-provider";
+import { sendEmail } from "@/lib/server/email-provider";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -105,9 +105,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   const result = await sendEmail({
-    from: defaultFrom(),
     to,
-    replyTo: defaultReplyTo(),
     subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
     html,
     text: "",

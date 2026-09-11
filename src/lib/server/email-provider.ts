@@ -10,7 +10,7 @@ export type EmailAttachmentInput = {
 };
 
 export type OutgoingEmail = {
-  from: string;
+  from?: string;
   to: string;
   replyTo?: string;
   subject: string;
@@ -32,16 +32,22 @@ export function resolveProvider(override?: string | null): EmailProviderName {
   return value === "smtp" ? "smtp" : "resend";
 }
 
-export function defaultFrom(): string {
-  return process.env.SMTP_FROM
-    || process.env.RESEND_FROM
-    || "Hội thảo HUNA 2026 <huna2026@hoithaotructuyen.net>";
+export function defaultFrom(provider: EmailProviderName = "resend"): string {
+  if (provider === "smtp") {
+    return process.env.SMTP_FROM
+      || process.env.RESEND_FROM
+      || "Form CME <no-reply@localhost>";
+  }
+  return process.env.RESEND_FROM
+    || process.env.SMTP_FROM
+    || "Form CME <no-reply@localhost>";
 }
 
-export function defaultReplyTo(): string {
-  return process.env.RESEND_REPLY_TO
-    || process.env.SMTP_REPLY_TO
-    || "huna2026@hoithaotructuyen.net";
+export function defaultReplyTo(provider: EmailProviderName = "resend"): string {
+  if (provider === "smtp") {
+    return process.env.SMTP_REPLY_TO || process.env.SMTP_USER || process.env.RESEND_REPLY_TO || "";
+  }
+  return process.env.RESEND_REPLY_TO || process.env.SMTP_REPLY_TO || "";
 }
 
 async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
@@ -112,9 +118,14 @@ async function sendViaSmtp(email: OutgoingEmail): Promise<SendResult> {
 
 export async function sendEmail(email: OutgoingEmail, override?: string | null): Promise<SendResult> {
   const provider = resolveProvider(override);
+  const payload: OutgoingEmail = {
+    ...email,
+    from: email.from?.trim() || defaultFrom(provider),
+    replyTo: email.replyTo?.trim() || defaultReplyTo(provider),
+  };
   try {
-    if (provider === "smtp") return await sendViaSmtp(email);
-    return await sendViaResend(email);
+    if (provider === "smtp") return await sendViaSmtp(payload);
+    return await sendViaResend(payload);
   } catch (error) {
     return {
       ok: false,

@@ -11,7 +11,7 @@ import {
   type EmailMergeQuestion,
 } from "@/lib/email-template";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
-import { defaultFrom, defaultReplyTo, resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
+import { resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
 
 function stripHtml(html: string) {
   return html
@@ -227,9 +227,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   await markEmailStatus(responseId, "pending");
 
   const result = await sendEmail({
-    from: defaultFrom(),
     to: resolvedEmail,
-    replyTo: defaultReplyTo(),
     subject,
     html,
     text,
