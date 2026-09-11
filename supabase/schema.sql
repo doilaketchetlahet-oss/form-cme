@@ -391,6 +391,9 @@ create table if not exists events (
   name text not null,
   event_date date,
   form_ids jsonb not null default '[]'::jsonb,
+  from_name text,
+  from_email text,
+  reply_to text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

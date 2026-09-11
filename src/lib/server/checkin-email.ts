@@ -94,7 +94,30 @@ export type SendCheckinEmailInput = {
   hall?: string;
   origin: string;
   providerOverride?: string | null;
+  from?: string | null;
 };
+
+async function resolveEventSender(
+  supabase: NonNullable<ReturnType<typeof createSupabaseAdmin>>,
+  surveyId: string,
+): Promise<{ from: string | null; replyTo: string | null }> {
+  try {
+    const { data } = await supabase
+      .from("events")
+      .select("from_name, from_email, reply_to")
+      .contains("form_ids", [surveyId])
+      .limit(1)
+      .maybeSingle();
+    const row = data as { from_name?: string | null; from_email?: string | null; reply_to?: string | null } | null;
+    if (!row?.from_email) return { from: null, replyTo: null };
+    return {
+      from: row.from_name ? `${row.from_name} <${row.from_email}>` : row.from_email,
+      replyTo: row.reply_to || null,
+    };
+  } catch {
+    return { from: null, replyTo: null };
+  }
+}
 
 export type SendCheckinEmailResult = {
   ok: boolean;
@@ -134,6 +157,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   let resolvedQrStyle = qrStyle as QRBranding | null | undefined;
   let providerOverride = input.providerOverride ?? null;
   let questions: EmailMergeQuestion[] = [];
+  let resolvedSurveyId: string | null = null;
 
   if (supabase && responseId) {
     const { data: response } = await supabase
@@ -143,6 +167,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       .maybeSingle();
 
     if (response) {
+      resolvedSurveyId = response.survey_id as string;
       resolvedAnswers = (response.answers ?? resolvedAnswers) as Record<string, unknown>;
       resolvedHall = response.hall || resolvedHall;
       resolvedEmail = response.email || resolvedEmail;
@@ -226,7 +251,19 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
 
   await markEmailStatus(responseId, "pending");
 
+  let fromOverride = input.from?.trim() || null;
+  let replyToOverride: string | null = null;
+  if (supabase && resolvedSurveyId) {
+    const sender = await resolveEventSender(supabase, resolvedSurveyId);
+    if (sender.from) {
+      fromOverride = sender.from;
+      replyToOverride = sender.replyTo;
+    }
+  }
+
   const result = await sendEmail({
+    ...(fromOverride ? { from: fromOverride } : {}),
+    ...(replyToOverride ? { replyTo: replyToOverride } : {}),
     to: resolvedEmail,
     subject,
     html,

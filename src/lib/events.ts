@@ -5,6 +5,9 @@ export type EventRecord = {
   name: string;
   event_date: string | null;
   form_ids: string[];
+  from_name: string | null;
+  from_email: string | null;
+  reply_to: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -28,6 +31,9 @@ export async function saveEvent(payload: {
   name: string;
   event_date?: string | null;
   form_ids?: string[];
+  from_name?: string | null;
+  from_email?: string | null;
+  reply_to?: string | null;
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
   const token = await getAccessToken();
   if (!token) return { ok: false, error: "Phiên đăng nhập đã hết hạn." };

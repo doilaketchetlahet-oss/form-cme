@@ -6,7 +6,14 @@ import { listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms
 import { listEvents, saveEvent, deleteEvent, type EventRecord } from "@/lib/events";
 import { PageHeader } from "./PageHeader";
 
-type Draft = { name: string; event_date: string; form_ids: string[] };
+type Draft = {
+  name: string;
+  event_date: string;
+  form_ids: string[];
+  from_name: string;
+  from_email: string;
+  reply_to: string;
+};
 
 function formTypeLabel(type: RegistrationFormSummary["formType"]) {
   if (type === "poster_scoring") return "Chấm điểm";
@@ -37,6 +44,9 @@ export function EventsManager() {
         name: event.name,
         event_date: event.event_date ?? "",
         form_ids: [...event.form_ids],
+        from_name: event.from_name ?? "",
+        from_email: event.from_email ?? "",
+        reply_to: event.reply_to ?? "",
       };
     });
     setDrafts(nextDrafts);
@@ -94,6 +104,9 @@ export function EventsManager() {
       name: draft.name.trim(),
       event_date: draft.event_date || null,
       form_ids: draft.form_ids,
+      from_name: draft.from_name.trim() || null,
+      from_email: draft.from_email.trim() || null,
+      reply_to: draft.reply_to.trim() || null,
     });
     setBusyId(null);
     if (!result.ok) {
@@ -241,6 +254,39 @@ export function EventsManager() {
                       onChange={(event) => patchDraft(eventRow.id, { event_date: event.target.value })}
                       disabled={!canManageForms}
                       className="admin-field w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none disabled:opacity-60"
+                    />
+                  </label>
+                </div>
+
+                <div className="mb-3 grid gap-3 sm:grid-cols-3">
+                  <label>
+                    <span className="mb-1.5 block text-[11px] text-slate-400">Tên người gửi</span>
+                    <input
+                      value={draft.from_name}
+                      onChange={(event) => patchDraft(eventRow.id, { from_name: event.target.value })}
+                      disabled={!canManageForms}
+                      placeholder="Hội thảo HUNA 2026"
+                      className="admin-field w-full rounded-xl px-3 py-2.5 text-sm admin-placeholder focus:outline-none disabled:opacity-60"
+                    />
+                  </label>
+                  <label>
+                    <span className="mb-1.5 block text-[11px] text-slate-400">Email người gửi</span>
+                    <input
+                      value={draft.from_email}
+                      onChange={(event) => patchDraft(eventRow.id, { from_email: event.target.value })}
+                      disabled={!canManageForms}
+                      placeholder="huna2026@hoithaotructuyen.net"
+                      className="admin-field w-full rounded-xl px-3 py-2.5 text-sm admin-placeholder focus:outline-none disabled:opacity-60"
+                    />
+                  </label>
+                  <label>
+                    <span className="mb-1.5 block text-[11px] text-slate-400">Reply-to (tùy chọn)</span>
+                    <input
+                      value={draft.reply_to}
+                      onChange={(event) => patchDraft(eventRow.id, { reply_to: event.target.value })}
+                      disabled={!canManageForms}
+                      placeholder="Để trống = email người gửi"
+                      className="admin-field w-full rounded-xl px-3 py-2.5 text-sm admin-placeholder focus:outline-none disabled:opacity-60"
                     />
                   </label>
                 </div>

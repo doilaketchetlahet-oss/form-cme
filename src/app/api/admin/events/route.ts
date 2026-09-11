@@ -8,9 +8,22 @@ type EventRow = {
   name: string;
   event_date: string | null;
   form_ids: string[];
+  from_name?: string | null;
+  from_email?: string | null;
+  reply_to?: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
+
+function normalizeEvent(row: EventRow) {
+  return {
+    ...row,
+    form_ids: normalizeFormIds(row.form_ids),
+    from_name: row.from_name ?? null,
+    from_email: row.from_email ?? null,
+    reply_to: row.reply_to ?? null,
+  };
+}
 
 const MISSING_TABLE_HINT =
   "Chưa có bảng events. Hãy chạy file supabase/events.sql trong Supabase SQL editor rồi thử lại.";
@@ -83,16 +96,29 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("events")
-    .select("id, name, event_date, form_ids, created_at, updated_at")
+    .select("id, name, event_date, form_ids, from_name, from_email, reply_to, created_at, updated_at")
     .order("event_date", { ascending: true, nullsFirst: false })
     .order("updated_at", { ascending: false })
     .limit(200);
 
   if (error) {
+    const missingSender = (error.message ?? "").toLowerCase().match(/from_name|from_email|reply_to/);
+    if (missingSender) {
+      const fallback = await supabase
+        .from("events")
+        .select("id, name, event_date, form_ids, created_at, updated_at")
+        .order("event_date", { ascending: true, nullsFirst: false })
+        .order("updated_at", { ascending: false })
+        .limit(200);
+      if (!fallback.error) {
+        const events = ((fallback.data ?? []) as EventRow[]).map((row) => normalizeEvent(row));
+        return NextResponse.json({ ok: true, events });
+      }
+    }
     return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
   }
 
-  const events = ((data ?? []) as EventRow[]).map((row) => ({ ...row, form_ids: normalizeFormIds(row.form_ids) }));
+  const events = ((data ?? []) as EventRow[]).map((row) => normalizeEvent(row));
   return NextResponse.json({ ok: true, events });
 }
 
@@ -110,6 +136,9 @@ export async function POST(request: Request) {
     name?: string;
     event_date?: string | null;
     form_ids?: unknown;
+    from_name?: string | null;
+    from_email?: string | null;
+    reply_to?: string | null;
   } | null;
 
   const name = payload?.name?.trim();
@@ -119,30 +148,54 @@ export async function POST(request: Request) {
 
   const eventDate = payload?.event_date?.trim() || null;
   const formIds = normalizeFormIds(payload?.form_ids);
+  const sender = {
+    from_name: payload?.from_name?.trim() || null,
+    from_email: payload?.from_email?.trim().toLowerCase() || null,
+    reply_to: payload?.reply_to?.trim().toLowerCase() || null,
+  };
 
   const record = {
     name,
     event_date: eventDate,
     form_ids: formIds,
+    ...sender,
     updated_at: new Date().toISOString(),
+  };
+  const baseRecord = {
+    name,
+    event_date: eventDate,
+    form_ids: formIds,
+    updated_at: record.updated_at,
   };
 
   if (payload?.id) {
-    const { data, error } = await supabase.from("events").update(record).eq("id", payload.id).select("id").maybeSingle();
+    let { error } = await supabase.from("events").update(record).eq("id", payload.id).select("id").maybeSingle();
+    if (error && (error.message ?? "").toLowerCase().match(/from_name|from_email|reply_to/)) {
+      ({ error } = await supabase.from("events").update(baseRecord).eq("id", payload.id).select("id").maybeSingle());
+    }
     if (error) {
       return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
     }
-    if (!data) return NextResponse.json({ ok: false, error: "Không tìm thấy sự kiện." }, { status: 404 });
-    return NextResponse.json({ ok: true, id: data.id });
+    return NextResponse.json({ ok: true, id: payload.id });
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("events")
     .insert({ ...record, owner_email: auth.email })
     .select("id")
     .single();
+  if (error && (error.message ?? "").toLowerCase().match(/from_name|from_email|reply_to/)) {
+    ({ data, error } = await supabase
+      .from("events")
+      .insert({ ...baseRecord, owner_email: auth.email })
+      .select("id")
+      .single());
+  }
   if (error) {
     return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
+  }
+  if (!data) {
+    return NextResponse.json({ ok: false, error: "Không tạo được sự kiện." }, { status: 500 });
   }
   return NextResponse.json({ ok: true, id: data.id });
 }
