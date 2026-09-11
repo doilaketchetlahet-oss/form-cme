@@ -8,6 +8,7 @@ import {
   ClipboardList,
   ShieldCheck,
   Settings,
+  Mail,
   QrCode,
   LogOut,
   Menu,
@@ -21,6 +22,7 @@ import { getAdminRoleLabel, useAdminAccess } from "@/components/auth/AdminAccess
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/admin/forms", label: "Form đăng ký", icon: ClipboardList },
+  { href: "/admin/templates", label: "Template thư", icon: Mail },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];

@@ -12,7 +12,7 @@ import {
   parseEmailTemplate,
   type EmailMergeQuestion,
 } from "@/lib/email-template";
-import { composeInviteImage, overlayEmailPayload } from "@/lib/email-overlay";
+import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 
 function stripHtml(html: string) {
   return html
@@ -176,20 +176,22 @@ export async function POST(req: NextRequest) {
   const textValues = buildMergeValues(mergeInput, false);
 
   let html = compileEmailHtml(resolvedBody, htmlValues, qrImgUrl);
-  let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
-  if (hasOverlayImage(resolvedBody)) {
+  const attachments: ResendAttachment[] = [];
+  const template = parseEmailTemplate(resolvedBody);
+  if (hasOverlayImage(resolvedBody) && template.overlay) {
     try {
-      const template = parseEmailTemplate(resolvedBody);
-      if (template.overlay) {
-        const jpeg = await composeInviteImage(template.overlay, textValues, String(checkinUrl));
-        attachments = overlayEmailPayload(jpeg).attachments;
-      }
+      const jpeg = await composeInviteImage(template.overlay, textValues, String(checkinUrl));
+      attachments.push(...overlayEmailPayload(jpeg).attachments);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Ghép ảnh thiệp thất bại";
       await markEmailStatus(responseId, "failed", detail);
       return NextResponse.json({ error: "Compose failed", detail }, { status: 500 });
     }
-  } else if (!html) {
+  }
+  if (template.attachments && template.attachments.length > 0) {
+    attachments.push(...await fetchFileAttachments(template.attachments));
+  }
+  if (!html && attachments.length === 0) {
     html = defaultHtml({
       heading: isReminder ? "🔔 Nhắc lịch sự kiện" : "✅ Xác nhận đăng ký thành công",
       intro: isReminder
@@ -227,7 +229,7 @@ export async function POST(req: NextRequest) {
       subject,
       html,
       text,
-      ...(attachments ? { attachments } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
       headers: {
         "X-Entity-Ref-ID": `form-cme-${Date.now()}`,
       },

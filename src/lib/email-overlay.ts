@@ -2,7 +2,7 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import QRCode from "qrcode";
-import type { EmailOverlay, OverlayField } from "@/lib/email-template";
+import type { EmailAttachment, EmailOverlay, OverlayField } from "@/lib/email-template";
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
@@ -160,4 +160,37 @@ export function overlayEmailPayload(jpeg: Buffer) {
       },
     ],
   };
+}
+
+export type ResendAttachment = {
+  filename: string;
+  content: string;
+  contentId?: string;
+  contentType?: string;
+};
+
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+export async function fetchFileAttachments(list: EmailAttachment[]): Promise<ResendAttachment[]> {
+  const result: ResendAttachment[] = [];
+  let total = 0;
+  for (const attachment of list.slice(0, 10)) {
+    try {
+      const response = await fetch(attachment.url);
+      if (!response.ok) continue;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > MAX_FILE_BYTES) continue;
+      total += buffer.length;
+      if (total > MAX_TOTAL_BYTES) break;
+      result.push({
+        filename: attachment.name,
+        content: buffer.toString("base64"),
+        contentType: attachment.type || undefined,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return result;
 }

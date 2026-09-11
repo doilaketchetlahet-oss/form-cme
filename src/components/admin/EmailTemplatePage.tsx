@@ -1,14 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bookmark, CheckCircle2, Lock, Mail, RefreshCw, Save, Send, Trash2 } from "lucide-react";
+import { ArrowLeft, Bookmark, CheckCircle2, ExternalLink, Lock, Mail, RefreshCw, Save, Send } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getRegistrationForm } from "@/lib/forms";
 import { supabase } from "@/lib/supabase";
 import type { Survey, SurveyQuestion } from "@/lib/surveys";
-import { getEmailMode, parseEmailTemplate, serializeEmailTemplate, type EmailMode, type EmailMergeQuestion } from "@/lib/email-template";
-import { EmailTemplateEditor } from "./EmailTemplateEditor";
-import { EmailOverlayEditor } from "./EmailOverlayEditor";
+import type { EmailMergeQuestion } from "@/lib/email-template";
+import { EmailComposer } from "./EmailComposer";
 
 type EmailTemplateSummary = {
   id: string;
@@ -17,12 +16,6 @@ type EmailTemplateSummary = {
   body: string;
   updated_at: string | null;
 };
-
-const MODE_TABS: { value: EmailMode; label: string }[] = [
-  { value: "blocks", label: "Khối" },
-  { value: "overlay", label: "Ảnh thiệp" },
-  { value: "combined", label: "Kết hợp" },
-];
 
 export function EmailTemplatePage({ formId }: { formId: string }) {
   const { canManageForms } = useAdminAccess();
@@ -33,7 +26,6 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [body, setBody] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [sendingTest, setSendingTest] = useState(false);
-  const [mode, setMode] = useState<EmailMode>("blocks");
   const [templates, setTemplates] = useState<EmailTemplateSummary[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -47,7 +39,6 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       setForm(next);
       setSubject(next?.email_subject ?? "");
       setBody(next?.email_body ?? "");
-      setMode(getEmailMode(next?.email_body ?? ""));
       setLoading(false);
     })();
   }, [formId]);
@@ -84,29 +75,21 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
     return () => { active = false; };
   }, [loadTemplates]);
 
-  const switchMode = (nextMode: EmailMode) => {
-    const parsed = parseEmailTemplate(body);
-    setMode(nextMode);
-    setBody(serializeEmailTemplate({ ...parsed, mode: nextMode }));
-  };
-
   const applyTemplate = (templateId: string) => {
     setSelectedTemplateId(templateId);
     const template = templates.find((item) => item.id === templateId);
     if (!template) return;
     setSubject(template.subject ?? "");
     setBody(template.body);
-    setMode(getEmailMode(template.body));
     setEditorKey((key) => key + 1);
     setMessage({ type: "success", text: `Đã nạp template “${template.name}”.` });
   };
 
-  const saveTemplate = async (overwrite: boolean) => {
+  const saveAsTemplate = async () => {
     if (!canManageForms || savingTemplate) return;
-    const name = window.prompt("Tên template:", form?.title ?? "Template thư mời");
-    const trimmed = name?.trim();
-    if (!trimmed) return;
-
+    const input = window.prompt("Tên template:", form?.title ?? "Template thư mời");
+    const name = input?.trim();
+    if (!name) return;
     setSavingTemplate(true);
     setMessage(null);
     try {
@@ -118,12 +101,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       const response = await fetch("/api/admin/email-templates", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...(overwrite && selectedTemplateId ? { id: selectedTemplateId } : {}),
-          name: trimmed,
-          subject: subject.trim() || null,
-          body,
-        }),
+        body: JSON.stringify({ name, subject: subject.trim() || null, body }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.ok) {
@@ -131,31 +109,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
         return;
       }
       setSelectedTemplateId(result.id);
-      setMessage({ type: "success", text: overwrite ? "Đã cập nhật template." : "Đã lưu template mới." });
-      await loadTemplates();
-    } finally {
-      setSavingTemplate(false);
-    }
-  };
-
-  const deleteTemplate = async () => {
-    if (!selectedTemplateId || !canManageForms) return;
-    if (!window.confirm("Xóa template này?")) return;
-    setSavingTemplate(true);
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const response = await fetch(`/api/admin/email-templates?id=${encodeURIComponent(selectedTemplateId)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.ok) {
-        setMessage({ type: "error", text: result?.error ?? "Xóa template thất bại." });
-        return;
-      }
-      setSelectedTemplateId("");
-      setMessage({ type: "success", text: "Đã xóa template." });
+      setMessage({ type: "success", text: `Đã lưu template “${name}”. Quản lý trong Kho template.` });
       await loadTemplates();
     } finally {
       setSavingTemplate(false);
@@ -172,14 +126,10 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
         setMessage({ type: "error", text: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." });
         return;
       }
-
       const response = await fetch(`/api/admin/forms/${formId}/email`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email_subject: subject.trim() || null,
-          email_body: body.trim() || null,
-        }),
+        body: JSON.stringify({ email_subject: subject.trim() || null, email_body: body.trim() || null }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
@@ -188,10 +138,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       }
       setMessage({ type: "success", text: "Đã lưu thư mời." });
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Lưu thư thất bại.",
-      });
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Lưu thư thất bại." });
     } finally {
       setSaving(false);
     }
@@ -212,11 +159,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       const response = await fetch(`/api/admin/forms/${formId}/email/test`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: userEmail,
-          email_subject: subject.trim() || null,
-          email_body: body.trim() || null,
-        }),
+        body: JSON.stringify({ to: userEmail, email_subject: subject.trim() || null, email_body: body.trim() || null }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
@@ -225,10 +168,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       }
       setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to}.` });
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Gửi thử thất bại.",
-      });
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "Gửi thử thất bại." });
     } finally {
       setSendingTest(false);
     }
@@ -300,11 +240,8 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       </div>
 
       {message?.type === "error" && (
-        <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-600">
-          {message.text}
-        </div>
+        <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-600">{message.text}</div>
       )}
-
       {message?.type === "success" && (
         <div className="mb-5 flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
           <CheckCircle2 size={16} /> {message.text}
@@ -331,7 +268,8 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
             <select
               value={selectedTemplateId}
               onChange={(event) => applyTemplate(event.target.value)}
-              className="admin-dark-select min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none"
+              disabled={loadingTemplates}
+              className="admin-dark-select min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none disabled:opacity-60"
             >
               <option value="">Chọn template…</option>
               {templates.map((template) => (
@@ -340,32 +278,18 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
             </select>
             <button
               type="button"
-              onClick={() => saveTemplate(false)}
+              onClick={saveAsTemplate}
               disabled={savingTemplate}
               className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
             >
-              <Save size={14} /> Lưu mới
+              <Save size={14} /> Lưu thành template
             </button>
-            {selectedTemplateId && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => saveTemplate(true)}
-                  disabled={savingTemplate}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Cập nhật
-                </button>
-                <button
-                  type="button"
-                  onClick={deleteTemplate}
-                  disabled={savingTemplate}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  <Trash2 size={14} /> Xóa
-                </button>
-              </>
-            )}
+            <Link
+              href="/admin/templates"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:text-sky-600"
+            >
+              <ExternalLink size={14} /> Kho template
+            </Link>
             <button
               type="button"
               onClick={() => void loadTemplates()}
@@ -377,80 +301,16 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
             </button>
           </div>
 
-          <div className="mb-4 grid w-fit grid-cols-3 gap-1 rounded-xl border border-sky-100 bg-white p-1">
-            {MODE_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => switchMode(tab.value)}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === tab.value ? "bg-sky-500 text-on-brand" : "text-slate-600"}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
           <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
-            <label className="mb-4 block">
-              <span className="mb-1.5 block text-xs font-medium text-slate-500">Tiêu đề email</span>
-              <input
-                value={subject}
-                onChange={(event) => setSubject(event.target.value)}
-                placeholder="Mã check-in: {{survey_title}}"
-                className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none"
-              />
-            </label>
-
-            {mode === "overlay" && (
-              <EmailOverlayEditor
-                key={`overlay-${editorKey}`}
-                body={body}
-                surveyTitle={form.title}
-                questions={questionPayload}
-                onBodyChange={setBody}
-              />
-            )}
-
-            {mode === "blocks" && (
-              <EmailTemplateEditor
-                key={`blocks-${editorKey}`}
-                subject={subject}
-                body={body}
-                surveyTitle={form.title}
-                questions={questionPayload}
-                onSubjectChange={setSubject}
-                onBodyChange={setBody}
-                showSubject={false}
-              />
-            )}
-
-            {mode === "combined" && (
-              <div className="space-y-6">
-                <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-400">Ảnh thiệp</div>
-                  <EmailOverlayEditor
-                    key={`overlay-${editorKey}`}
-                    body={body}
-                    surveyTitle={form.title}
-                    questions={questionPayload}
-                    onBodyChange={setBody}
-                  />
-                </div>
-                <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-400">Nội dung bên dưới</div>
-                  <EmailTemplateEditor
-                    key={`blocks-${editorKey}`}
-                    subject={subject}
-                    body={body}
-                    surveyTitle={form.title}
-                    questions={questionPayload}
-                    onSubjectChange={setSubject}
-                    onBodyChange={setBody}
-                    showSubject={false}
-                  />
-                </div>
-              </div>
-            )}
+            <EmailComposer
+              key={`composer-${editorKey}`}
+              subject={subject}
+              body={body}
+              surveyTitle={form.title}
+              questions={questionPayload}
+              onSubjectChange={setSubject}
+              onBodyChange={setBody}
+            />
           </div>
         </>
       )}

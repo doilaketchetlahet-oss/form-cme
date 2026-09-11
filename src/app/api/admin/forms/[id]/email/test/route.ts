@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import { compileEmailHtml, fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
-import { composeInviteImage, overlayEmailPayload } from "@/lib/email-overlay";
+import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -84,15 +84,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const rawBody = payload?.email_body || survey.email_body || "";
   const rawSubject = payload?.email_subject || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
   const html = compileEmailHtml(rawBody, values, qrImgUrl);
-  let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
+  const attachments: ResendAttachment[] = [];
+  const template = parseEmailTemplate(rawBody);
   if (hasOverlayImage(rawBody)) {
     try {
-      const template = parseEmailTemplate(rawBody);
       if (!template.overlay) {
         return NextResponse.json({ ok: false, error: "Chưa có ảnh thiệp để gửi thử." }, { status: 400 });
       }
       const jpeg = await composeInviteImage(template.overlay, values, previewUrl);
-      attachments = overlayEmailPayload(jpeg).attachments;
+      attachments.push(...overlayEmailPayload(jpeg).attachments);
     } catch (error) {
       return NextResponse.json({
         ok: false,
@@ -100,7 +100,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }, { status: 500 });
     }
   }
-  if (!html) {
+  if (template.attachments && template.attachments.length > 0) {
+    attachments.push(...await fetchFileAttachments(template.attachments));
+  }
+  if (!html && attachments.length === 0) {
     return NextResponse.json({ ok: false, error: "Chưa có nội dung thư để gửi thử." }, { status: 400 });
   }
 
@@ -113,7 +116,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       reply_to: process.env.RESEND_REPLY_TO || "huna2026@hoithaotructuyen.net",
       subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
       html,
-      ...(attachments ? { attachments } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
     }),
   });
 
