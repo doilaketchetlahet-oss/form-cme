@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, Clock } from "lucide-react";
+import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, Clock, BarChart3 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { SurveyResponse } from "@/lib/surveys";
 import { logCheckinEvent, type CheckinLog } from "@/lib/checkinLogs";
@@ -39,6 +39,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [resending, setResending] = useState(false);
   const [sessions, setSessions] = useState<string[]>([]);
   const [showSessions, setShowSessions] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [vipCheckinEnabled, setVipCheckinEnabled] = useState(false);
   const [qrBranding, setQrBranding] = useState<QRBranding | null>(null);
 
@@ -668,53 +669,61 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
           <KpiCard icon={CreditCard} label="Chờ thanh toán" value={pendingPaymentCount} color="#6366f1" />
         </div>
 
-        {/* Progress bar */}
-        <div className="glass relative mb-4 overflow-hidden rounded-2xl p-4 sm:p-5">
-          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #0ea5e9, #06b6d400)" }} />
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-slate-600">Tiến độ check-in</span>
-            <span className="text-xs text-slate-500">{checkedCount}/{totalCount}</span>
-          </div>
-          <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-            <motion.div className="h-full bg-gradient-to-r from-sky-500 to-cyan-500 rounded-full"
-              initial={{ width: 0 }} animate={{ width: `${checkinRate}%` }} transition={{ duration: 0.5 }} />
-          </div>
+        {/* Detailed stats: by hall + by hour */}
+        {(hallStats.length > 0 || hourRange.length > 0) && (
+          <div className="glass relative mb-4 overflow-hidden rounded-2xl">
+            <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #0ea5e9, #06b6d400)" }} />
+            <button onClick={() => setShowStats((s) => !s)}
+              className="flex w-full items-center justify-between px-4 py-3 transition-colors hover:bg-white/50">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <BarChart3 size={15} className="text-sky-500" /> Thống kê chi tiết
+                <span className="text-xs font-normal text-slate-400">{checkedCount}/{totalCount} đã check-in</span>
+              </span>
+              <span className="text-xs text-slate-400">{showStats ? "▲" : "▼"}</span>
+            </button>
+            <AnimatePresence>
+              {showStats && (
+                <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
+                  <div className="px-4 pb-4">
+                    {hallStats.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-medium text-slate-600">Theo hội trường</p>
+                        {hallStats.map((h) => (
+                          <div key={h.hall}>
+                            <div className="flex items-center justify-between text-[11px] mb-1">
+                              <span className="text-slate-600 font-medium">🏛 {h.hall}</span>
+                              <span className="text-slate-500">{h.checked}/{h.total}</span>
+                            </div>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${h.total > 0 ? (h.checked / h.total) * 100 : 0}%`, background: "linear-gradient(90deg, #6366f1, #8b5cf6)" }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
-          {/* Hall breakdown */}
-          {hallStats.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {hallStats.map((h) => (
-                <div key={h.hall}>
-                  <div className="flex items-center justify-between text-[11px] mb-1">
-                    <span className="text-slate-600 font-medium">🏛 {h.hall}</span>
-                    <span className="text-slate-500">{h.checked}/{h.total}</span>
+                    {hourRange.length > 0 && (
+                      <div className={hallStats.length > 0 ? "mt-4 border-t border-slate-100 pt-3" : ""}>
+                        <p className="text-[11px] font-medium text-slate-600 mb-2">Check-in theo giờ</p>
+                        <div className="flex items-end gap-1 h-16">
+                          {hourRange.map((h) => {
+                            const count = hourBuckets[h] || 0;
+                            return (
+                              <div key={h} className="flex-1 flex flex-col items-center gap-1">
+                                <div className="w-full rounded-t" style={{ height: `${count > 0 ? (count / maxHourCount) * 100 : 5}%`, minHeight: "2px", background: count > 0 ? "linear-gradient(180deg, #818cf8, #6366f1)" : "#e2e8f0" }} title={`${count} người`} />
+                                <span className="text-[9px] text-slate-400">{h}h</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${h.total > 0 ? (h.checked / h.total) * 100 : 0}%`, background: "linear-gradient(90deg, #6366f1, #8b5cf6)" }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Check-in by hour */}
-          {hourRange.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-slate-100">
-              <p className="text-[11px] font-medium text-slate-600 mb-2">Check-in theo giờ</p>
-              <div className="flex items-end gap-1 h-16">
-                {hourRange.map((h) => {
-                  const count = hourBuckets[h] || 0;
-                  return (
-                    <div key={h} className="flex-1 flex flex-col items-center gap-1">
-                      <div className="w-full rounded-t" style={{ height: `${count > 0 ? (count / maxHourCount) * 100 : 5}%`, minHeight: "2px", background: count > 0 ? "linear-gradient(180deg, #818cf8, #6366f1)" : "#e2e8f0" }} title={`${count} người`} />
-                      <span className="text-[9px] text-slate-400">{h}h</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         {/* Sessions panel */}
         <div className="glass relative mb-4 overflow-hidden rounded-2xl">
