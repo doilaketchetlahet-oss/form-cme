@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, Clock, BarChart3 } from "lucide-react";
+import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, BarChart3 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { SurveyResponse } from "@/lib/surveys";
 import { logCheckinEvent, type CheckinLog } from "@/lib/checkinLogs";
@@ -661,14 +661,6 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 py-4">
-        {/* Stats dashboard */}
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <KpiCard icon={Users} label="Tổng đăng ký" value={totalCount} color="#0ea5e9" />
-          <KpiCard icon={UserCheck} label="Đã check-in" value={checkedCount} hint={`${checkinRate}%`} color="#10b981" />
-          <KpiCard icon={Clock} label="Chưa check-in" value={uncheckedCount} color="#f59e0b" />
-          <KpiCard icon={CreditCard} label="Chờ thanh toán" value={pendingPaymentCount} color="#6366f1" />
-        </div>
-
         {/* Detailed stats: by hall + by hour */}
         {(hallStats.length > 0 || hourRange.length > 0) && (
           <div className="glass relative mb-4 overflow-hidden rounded-2xl">
@@ -1116,31 +1108,6 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
 function isPaymentSettled(status: SurveyResponse["payment_status"]) {
   return !status || status === "not_required" || status === "paid";
-}
-
-function KpiCard({ icon: Icon, label, value, hint, color }: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  label: string;
-  value: number;
-  hint?: string;
-  color: string;
-}) {
-  return (
-    <div
-      className="glass relative overflow-hidden rounded-2xl p-4"
-      style={{ background: `linear-gradient(135deg, ${color}14, rgba(255,255,255,0.88) 55%)` }}
-    >
-      <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${color}, ${color}00)` }} />
-      <div className="mb-2 flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}22`, border: `1px solid ${color}44`, color }}>
-          <Icon size={15} />
-        </div>
-        <span className="text-[11px] uppercase tracking-widest text-slate-500">{label}</span>
-      </div>
-      <div className="text-2xl font-bold tabular-nums text-slate-900">{value.toLocaleString("vi-VN")}</div>
-      {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
-    </div>
-  );
 }
 
 function formatPaymentStatus(status: SurveyResponse["payment_status"]) {
