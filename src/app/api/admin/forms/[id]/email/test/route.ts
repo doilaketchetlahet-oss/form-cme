@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
-import { compileEmailHtml, fillMergeTokens, sampleMergeValues } from "@/lib/email-template";
+import { compileEmailHtml, fillMergeTokens, isOverlayEmailTemplate, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
+import { composeInviteImage, overlayEmailPayload } from "@/lib/email-overlay";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -81,7 +83,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const rawBody = payload?.email_body || survey.email_body || "";
   const rawSubject = payload?.email_subject || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
-  const html = compileEmailHtml(rawBody, values, qrImgUrl);
+  let html = compileEmailHtml(rawBody, values, qrImgUrl);
+  let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
+  if (isOverlayEmailTemplate(rawBody)) {
+    try {
+      const template = parseEmailTemplate(rawBody);
+      if (!template.overlay) {
+        return NextResponse.json({ ok: false, error: "Chưa có ảnh thiệp để gửi thử." }, { status: 400 });
+      }
+      const jpeg = await composeInviteImage(template.overlay, values, previewUrl);
+      const overlayMail = overlayEmailPayload(jpeg);
+      html = overlayMail.html;
+      attachments = overlayMail.attachments;
+    } catch (error) {
+      return NextResponse.json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Ghép ảnh thiệp thất bại.",
+      }, { status: 500 });
+    }
+  }
   if (!html) {
     return NextResponse.json({ ok: false, error: "Chưa có nội dung thư để gửi thử." }, { status: 400 });
   }
@@ -95,6 +115,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       reply_to: process.env.RESEND_REPLY_TO || "huna2026@hoithaotructuyen.net",
       subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
       html,
+      ...(attachments ? { attachments } : {}),
     }),
   });
 

@@ -8,8 +8,11 @@ import {
   compileEmailHtml,
   fillMergeTokens,
   findAttendeeName,
+  isOverlayEmailTemplate,
+  parseEmailTemplate,
   type EmailMergeQuestion,
 } from "@/lib/email-template";
+import { composeInviteImage, overlayEmailPayload } from "@/lib/email-overlay";
 
 function stripHtml(html: string) {
   return html
@@ -85,6 +88,8 @@ function defaultHtml(values: { heading: string; intro: string; title: string; na
     </div>
   `;
 }
+
+export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -171,7 +176,22 @@ export async function POST(req: NextRequest) {
   const textValues = buildMergeValues(mergeInput, false);
 
   let html = compileEmailHtml(resolvedBody, htmlValues, qrImgUrl);
-  if (!html) {
+  let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
+  if (isOverlayEmailTemplate(resolvedBody)) {
+    try {
+      const template = parseEmailTemplate(resolvedBody);
+      if (template.overlay) {
+        const jpeg = await composeInviteImage(template.overlay, textValues, String(checkinUrl));
+        const overlayMail = overlayEmailPayload(jpeg);
+        html = overlayMail.html;
+        attachments = overlayMail.attachments;
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Ghép ảnh thiệp thất bại";
+      await markEmailStatus(responseId, "failed", detail);
+      return NextResponse.json({ error: "Compose failed", detail }, { status: 500 });
+    }
+  } else if (!html) {
     html = defaultHtml({
       heading: isReminder ? "🔔 Nhắc lịch sự kiện" : "✅ Xác nhận đăng ký thành công",
       intro: isReminder
@@ -209,6 +229,7 @@ export async function POST(req: NextRequest) {
       subject,
       html,
       text,
+      ...(attachments ? { attachments } : {}),
       headers: {
         "X-Entity-Ref-ID": `form-cme-${Date.now()}`,
       },

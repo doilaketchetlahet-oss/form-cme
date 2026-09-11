@@ -2,6 +2,29 @@ export const EMAIL_TEMPLATE_VERSION = 1;
 
 export type EmailBlockAlign = "left" | "center" | "right";
 export type EmailBlockType = "heading" | "text" | "image" | "button" | "qr" | "divider" | "spacer" | "html";
+export type EmailMode = "blocks" | "overlay";
+export type OverlayFieldKind = "text" | "qr";
+
+export type OverlayField = {
+  id: string;
+  kind: OverlayFieldKind;
+  token: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fontSize?: number;
+  color?: string;
+  align?: EmailBlockAlign;
+  bold?: boolean;
+};
+
+export type EmailOverlay = {
+  imageUrl: string;
+  width: number;
+  height: number;
+  fields: OverlayField[];
+};
 
 export type EmailTheme = {
   accent?: string;
@@ -33,8 +56,10 @@ export type EmailBlock = {
 
 export type EmailTemplate = {
   v: typeof EMAIL_TEMPLATE_VERSION;
+  mode?: EmailMode;
   blocks: EmailBlock[];
   theme?: EmailTheme;
+  overlay?: EmailOverlay | null;
 };
 
 export type EmailMergeQuestion = {
@@ -114,11 +139,26 @@ export function defaultEmailBlocks(): EmailBlock[] {
   ];
 }
 
+export function normalizeOverlay(overlay?: EmailOverlay | null): EmailOverlay | null {
+  if (!overlay?.imageUrl) return null;
+  const fields = Array.isArray(overlay.fields)
+    ? overlay.fields.filter((field) => field && typeof field.id === "string" && typeof field.token === "string")
+    : [];
+  return {
+    imageUrl: overlay.imageUrl,
+    width: Math.max(1, Number(overlay.width) || 1),
+    height: Math.max(1, Number(overlay.height) || 1),
+    fields,
+  };
+}
+
 export function serializeEmailTemplate(template: EmailTemplate): string {
   return JSON.stringify({
     v: EMAIL_TEMPLATE_VERSION,
+    mode: template.mode === "overlay" ? "overlay" : "blocks",
     blocks: template.blocks,
     theme: normalizeEmailTheme(template.theme),
+    overlay: normalizeOverlay(template.overlay),
   });
 }
 
@@ -139,15 +179,25 @@ function isValidBlock(value: unknown): value is EmailBlock {
 
 export function parseEmailTemplate(raw: string | null | undefined): EmailTemplate {
   const value = String(raw ?? "").trim();
-  if (!value) return { v: EMAIL_TEMPLATE_VERSION, blocks: defaultEmailBlocks(), theme: normalizeEmailTheme() };
+  if (!value) {
+    return {
+      v: EMAIL_TEMPLATE_VERSION,
+      mode: "blocks",
+      blocks: defaultEmailBlocks(),
+      theme: normalizeEmailTheme(),
+      overlay: null,
+    };
+  }
   try {
     const parsed = JSON.parse(value);
-    if (parsed?.v === EMAIL_TEMPLATE_VERSION && Array.isArray(parsed.blocks)) {
-      const blocks = parsed.blocks.filter(isValidBlock);
+    if (parsed?.v === EMAIL_TEMPLATE_VERSION && (Array.isArray(parsed.blocks) || parsed.mode === "overlay")) {
+      const blocks = (Array.isArray(parsed.blocks) ? parsed.blocks : []).filter(isValidBlock);
       return {
         v: EMAIL_TEMPLATE_VERSION,
+        mode: parsed.mode === "overlay" ? "overlay" : "blocks",
         blocks: blocks.length > 0 ? blocks : defaultEmailBlocks(),
         theme: normalizeEmailTheme(parsed.theme),
+        overlay: normalizeOverlay(parsed.overlay),
       };
     }
   } catch {
@@ -155,9 +205,24 @@ export function parseEmailTemplate(raw: string | null | undefined): EmailTemplat
   }
   return {
     v: EMAIL_TEMPLATE_VERSION,
+    mode: "blocks",
     blocks: [{ id: newEmailBlockId(), type: "html", text: value }],
     theme: normalizeEmailTheme(),
+    overlay: null,
   };
+}
+
+export function isOverlayEmailTemplate(raw: string | null | undefined): boolean {
+  try {
+    const parsed = JSON.parse(String(raw ?? "").trim());
+    return parsed?.v === EMAIL_TEMPLATE_VERSION && parsed?.mode === "overlay" && !!parsed?.overlay?.imageUrl;
+  } catch {
+    return false;
+  }
+}
+
+export function overlayEmailHtml() {
+  return `<div style="margin:0;padding:0;background:#ffffff"><img src="cid:invite" alt="Thư mời" width="640" style="width:100%;max-width:640px;height:auto;display:block;border:0" /></div>`;
 }
 
 export function slugifyEmailField(text: string): string {
@@ -353,6 +418,7 @@ export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = "", themeInpu
 export function compileEmailHtml(raw: string | null | undefined, values: Record<string, string>, qrImgUrl = "") {
   const source = String(raw ?? "").trim();
   if (!source) return "";
+  if (isOverlayEmailTemplate(source)) return overlayEmailHtml();
   if (isVisualEmailTemplate(source)) {
     const template = parseEmailTemplate(source);
     return fillMergeTokens(renderEmailBlocks(template.blocks, qrImgUrl, template.theme), values, qrImgUrl);
@@ -360,13 +426,14 @@ export function compileEmailHtml(raw: string | null | undefined, values: Record<
   return fillMergeTokens(source, values, qrImgUrl);
 }
 
-export function sampleMergeValues(surveyTitle = "Sự kiện mẫu"): Record<string, string> {
+export function sampleMergeValues(surveyTitle = "Sự kiện mẫu", html = false): Record<string, string> {
+  const wrap = (value: string) => html ? escapeHtml(value) : value;
   return {
-    name: "Nguyễn Văn A",
-    email: "nguyenvana@email.com",
-    hall: "Hội trường 1",
-    survey_title: escapeHtml(surveyTitle),
-    checkin_url: "https://dangkyhoithao.online/checkin/preview",
+    name: wrap("Nguyễn Văn A"),
+    email: wrap("nguyenvana@email.com"),
+    hall: wrap("Hội trường 1"),
+    survey_title: wrap(surveyTitle),
+    checkin_url: wrap("https://dangkyhoithao.online/checkin/preview"),
     qr_image: "",
   };
 }

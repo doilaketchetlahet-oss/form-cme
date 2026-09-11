@@ -6,7 +6,9 @@ import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getRegistrationForm } from "@/lib/forms";
 import { supabase } from "@/lib/supabase";
 import type { Survey, SurveyQuestion } from "@/lib/surveys";
+import { parseEmailTemplate, serializeEmailTemplate, type EmailMode } from "@/lib/email-template";
 import { EmailTemplateEditor } from "./EmailTemplateEditor";
+import { EmailOverlayEditor } from "./EmailOverlayEditor";
 
 export function EmailTemplatePage({ formId }: { formId: string }) {
   const { canManageForms } = useAdminAccess();
@@ -17,6 +19,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [body, setBody] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [sendingTest, setSendingTest] = useState(false);
+  const [mode, setMode] = useState<EmailMode>("blocks");
 
   useEffect(() => {
     (async () => {
@@ -25,9 +28,16 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       setForm(next);
       setSubject(next?.email_subject ?? "");
       setBody(next?.email_body ?? "");
+      setMode(parseEmailTemplate(next?.email_body ?? "").mode === "overlay" ? "overlay" : "blocks");
       setLoading(false);
     })();
   }, [formId]);
+
+  const switchMode = (nextMode: EmailMode) => {
+    const parsed = parseEmailTemplate(body);
+    setMode(nextMode);
+    setBody(serializeEmailTemplate({ ...parsed, mode: nextMode }));
+  };
 
   const handleSave = async () => {
     if (!canManageForms || saving) return;
@@ -188,21 +198,64 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           <p className="text-sm text-slate-600">Tài khoản này không được chỉnh sửa nội dung email.</p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
-          <EmailTemplateEditor
-            subject={subject}
-            body={body}
-            surveyTitle={form.title}
-            questions={form.questions.map((question) => ({
-              id: question.id,
-              text: question.text,
-              type: question.type,
-              options: question.options,
-            }))}
-            onSubjectChange={setSubject}
-            onBodyChange={setBody}
-          />
+        <>
+        <div className="mb-4 flex w-fit gap-1 rounded-xl border border-sky-100 bg-white p-1">
+          <button
+            type="button"
+            onClick={() => switchMode("blocks")}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === "blocks" ? "bg-sky-500 text-on-brand" : "text-slate-600"}`}
+          >
+            Khối
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode("overlay")}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === "overlay" ? "bg-sky-500 text-on-brand" : "text-slate-600"}`}
+          >
+            Ảnh thiệp
+          </button>
         </div>
+        <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
+          {mode === "overlay" ? (
+            <div className="space-y-4">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-slate-500">Tiêu đề email</span>
+                <input
+                  value={subject}
+                  onChange={(event) => setSubject(event.target.value)}
+                  placeholder="Mã check-in: {{survey_title}}"
+                  className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none"
+                />
+              </label>
+              <EmailOverlayEditor
+                body={body}
+                surveyTitle={form.title}
+                questions={form.questions.map((question) => ({
+                  id: question.id,
+                  text: question.text,
+                  type: question.type,
+                  options: question.options,
+                }))}
+                onBodyChange={setBody}
+              />
+            </div>
+          ) : (
+            <EmailTemplateEditor
+              subject={subject}
+              body={body}
+              surveyTitle={form.title}
+              questions={form.questions.map((question) => ({
+                id: question.id,
+                text: question.text,
+                type: question.type,
+                options: question.options,
+              }))}
+              onSubjectChange={setSubject}
+              onBodyChange={setBody}
+            />
+          )}
+        </div>
+        </>
       )}
     </div>
   );

@@ -78,14 +78,20 @@ export function EmailTemplateEditor({
   const commit = (nextBlocks: EmailBlock[], nextTheme = theme) => {
     setBlocks(nextBlocks);
     setTheme(nextTheme);
-    onBodyChange(serializeEmailTemplate({ v: 1, blocks: nextBlocks, theme: nextTheme }));
+    const current = parseEmailTemplate(body);
+    onBodyChange(serializeEmailTemplate({
+      ...current,
+      mode: "blocks",
+      blocks: nextBlocks,
+      theme: nextTheme,
+    }));
   };
 
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
     if (!body.trim()) {
-      onBodyChange(serializeEmailTemplate({ v: 1, blocks, theme }));
+      onBodyChange(serializeEmailTemplate({ v: 1, mode: "blocks", blocks, theme, overlay: null }));
     }
   }, [body, blocks, theme, onBodyChange]);
 
@@ -94,7 +100,7 @@ export function EmailTemplateEditor({
     const values = sampleMergeValues(surveyTitle || "Sự kiện");
     const qrPreview = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=preview";
     values.qr_image = qrPreview;
-    const serialized = serializeEmailTemplate({ v: 1, blocks, theme });
+    const serialized = serializeEmailTemplate({ v: 1, mode: "blocks", blocks, theme, overlay: parseEmailTemplate(body).overlay });
     return compileEmailHtml(serialized, values, qrPreview);
   }, [blocks, theme, surveyTitle]);
 
