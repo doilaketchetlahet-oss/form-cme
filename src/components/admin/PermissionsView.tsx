@@ -28,6 +28,11 @@ type AdminMember = {
   created_at: string | null;
 };
 
+type RegisteredUser = {
+  email: string;
+  created_at: string | null;
+};
+
 type ToastMessage = {
   type: "success" | "error";
   text: string;
@@ -61,6 +66,9 @@ export function PermissionsView() {
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<AdminRole>("viewer");
   const [message, setMessage] = useState<ToastMessage | null>(null);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   const canManage = access.isOwner && !access.setupRequired;
 
@@ -82,17 +90,44 @@ export function PermissionsView() {
     setMembers((data ?? []) as AdminMember[]);
   }, [access.setupRequired]);
 
+  const loadRegisteredUsers = useCallback(async () => {
+    if (access.setupRequired) return;
+    setLoadingUsers(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      setLoadingUsers(false);
+      return;
+    }
+
+    const response = await fetch("/api/admin/permissions/users", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const result = await response.json().catch(() => null);
+    setLoadingUsers(false);
+
+    if (!response.ok || !result?.ok) {
+      setUsersError(result?.error ?? "Không tải được danh sách tài khoản.");
+      return;
+    }
+
+    setUsersError(null);
+    setRegisteredUsers((result.users ?? []) as RegisteredUser[]);
+  }, [access.setupRequired]);
+
   useEffect(() => {
     let active = true;
 
     const refresh = async () => {
       await Promise.resolve();
-      if (active) await loadMembers();
+      if (!active) return;
+      await loadMembers();
+      await loadRegisteredUsers();
     };
 
     refresh();
     return () => { active = false; };
-  }, [loadMembers]);
+  }, [loadMembers, loadRegisteredUsers]);
 
   const filteredMembers = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -108,6 +143,12 @@ export function PermissionsView() {
     admin: members.filter((member) => member.role === "admin").length,
     viewer: members.filter((member) => member.role === "viewer").length,
   }), [members]);
+
+  const memberRoles = useMemo(() => {
+    const map = new Map<string, AdminRole>();
+    members.forEach((member) => map.set(member.email.toLowerCase(), member.role));
+    return map;
+  }, [members]);
 
   const showMessage = (nextMessage: ToastMessage) => {
     setMessage(nextMessage);
@@ -141,19 +182,19 @@ export function PermissionsView() {
     window.setTimeout(() => window.location.reload(), 1200);
   };
 
-  const handleAddMember = async () => {
+  const grantUser = async (email: string, role: AdminRole) => {
     if (!canManage || saving) return;
 
-    const email = newEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      showMessage({ type: "error", text: "Nhập email hợp lệ để cấp quyền." });
+    const normalized = email.trim().toLowerCase();
+    if (!normalized || !normalized.includes("@")) {
+      showMessage({ type: "error", text: "Email không hợp lệ." });
       return;
     }
 
     setSaving(true);
     const { error } = await supabase
       .from("admin_members")
-      .upsert({ email, role: newRole, active: true }, { onConflict: "email" });
+      .upsert({ email: normalized, role, active: true }, { onConflict: "email" });
     setSaving(false);
 
     if (error) {
@@ -161,10 +202,20 @@ export function PermissionsView() {
       return;
     }
 
+    showMessage({ type: "success", text: `Đã cấp quyền ${getAdminRoleLabel(role)} cho ${normalized}.` });
+    await loadMembers();
+  };
+
+  const handleAddMember = async () => {
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      showMessage({ type: "error", text: "Nhập email hợp lệ để cấp quyền." });
+      return;
+    }
+
+    await grantUser(email, newRole);
     setNewEmail("");
     setNewRole("viewer");
-    showMessage({ type: "success", text: "Đã cập nhật quyền truy cập." });
-    await loadMembers();
   };
 
   const handleRoleChange = async (member: AdminMember, role: AdminRole) => {
@@ -298,6 +349,17 @@ export function PermissionsView() {
                 onRoleChange={setNewRole}
                 onAdd={handleAddMember}
               />
+              <RegisteredAccountsPanel
+                users={registeredUsers}
+                memberRoles={memberRoles}
+                loading={loadingUsers}
+                error={usersError}
+                canManage={canManage}
+                saving={saving}
+                query={query}
+                onReload={loadRegisteredUsers}
+                onGrant={(email) => grantUser(email, newRole)}
+              />
               <RoleGuide />
             </aside>
           </div>
@@ -410,6 +472,103 @@ function AddMemberPanel({
           <UserPlus size={16} /> {saving ? "Đang lưu..." : "Cấp quyền"}
         </button>
       </div>
+    </section>
+  );
+}
+
+function RegisteredAccountsPanel({
+  users,
+  memberRoles,
+  loading,
+  error,
+  canManage,
+  saving,
+  query,
+  onReload,
+  onGrant,
+}: {
+  users: RegisteredUser[];
+  memberRoles: Map<string, AdminRole>;
+  loading: boolean;
+  error: string | null;
+  canManage: boolean;
+  saving: boolean;
+  query: string;
+  onReload: () => void;
+  onGrant: (email: string) => void;
+}) {
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = needle
+      ? users.filter((user) => user.email.includes(needle))
+      : users;
+    return [...filtered].sort((a, b) => {
+      const aMember = memberRoles.has(a.email) ? 1 : 0;
+      const bMember = memberRoles.has(b.email) ? 1 : 0;
+      if (aMember !== bMember) return aMember - bMember;
+      return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+    });
+  }, [users, memberRoles, query]);
+
+  return (
+    <section className="glass rounded-2xl p-5">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <Users size={16} /> Tài khoản đã đăng ký
+        </h2>
+        <button
+          onClick={onReload}
+          disabled={loading}
+          title="Tải lại"
+          className="text-slate-500 hover:text-white disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
+      <p className="mb-3 text-xs text-slate-500">
+        Tài khoản đã sign up trong hệ thống. Tài khoản chưa có quyền hiển thị trên cùng.
+      </p>
+
+      {error ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">{error}</div>
+      ) : loading ? (
+        <div className="space-y-2">
+          {[0, 1, 2].map((item) => <div key={item} className="h-11 rounded-xl bg-white/[0.04] animate-pulse" />)}
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-slate-500">Chưa có tài khoản nào phù hợp.</p>
+      ) : (
+        <div className="max-h-80 space-y-1.5 overflow-auto pr-1">
+          {rows.map((user) => {
+            const role = memberRoles.get(user.email);
+            return (
+              <div key={user.email} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-white">{user.email}</div>
+                  {user.created_at && (
+                    <div className="text-[11px] text-slate-500">Đăng ký {new Date(user.created_at).toLocaleDateString("vi-VN")}</div>
+                  )}
+                </div>
+                {role ? (
+                  <span className={cn("inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold", ROLE_META[role].tone)}>
+                    {ROLE_META[role].label}
+                  </span>
+                ) : canManage ? (
+                  <button
+                    onClick={() => onGrant(user.email)}
+                    disabled={saving}
+                    className="shrink-0 rounded-lg bg-sky-600 px-2.5 py-1.5 text-[11px] font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-50"
+                  >
+                    Cấp quyền
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[11px] text-slate-500">Chưa cấp</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
