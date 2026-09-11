@@ -2,7 +2,7 @@ export const EMAIL_TEMPLATE_VERSION = 1;
 
 export type EmailBlockAlign = "left" | "center" | "right";
 export type EmailBlockType = "heading" | "text" | "image" | "button" | "qr" | "divider" | "spacer" | "html";
-export type EmailMode = "blocks" | "overlay";
+export type EmailMode = "blocks" | "overlay" | "combined";
 export type OverlayFieldKind = "text" | "qr";
 
 export type OverlayField = {
@@ -152,10 +152,15 @@ export function normalizeOverlay(overlay?: EmailOverlay | null): EmailOverlay | 
   };
 }
 
+function normalizeMode(value: unknown): EmailMode {
+  if (value === "overlay" || value === "combined") return value;
+  return "blocks";
+}
+
 export function serializeEmailTemplate(template: EmailTemplate): string {
   return JSON.stringify({
     v: EMAIL_TEMPLATE_VERSION,
-    mode: template.mode === "overlay" ? "overlay" : "blocks",
+    mode: normalizeMode(template.mode),
     blocks: template.blocks,
     theme: normalizeEmailTheme(template.theme),
     overlay: normalizeOverlay(template.overlay),
@@ -190,11 +195,11 @@ export function parseEmailTemplate(raw: string | null | undefined): EmailTemplat
   }
   try {
     const parsed = JSON.parse(value);
-    if (parsed?.v === EMAIL_TEMPLATE_VERSION && (Array.isArray(parsed.blocks) || parsed.mode === "overlay")) {
+    if (parsed?.v === EMAIL_TEMPLATE_VERSION && (Array.isArray(parsed.blocks) || parsed.mode === "overlay" || parsed.mode === "combined")) {
       const blocks = (Array.isArray(parsed.blocks) ? parsed.blocks : []).filter(isValidBlock);
       return {
         v: EMAIL_TEMPLATE_VERSION,
-        mode: parsed.mode === "overlay" ? "overlay" : "blocks",
+        mode: normalizeMode(parsed.mode),
         blocks: blocks.length > 0 ? blocks : defaultEmailBlocks(),
         theme: normalizeEmailTheme(parsed.theme),
         overlay: normalizeOverlay(parsed.overlay),
@@ -212,13 +217,26 @@ export function parseEmailTemplate(raw: string | null | undefined): EmailTemplat
   };
 }
 
-export function isOverlayEmailTemplate(raw: string | null | undefined): boolean {
+export function getEmailMode(raw: string | null | undefined): EmailMode {
   try {
     const parsed = JSON.parse(String(raw ?? "").trim());
-    return parsed?.v === EMAIL_TEMPLATE_VERSION && parsed?.mode === "overlay" && !!parsed?.overlay?.imageUrl;
+    if (parsed?.v === EMAIL_TEMPLATE_VERSION) return normalizeMode(parsed.mode);
   } catch {
-    return false;
+    // legacy HTML
   }
+  return "blocks";
+}
+
+// True when the email should include a composed invitation image, either as
+// the whole body (overlay) or above the HTML content (combined).
+export function hasOverlayImage(raw: string | null | undefined): boolean {
+  const mode = getEmailMode(raw);
+  if (mode !== "overlay" && mode !== "combined") return false;
+  return !!parseEmailTemplate(raw).overlay?.imageUrl;
+}
+
+export function isOverlayEmailTemplate(raw: string | null | undefined): boolean {
+  return hasOverlayImage(raw);
 }
 
 export function overlayEmailHtml() {
@@ -418,7 +436,14 @@ export function renderEmailBlocks(blocks: EmailBlock[], qrImgUrl = "", themeInpu
 export function compileEmailHtml(raw: string | null | undefined, values: Record<string, string>, qrImgUrl = "") {
   const source = String(raw ?? "").trim();
   if (!source) return "";
-  if (isOverlayEmailTemplate(source)) return overlayEmailHtml();
+  const mode = getEmailMode(source);
+  if (mode === "overlay" || mode === "combined") {
+    const template = parseEmailTemplate(source);
+    const blocksHtml = mode === "combined"
+      ? fillMergeTokens(renderEmailBlocks(template.blocks, qrImgUrl, template.theme), values, qrImgUrl)
+      : "";
+    return `${overlayEmailHtml()}${blocksHtml}`;
+  }
   if (isVisualEmailTemplate(source)) {
     const template = parseEmailTemplate(source);
     return fillMergeTokens(renderEmailBlocks(template.blocks, qrImgUrl, template.theme), values, qrImgUrl);

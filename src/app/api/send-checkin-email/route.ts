@@ -8,7 +8,7 @@ import {
   compileEmailHtml,
   fillMergeTokens,
   findAttendeeName,
-  isOverlayEmailTemplate,
+  hasOverlayImage,
   parseEmailTemplate,
   type EmailMergeQuestion,
 } from "@/lib/email-template";
@@ -177,14 +177,12 @@ export async function POST(req: NextRequest) {
 
   let html = compileEmailHtml(resolvedBody, htmlValues, qrImgUrl);
   let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
-  if (isOverlayEmailTemplate(resolvedBody)) {
+  if (hasOverlayImage(resolvedBody)) {
     try {
       const template = parseEmailTemplate(resolvedBody);
       if (template.overlay) {
         const jpeg = await composeInviteImage(template.overlay, textValues, String(checkinUrl));
-        const overlayMail = overlayEmailPayload(jpeg);
-        html = overlayMail.html;
-        attachments = overlayMail.attachments;
+        attachments = overlayEmailPayload(jpeg).attachments;
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Ghép ảnh thiệp thất bại";

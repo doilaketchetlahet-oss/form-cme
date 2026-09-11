@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
-import { compileEmailHtml, fillMergeTokens, isOverlayEmailTemplate, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
+import { compileEmailHtml, fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
 import { composeInviteImage, overlayEmailPayload } from "@/lib/email-overlay";
 
 export const runtime = "nodejs";
@@ -83,18 +83,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const rawBody = payload?.email_body || survey.email_body || "";
   const rawSubject = payload?.email_subject || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
-  let html = compileEmailHtml(rawBody, values, qrImgUrl);
+  const html = compileEmailHtml(rawBody, values, qrImgUrl);
   let attachments: ReturnType<typeof overlayEmailPayload>["attachments"] | undefined;
-  if (isOverlayEmailTemplate(rawBody)) {
+  if (hasOverlayImage(rawBody)) {
     try {
       const template = parseEmailTemplate(rawBody);
       if (!template.overlay) {
         return NextResponse.json({ ok: false, error: "Chưa có ảnh thiệp để gửi thử." }, { status: 400 });
       }
       const jpeg = await composeInviteImage(template.overlay, values, previewUrl);
-      const overlayMail = overlayEmailPayload(jpeg);
-      html = overlayMail.html;
-      attachments = overlayMail.attachments;
+      attachments = overlayEmailPayload(jpeg).attachments;
     } catch (error) {
       return NextResponse.json({
         ok: false,

@@ -32,7 +32,6 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; mode: "move" | "resize"; startX: number; startY: number; field: OverlayField } | null>(null);
   const overlayRef = useRef(overlay);
-  overlayRef.current = overlay;
 
   const mergeFields = useMemo(
     () => listMergeFields(questions).filter((field) => field.token !== "{{qr_url}}" && field.token !== "{{checkin_url}}"),
@@ -45,7 +44,6 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
     overlayRef.current = next;
     onBodyChange(serializeEmailTemplate({
       ...parseEmailTemplate(body),
-      mode: "overlay",
       overlay: next,
     }));
   };

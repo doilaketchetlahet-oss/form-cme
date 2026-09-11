@@ -356,3 +356,30 @@ create policy "public read survey files" on storage.objects
 drop policy if exists "authenticated delete survey files" on storage.objects;
 create policy "authenticated delete survey files" on storage.objects
   for delete to authenticated using (bucket_id = 'survey-uploads');
+
+-- Reusable email templates (shared across the admin workspace)
+create table if not exists email_templates (
+  id uuid primary key default gen_random_uuid(),
+  owner_email text,
+  name text not null,
+  subject text,
+  body text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_email_templates_updated
+  on email_templates (updated_at desc);
+
+alter table email_templates enable row level security;
+
+drop policy if exists "admin members read email templates" on email_templates;
+create policy "admin members read email templates" on email_templates
+  for select to authenticated
+  using (is_admin_member());
+
+drop policy if exists "admins write email templates" on email_templates;
+create policy "admins write email templates" on email_templates
+  for all to authenticated
+  using (can_manage_forms())
+  with check (can_manage_forms());

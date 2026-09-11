@@ -30,6 +30,7 @@ type Props = {
   questions: EmailMergeQuestion[];
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: string) => void;
+  showSubject?: boolean;
 };
 
 const BLOCK_OPTIONS: { type: EmailBlockType; label: string; icon: React.ReactNode }[] = [
@@ -68,6 +69,7 @@ export function EmailTemplateEditor({
   questions,
   onSubjectChange,
   onBodyChange,
+  showSubject = true,
 }: Props) {
   const parsed = useMemo(() => parseEmailTemplate(body), []);
   const [blocks, setBlocks] = useState<EmailBlock[]>(() => parsed.blocks);
@@ -81,7 +83,6 @@ export function EmailTemplateEditor({
     const current = parseEmailTemplate(body);
     onBodyChange(serializeEmailTemplate({
       ...current,
-      mode: "blocks",
       blocks: nextBlocks,
       theme: nextTheme,
     }));
@@ -100,7 +101,7 @@ export function EmailTemplateEditor({
     const values = sampleMergeValues(surveyTitle || "Sự kiện");
     const qrPreview = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=preview";
     values.qr_image = qrPreview;
-    const serialized = serializeEmailTemplate({ v: 1, mode: "blocks", blocks, theme, overlay: parseEmailTemplate(body).overlay });
+    const serialized = serializeEmailTemplate({ ...parseEmailTemplate(body), blocks, theme });
     return compileEmailHtml(serialized, values, qrPreview);
   }, [blocks, theme, surveyTitle]);
 
@@ -161,15 +162,17 @@ export function EmailTemplateEditor({
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
       <div className="space-y-3">
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-slate-500">Tiêu đề email</span>
-          <input
-            value={subject}
-            onChange={(event) => onSubjectChange(event.target.value)}
-            placeholder="Mã check-in: {{survey_title}}"
-            className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none"
-          />
-        </label>
+        {showSubject && (
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-slate-500">Tiêu đề email</span>
+            <input
+              value={subject}
+              onChange={(event) => onSubjectChange(event.target.value)}
+              placeholder="Mã check-in: {{survey_title}}"
+              className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none"
+            />
+          </label>
+        )}
 
         <div className="rounded-2xl border border-sky-100 bg-white p-3">
           <div className="mb-3 text-[10px] uppercase tracking-widest text-slate-400">Giao diện thư</div>
