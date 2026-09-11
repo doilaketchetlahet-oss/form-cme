@@ -62,7 +62,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           email_body: body.trim() || null,
         }),
       });
-      const result = await response.json().catch(() => ({ ok: false, error: "Không đọc được phản hồi từ server." }));
+      const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
         setMessage({ type: "error", text: result.error ?? "Lưu thư thất bại." });
         return;
@@ -102,7 +102,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           email_body: body.trim() || null,
         }),
       });
-      const result = await response.json().catch(() => ({ ok: false, error: "Không đọc được phản hồi từ server." }));
+      const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
         setMessage({ type: "error", text: result.error ?? "Gửi thử thất bại." });
         return;

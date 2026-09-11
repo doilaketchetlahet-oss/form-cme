@@ -1,7 +1,22 @@
-import * as faceapi from "@vladmandic/face-api";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const MODEL_URL = "/models";
+
+type FaceApiModule = typeof import("@vladmandic/face-api");
+
+// face-api (tfjs) crashes when evaluated during SSR, so it is loaded lazily
+// and only ever runs in the browser.
+let faceApiPromise: Promise<FaceApiModule> | null = null;
+
+async function getFaceApi(): Promise<FaceApiModule> {
+  if (!faceApiPromise) {
+    faceApiPromise = import("@vladmandic/face-api").then((mod) => {
+      const candidate = mod as FaceApiModule & { default?: FaceApiModule };
+      return candidate.default?.nets ? candidate.default : candidate;
+    });
+  }
+  return faceApiPromise;
+}
 
 let modelsLoaded = false;
 let loadingPromise: Promise<void> | null = null;
@@ -11,6 +26,7 @@ export async function loadFaceModels(): Promise<void> {
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
+    const faceapi = await getFaceApi();
     await Promise.all([
       faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -25,6 +41,7 @@ export async function loadFaceModels(): Promise<void> {
 export async function extractFaceDescriptor(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
 ): Promise<Float32Array | null> {
+  const faceapi = await getFaceApi();
   await loadFaceModels();
   const detection = await faceapi
     .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
@@ -38,7 +55,12 @@ export function compareFaces(
   descriptor1: Float32Array,
   descriptor2: Float32Array
 ): number {
-  return faceapi.euclideanDistance(descriptor1, descriptor2);
+  let sum = 0;
+  for (let i = 0; i < descriptor1.length; i += 1) {
+    const diff = descriptor1[i] - descriptor2[i];
+    sum += diff * diff;
+  }
+  return Math.sqrt(sum);
 }
 
 export interface FaceQualityReport {
@@ -75,6 +97,7 @@ export async function assessFaceQuality(
   };
 
   await loadFaceModels();
+  const faceapi = await getFaceApi();
 
   const canvas = document.createElement("canvas");
   canvas.width = input instanceof HTMLVideoElement ? input.videoWidth : input.width;
