@@ -2,12 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { BarChart3, ClipboardList, Copy, Download, ExternalLink, Link2, Loader2, Plus, QrCode, Search, Trash2, Trophy, X } from "lucide-react";
+import { BarChart3, ClipboardList, Copy, ExternalLink, Link2, Loader2, Plus, Search, Trash2, Trophy, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
-import { buildSurveyResponsesCSV, type SurveyAnalytics, type SurveyFormType, type SurveyQuestion, type SurveyResponse } from "@/lib/surveys";
-import { downloadCSV, slugify } from "@/lib/csv";
-import { supabase } from "@/lib/supabase";
+import type { SurveyFormType } from "@/lib/surveys";
 import {
   createRegistrationForm,
   deleteRegistrationForm,
@@ -90,23 +88,6 @@ export function FormsList() {
     if (!confirm(`Xóa form "${form.title}"? Tất cả câu hỏi và đăng ký liên quan sẽ bị xóa.`)) return;
     await deleteRegistrationForm(form.id);
     await refresh();
-  };
-
-  const handleExport = async (form: RegistrationFormSummary) => {
-    const [{ data: survey }, { data: questions }, { data: responses }] = await Promise.all([
-      supabase.from("surveys").select("*").eq("id", form.id).single(),
-      supabase.from("survey_questions").select("*").eq("survey_id", form.id).order("position"),
-      supabase.from("survey_responses").select("*").eq("survey_id", form.id),
-    ]);
-    if (!survey || !questions) return;
-    const analytics: SurveyAnalytics = {
-      survey,
-      questions: questions as SurveyQuestion[],
-      responses: (responses ?? []) as SurveyResponse[],
-      totalResponses: (responses ?? []).length,
-      questionStats: [],
-    };
-    downloadCSV(buildSurveyResponsesCSV(analytics), `${slugify(form.title)}-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   const copyLink = (id: string) => {
@@ -194,7 +175,6 @@ export function FormsList() {
                   form={form}
                   canManageForms={canManageForms}
                   onCopy={() => copyLink(form.id)}
-                  onExport={() => handleExport(form)}
                   onDuplicate={() => handleDuplicate(form)}
                   onDelete={() => handleDelete(form)}
                   duplicating={duplicatingId === form.id}
@@ -208,11 +188,10 @@ export function FormsList() {
   );
 }
 
-function FormCard({ form, canManageForms, onCopy, onExport, onDuplicate, onDelete, duplicating }: {
+function FormCard({ form, canManageForms, onCopy, onDuplicate, onDelete, duplicating }: {
   form: RegistrationFormSummary;
   canManageForms: boolean;
   onCopy: () => void;
-  onExport: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
   duplicating: boolean;
@@ -252,20 +231,14 @@ function FormCard({ form, canManageForms, onCopy, onExport, onDuplicate, onDelet
         <Link href={`/s/${form.id}`} target="_blank" title="Mở form" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-white hover:bg-white/5">
           <ExternalLink size={15} />
         </Link>
-        {form.formType === "registration" && (
-          <Link href={`/attendees/${form.id}`} target="_blank" title="Danh sách/QR" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-indigo-400 hover:bg-indigo-500/10">
-            <QrCode size={15} />
-          </Link>
-        )}
         <Link href={`/admin/forms/${form.id}/report`} title="Report" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-emerald-400 hover:bg-emerald-500/10">
           <BarChart3 size={15} />
         </Link>
-        <Link href={`/admin/forms/${form.id}/scoreboard`} title="Bảng điểm poster" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-amber-300 hover:bg-amber-400/10">
-          <Trophy size={15} />
-        </Link>
-        <button onClick={onExport} title="Xuất CSV" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-cyan-400 hover:bg-cyan-500/10">
-          <Download size={15} />
-        </button>
+        {form.formType === "poster_scoring" && (
+          <Link href={`/admin/forms/${form.id}/scoreboard`} title="Bảng điểm poster" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-amber-300 hover:bg-amber-400/10">
+            <Trophy size={15} />
+          </Link>
+        )}
         {canManageForms && (
           <button onClick={onDuplicate} disabled={duplicating} title="Nhân bản form" className="admin-subtle w-9 h-9 rounded-lg flex items-center justify-center hover:text-sky-400 hover:bg-sky-500/10 disabled:opacity-50">
             {duplicating ? <Loader2 size={15} className="animate-spin" /> : <Copy size={15} />}

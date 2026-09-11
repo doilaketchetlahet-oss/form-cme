@@ -89,6 +89,7 @@ export function FormEditorPage({ formId }: { formId: string }) {
   }
 
   const isCheckinForm = !form.form_type || form.form_type === "registration";
+  const isScoringForm = form.form_type === "poster_scoring";
 
   return (
     <div className="px-4 py-8 sm:px-8 max-w-7xl">
@@ -123,9 +124,11 @@ export function FormEditorPage({ formId }: { formId: string }) {
           <Link href={`/admin/forms/${form.id}/report`} className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-sky-600" title="Report">
             <BarChart3 size={16} />
           </Link>
-          <Link href={`/admin/forms/${form.id}/scoreboard`} className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-amber-600" title="Bảng điểm poster">
-            <Trophy size={16} />
-          </Link>
+          {isScoringForm && (
+            <Link href={`/admin/forms/${form.id}/scoreboard`} className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-amber-600" title="Bảng điểm poster">
+              <Trophy size={16} />
+            </Link>
+          )}
         </div>
       </div>
 
@@ -213,9 +216,11 @@ export function FormEditorPage({ formId }: { formId: string }) {
             <Link href={`/admin/forms/${form.id}/report`} className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700 hover:bg-sky-100">
               <BarChart3 size={15} /> Report
             </Link>
-            <Link href={`/admin/forms/${form.id}/scoreboard`} className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700 hover:bg-amber-100">
-              <Trophy size={15} /> Bảng điểm
-            </Link>
+            {isScoringForm && (
+              <Link href={`/admin/forms/${form.id}/scoreboard`} className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700 hover:bg-amber-100">
+                <Trophy size={15} /> Bảng điểm
+              </Link>
+            )}
           </div>
         </div>
       )}

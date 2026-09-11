@@ -154,9 +154,11 @@ export function FormReportView({ formId }: { formId: string }) {
           <Link href={`/attendees/${analytics.survey.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
             <QrCode size={16} /> Check-in
           </Link>
-          <Link href={`/admin/forms/${analytics.survey.id}/scoreboard`} className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100">
-            <Trophy size={16} /> Bảng điểm
-          </Link>
+          {analytics.survey.form_type === "poster_scoring" && (
+            <Link href={`/admin/forms/${analytics.survey.id}/scoreboard`} className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100">
+              <Trophy size={16} /> Bảng điểm
+            </Link>
+          )}
           <Link href={`/s/${analytics.survey.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10">
             <ExternalLink size={16} /> Public
           </Link>
