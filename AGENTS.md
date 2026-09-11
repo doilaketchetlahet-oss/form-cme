@@ -27,8 +27,15 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (server-only; email templates, events,
+  campaigns, permissions user list)
 - `RESEND_API_KEY`
 - `RESEND_FROM` (optional)
+- `RESEND_WEBHOOK_SECRET` (optional; verifies Resend delivery webhooks)
+- `EMAIL_PROVIDER` (optional; `resend` default or `smtp`)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`,
+  `SMTP_FROM` (when `EMAIL_PROVIDER=smtp`)
+- `CRON_SECRET` (optional; protects `/api/cron/email-campaigns`)
 - `SUPABASE_DB_URL` (optional after setup; needed by `/admin/permissions` to
   bootstrap role tables and policies from the UI)
 

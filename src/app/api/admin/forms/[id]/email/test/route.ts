@@ -4,6 +4,7 @@ import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import { compileEmailHtml, fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
+import { defaultFrom, defaultReplyTo, sendEmail } from "@/lib/server/email-provider";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -15,13 +16,9 @@ type RouteContext = {
 export async function POST(request: NextRequest, context: RouteContext) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const resendKey = process.env.RESEND_API_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
     return NextResponse.json({ ok: false, error: "Thiếu cấu hình Supabase." }, { status: 500 });
-  }
-  if (!resendKey) {
-    return NextResponse.json({ ok: false, error: "Chưa cấu hình RESEND_API_KEY." }, { status: 500 });
   }
 
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
@@ -65,7 +62,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const { data: survey } = await supabase
     .from("surveys")
-    .select("title, email_subject, email_body, checkin_theme")
+    .select("title, email_subject, email_body, checkin_theme, email_provider")
     .eq("id", surveyId)
     .maybeSingle();
 
@@ -107,23 +104,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Chưa có nội dung thư để gửi thử." }, { status: 400 });
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM || "Hội thảo HUNA 2026 <huna2026@hoithaotructuyen.net>",
-      to: [to],
-      reply_to: process.env.RESEND_REPLY_TO || "huna2026@hoithaotructuyen.net",
-      subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
-      html,
-      ...(attachments.length > 0 ? { attachments } : {}),
-    }),
-  });
+  const result = await sendEmail({
+    from: defaultFrom(),
+    to,
+    replyTo: defaultReplyTo(),
+    subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
+    html,
+    text: "",
+    ...(attachments.length > 0 ? { attachments } : {}),
+  }, (survey as { email_provider?: string | null }).email_provider ?? null);
 
-  if (!res.ok) {
-    const detail = await res.text();
-    return NextResponse.json({ ok: false, error: "Gửi thử thất bại.", detail }, { status: 500 });
+  if (!result.ok) {
+    return NextResponse.json({ ok: false, error: "Gửi thử thất bại.", detail: result.error }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, to });
+  return NextResponse.json({ ok: true, to, provider: result.provider });
 }

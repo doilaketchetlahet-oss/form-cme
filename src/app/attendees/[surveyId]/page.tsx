@@ -454,12 +454,13 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     alert("Gửi thất bại. Thử lại.");
   };
 
-  const sendReminders = async () => {
-    const targets = responses
-      .map((r) => ({ r, email: findEmail(r) }))
-      .filter((t) => t.email);
-    if (targets.length === 0) { alert("Không có ai có email."); return; }
-    if (!confirm(`Gửi email nhắc lịch đến ${targets.length} người? (Resend free: tối đa 100 email/ngày)`)) return;
+  const sendBulkEmails = async (
+    targets: { r: SurveyResponse; email: string }[],
+    mode: "reminder" | "default",
+    label: string,
+  ) => {
+    if (targets.length === 0) { alert("Không có ai để gửi."); return; }
+    if (!confirm(`${label} ${targets.length} người? (Resend free: tối đa 100 email/ngày)`)) return;
     setResending(true);
     let sent = 0, failed = 0;
     // Send sequentially to respect rate limits
@@ -473,7 +474,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             name: findName(r.answers) || "",
             checkinUrl: buildPublicUrl(`/checkin/${r.id}`),
             surveyTitle,
-            mode: "reminder",
+            ...(mode === "reminder" ? { mode: "reminder" } : {}),
             responseId: r.id,
             qrStyle: qrBranding,
           }),
@@ -493,8 +494,34 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       await new Promise((res) => setTimeout(res, 600)); // ~1.6/s to stay under limits
     }
     setResending(false);
-    alert(`Đã gửi ${sent} email nhắc lịch.${failed > 0 ? ` ${failed} thất bại.` : ""}`);
+    alert(`Đã gửi ${sent}.${failed > 0 ? ` ${failed} thất bại.` : ""}`);
   };
+
+  const sendReminders = () => sendBulkEmails(
+    responses
+      .map((r) => ({ r, email: findEmail(r) }))
+      .filter((t): t is { r: SurveyResponse; email: string } => !!t.email),
+    "reminder",
+    "Gửi email nhắc lịch đến",
+  );
+
+  const sendFailed = () => sendBulkEmails(
+    responses
+      .filter((r) => r.email_status === "failed")
+      .map((r) => ({ r, email: findEmail(r) }))
+      .filter((t): t is { r: SurveyResponse; email: string } => !!t.email),
+    "default",
+    "Gửi lại email lỗi cho",
+  );
+
+  const sendSelected = () => sendBulkEmails(
+    responses
+      .filter((r) => selectedIds.has(r.id))
+      .map((r) => ({ r, email: findEmail(r) }))
+      .filter((t): t is { r: SurveyResponse; email: string } => !!t.email),
+    "reminder",
+    "Gửi email cho người đã chọn:",
+  );
 
   const printBadge = (r: SurveyResponse) => {
     const name = findName(r.answers) || r.id.slice(0, 8);
@@ -585,6 +612,18 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors disabled:opacity-50">
               <Mail size={14} /> {resending ? "Đang gửi..." : "Nhắc lịch"}
             </button>
+            {responses.some((r) => r.email_status === "failed") && (
+              <button onClick={sendFailed} disabled={resending}
+                className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors disabled:opacity-50">
+                <RotateCcw size={14} /> Gửi lại lỗi
+              </button>
+            )}
+            {selectedIds.size > 0 && (
+              <button onClick={sendSelected} disabled={resending}
+                className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100 transition-colors disabled:opacity-50">
+                <Mail size={14} /> Gửi cho đã chọn ({selectedIds.size})
+              </button>
+            )}
             <Link href={`/scan/${surveyId}${hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
               className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-on-brand text-sm font-medium hover:bg-indigo-500 transition-colors">
               <QrCode size={14} /> Scan
@@ -1086,6 +1125,27 @@ function EmailStatusBadge({ response, compact = false }: { response: SurveyRespo
 
   const status = response.email_status;
   if (status === "sent") {
+    if (response.email_bounced_at || response.email_last_event === "bounced") {
+      return (
+        <span className={`inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 ${compact ? "mt-1 px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs font-medium"}`}>
+          <Mail size={compact ? 10 : 12} /> Không tới
+        </span>
+      );
+    }
+    if (response.email_opened_at || response.email_last_event === "opened") {
+      return (
+        <span className={`inline-flex items-center gap-1 rounded-full bg-teal-50 text-teal-700 ${compact ? "mt-1 px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs font-medium"}`}>
+          <Mail size={compact ? 10 : 12} /> Đã mở
+        </span>
+      );
+    }
+    if (response.email_delivered_at || response.email_last_event === "delivered") {
+      return (
+        <span className={`inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 ${compact ? "mt-1 px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs font-medium"}`}>
+          <Mail size={compact ? 10 : 12} /> Đã nhận
+        </span>
+      );
+    }
     return (
       <span className={`inline-flex items-center gap-1 rounded-full bg-emerald-50 text-emerald-700 ${compact ? "mt-1 px-1.5 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs font-medium"}`}>
         <Mail size={compact ? 10 : 12} /> Đã gửi QR

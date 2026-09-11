@@ -46,20 +46,38 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id: surveyId } = await context.params;
-  const payload = await request.json().catch(() => null) as { email_subject?: string | null; email_body?: string | null } | null;
+  const payload = await request.json().catch(() => null) as {
+    email_subject?: string | null;
+    email_body?: string | null;
+    email_provider?: string | null;
+  } | null;
   if (!payload) {
     return NextResponse.json({ ok: false, error: "Dữ liệu thư không hợp lệ." }, { status: 400 });
   }
 
+  const provider = payload.email_provider === "resend" || payload.email_provider === "smtp"
+    ? payload.email_provider
+    : null;
+
+  const baseUpdate = {
+    email_subject: payload.email_subject?.trim() || null,
+    email_body: payload.email_body?.trim() || null,
+  };
+
   const { error } = await supabase
     .from("surveys")
-    .update({
-      email_subject: payload.email_subject?.trim() || null,
-      email_body: payload.email_body?.trim() || null,
-    })
+    .update({ ...baseUpdate, email_provider: provider })
     .eq("id", surveyId);
 
   if (error) {
+    const message = (error.message ?? "").toLowerCase();
+    if (message.includes("email_provider")) {
+      const { error: fallbackError } = await supabase.from("surveys").update(baseUpdate).eq("id", surveyId);
+      if (fallbackError) {
+        return NextResponse.json({ ok: false, error: fallbackError.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true });
+    }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 

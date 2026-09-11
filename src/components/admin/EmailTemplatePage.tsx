@@ -32,9 +32,10 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
-  const [saved, setSaved] = useState({ subject: "", body: "" });
+  const [provider, setProvider] = useState<"" | "resend" | "smtp">("");
+  const [saved, setSaved] = useState({ subject: "", body: "", provider: "" as "" | "resend" | "smtp" });
 
-  const dirty = !loading && (subject !== saved.subject || body !== saved.body);
+  const dirty = !loading && (subject !== saved.subject || body !== saved.body || provider !== saved.provider);
   useUnsavedChangesWarning(dirty && canManageForms, "Thư mời có thay đổi chưa lưu. Rời trang?");
 
   useEffect(() => {
@@ -44,7 +45,14 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       setForm(next);
       setSubject(next?.email_subject ?? "");
       setBody(next?.email_body ?? "");
-      setSaved({ subject: next?.email_subject ?? "", body: next?.email_body ?? "" });
+      const nextProvider = (next as { email_provider?: string | null } | null)?.email_provider;
+      const normalized = nextProvider === "resend" || nextProvider === "smtp" ? nextProvider : "";
+      setProvider(normalized);
+      setSaved({
+        subject: next?.email_subject ?? "",
+        body: next?.email_body ?? "",
+        provider: normalized,
+      });
       setLoading(false);
     })();
   }, [formId]);
@@ -135,14 +143,14 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       const response = await fetch(`/api/admin/forms/${formId}/email`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ email_subject: subject.trim() || null, email_body: body.trim() || null }),
+        body: JSON.stringify({ email_subject: subject.trim() || null, email_body: body.trim() || null, email_provider: provider || null }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
         setMessage({ type: "error", text: result.error ?? "Lưu thư thất bại." });
         return;
       }
-      setSaved({ subject, body });
+      setSaved({ subject, body, provider });
       setMessage({ type: "success", text: "Đã lưu thư mời." });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Lưu thư thất bại." });
@@ -314,6 +322,18 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           </div>
 
           <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
+            <label className="mb-4 flex flex-col gap-1.5 sm:max-w-xs">
+              <span className="text-xs font-medium text-slate-500">Kênh gửi email</span>
+              <select
+                value={provider}
+                onChange={(event) => setProvider(event.target.value as "" | "resend" | "smtp")}
+                className="admin-dark-select admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
+              >
+                <option value="">Mặc định (theo hệ thống)</option>
+                <option value="resend">Resend</option>
+                <option value="smtp">SMTP riêng</option>
+              </select>
+            </label>
             <EmailComposer
               key={`composer-${editorKey}`}
               subject={subject}

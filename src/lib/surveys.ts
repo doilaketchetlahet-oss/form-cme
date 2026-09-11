@@ -97,6 +97,11 @@ export interface SurveyResponse {
   email_sent_at?: string | null;
   email_last_attempt_at?: string | null;
   email_error?: string | null;
+  email_provider?: string | null;
+  email_last_event?: string | null;
+  email_delivered_at?: string | null;
+  email_opened_at?: string | null;
+  email_bounced_at?: string | null;
   session_checkins?: Record<string, string> | null;
   payment_status?: PaymentStatus | null;
   payment_amount?: number | null;

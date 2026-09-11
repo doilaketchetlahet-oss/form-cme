@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   ClipboardList,
   Layers,
+  Send,
   ShieldCheck,
   Settings,
   Mail,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: "/admin/events", label: "Sự kiện", icon: Layers },
   { href: "/admin/forms", label: "Quản lý form", icon: ClipboardList },
   { href: "/admin/templates", label: "Template thư", icon: Mail },
+  { href: "/admin/campaigns", label: "Chiến dịch email", icon: Send },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];

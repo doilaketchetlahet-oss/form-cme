@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   },
 
   // Keep sharp native binaries external to the server bundle
-  serverExternalPackages: ["sharp"],
+  serverExternalPackages: ["sharp", "nodemailer"],
 
   // sharp loads its linux binaries via dynamic require, which file tracing
   // cannot follow. Include them (and the overlay fonts) in the lambdas that
