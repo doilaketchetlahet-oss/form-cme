@@ -1,22 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { createDbClient } from "@/lib/server/db";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
-
-const CREATE_SQL = `
-create extension if not exists pgcrypto;
-create table if not exists email_templates (
-  id uuid primary key default gen_random_uuid(),
-  owner_email text,
-  name text not null,
-  subject text,
-  body text not null,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-create index if not exists idx_email_templates_updated on email_templates (updated_at desc);
-`;
 
 type TemplateRow = {
   id: string;
@@ -26,7 +11,25 @@ type TemplateRow = {
   updated_at: string | null;
 };
 
-let tableEnsured = false;
+const MISSING_TABLE_HINT =
+  "Chưa có bảng email_templates. Hãy chạy file supabase/email-templates.sql trong Supabase SQL editor rồi thử lại.";
+
+function isMissingTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  const message = (error.message ?? "").toLowerCase();
+  return error.code === "42P01"
+    || error.code === "PGRST205"
+    || message.includes("does not exist")
+    || message.includes("could not find the table")
+    || message.includes("schema cache");
+}
+
+function getServiceClient(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 async function authorize(request: Request): Promise<{ email: string } | { error: NextResponse }> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -67,34 +70,32 @@ export async function GET(request: Request) {
   const auth = await authorize(request);
   if ("error" in auth) return auth.error;
 
-  const client = createDbClient();
-  if (!client) {
-    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_DB_URL để dùng thư viện template." }, { status: 400 });
+  const supabase = getServiceClient();
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_SERVICE_ROLE_KEY để dùng thư viện template." }, { status: 400 });
   }
 
-  try {
-    await client.connect();
-    if (!tableEnsured) {
-      await client.query(CREATE_SQL);
-      tableEnsured = true;
-    }
-    const result = await client.query<TemplateRow>(
-      "select id, name, subject, body, updated_at::text as updated_at from email_templates order by updated_at desc nulls last limit 200",
-    );
-    return NextResponse.json({ ok: true, templates: result.rows });
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Không tải được template." },
-      { status: 500 },
-    );
-  } finally {
-    await client.end().catch(() => {});
+  const { data, error } = await supabase
+    .from("email_templates")
+    .select("id, name, subject, body, updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ ok: true, templates: (data ?? []) as TemplateRow[] });
 }
 
 export async function POST(request: Request) {
   const auth = await authorize(request);
   if ("error" in auth) return auth.error;
+
+  const supabase = getServiceClient();
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_SERVICE_ROLE_KEY để lưu template." }, { status: 400 });
+  }
 
   const payload = await request.json().catch(() => null) as {
     id?: string;
@@ -110,42 +111,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Cần tên template và nội dung." }, { status: 400 });
   }
 
-  const client = createDbClient();
-  if (!client) {
-    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_DB_URL để lưu template." }, { status: 400 });
+  if (payload?.id) {
+    const { data, error } = await supabase
+      .from("email_templates")
+      .update({ name, subject, body, updated_at: new Date().toISOString() })
+      .eq("id", payload.id)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
+    }
+    if (!data) {
+      return NextResponse.json({ ok: false, error: "Không tìm thấy template." }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, id: data.id });
   }
 
-  try {
-    await client.connect();
-    if (!tableEnsured) {
-      await client.query(CREATE_SQL);
-      tableEnsured = true;
-    }
-
-    if (payload?.id) {
-      const result = await client.query<{ id: string }>(
-        "update email_templates set name = $1, subject = $2, body = $3, updated_at = now() where id = $4 returning id",
-        [name, subject, body, payload.id],
-      );
-      if (result.rowCount === 0) {
-        return NextResponse.json({ ok: false, error: "Không tìm thấy template." }, { status: 404 });
-      }
-      return NextResponse.json({ ok: true, id: result.rows[0].id });
-    }
-
-    const result = await client.query<{ id: string }>(
-      "insert into email_templates (owner_email, name, subject, body) values ($1, $2, $3, $4) returning id",
-      [auth.email, name, subject, body],
-    );
-    return NextResponse.json({ ok: true, id: result.rows[0].id });
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Không lưu được template." },
-      { status: 500 },
-    );
-  } finally {
-    await client.end().catch(() => {});
+  const { data, error } = await supabase
+    .from("email_templates")
+    .insert({ owner_email: auth.email, name, subject, body })
+    .select("id")
+    .single();
+  if (error) {
+    return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ ok: true, id: data.id });
 }
 
 export async function DELETE(request: Request) {
@@ -157,25 +148,15 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ ok: false, error: "Thiếu id template." }, { status: 400 });
   }
 
-  const client = createDbClient();
-  if (!client) {
-    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_DB_URL để xóa template." }, { status: 400 });
+  const supabase = getServiceClient();
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Thiếu SUPABASE_SERVICE_ROLE_KEY để xóa template." }, { status: 400 });
   }
 
-  try {
-    await client.connect();
-    if (!tableEnsured) {
-      await client.query(CREATE_SQL);
-      tableEnsured = true;
-    }
-    await client.query("delete from email_templates where id = $1", [id]);
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Không xóa được template." },
-      { status: 500 },
-    );
-  } finally {
-    await client.end().catch(() => {});
+  const { error } = await supabase.from("email_templates").delete().eq("id", id);
+  if (error) {
+    return NextResponse.json({ ok: false, error: isMissingTable(error) ? MISSING_TABLE_HINT : error.message }, { status: 500 });
   }
+
+  return NextResponse.json({ ok: true });
 }
