@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { supabase } from "@/lib/supabase";
 import { loadDashboardData, type DashboardData } from "@/lib/dashboard";
+import { listEvents, type EventRecord } from "@/lib/events";
 import { PageHeader } from "./PageHeader";
 
 const EMPTY: DashboardData = { forms: [], responses: [], logs: [], pins: {} };
@@ -47,12 +48,29 @@ export function FormsDashboard() {
   const { canManageForms } = useAdminAccess();
   const [data, setData] = useState<DashboardData>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState("all");
+
+  const selectedEvent = useMemo(
+    () => events.find((event) => event.id === selectedEventId) ?? null,
+    [events, selectedEventId],
+  );
 
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    const next = await loadDashboardData();
+    const next = await loadDashboardData(selectedEvent ? selectedEvent.form_ids : undefined);
     setData(next);
     setLoading(false);
+  }, [selectedEvent]);
+
+  useEffect(() => {
+    let active = true;
+    const run = async () => {
+      const eventList = await listEvents();
+      if (active) setEvents(eventList);
+    };
+    void run();
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -174,14 +192,28 @@ export function FormsDashboard() {
     <div className="px-4 py-8 sm:px-8 sm:py-10 max-w-6xl">
       <PageHeader
         title="Tổng quan"
-        subtitle="Tình hình đăng ký, check-in và vận hành sự kiện của toàn bộ form."
+        subtitle={selectedEvent
+          ? `Đang xem sự kiện: ${selectedEvent.name}${selectedEvent.event_date ? ` · ${selectedEvent.event_date}` : ""}`
+          : "Tình hình đăng ký, check-in và vận hành của toàn bộ form."}
         action={
-          <Link
-            href="/admin/forms"
-            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10"
-          >
-            Quản lý form <ArrowRight size={15} />
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedEventId}
+              onChange={(event) => setSelectedEventId(event.target.value)}
+              className="admin-dark-select rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-700 focus:outline-none"
+            >
+              <option value="all">Tất cả sự kiện</option>
+              {events.map((event) => (
+                <option key={event.id} value={event.id}>{event.name}</option>
+              ))}
+            </select>
+            <Link
+              href="/admin/events"
+              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10"
+            >
+              Sự kiện <ArrowRight size={15} />
+            </Link>
+          </div>
         }
       />
 

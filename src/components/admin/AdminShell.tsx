@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   ClipboardList,
+  Layers,
   ShieldCheck,
   Settings,
   Mail,
@@ -21,6 +22,7 @@ import { getAdminRoleLabel, useAdminAccess } from "@/components/auth/AdminAccess
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Tổng quan", icon: LayoutDashboard, exact: true },
+  { href: "/admin/events", label: "Sự kiện", icon: Layers },
   { href: "/admin/forms", label: "Quản lý form", icon: ClipboardList },
   { href: "/admin/templates", label: "Template thư", icon: Mail },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },

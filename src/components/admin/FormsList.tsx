@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { BarChart3, ClipboardList, Copy, ExternalLink, Link2, Loader2, Plus, Search, Trash2, Trophy, X } from "lucide-react";
+import { BarChart3, ClipboardList, Copy, ExternalLink, Layers, Link2, Loader2, Plus, Search, Trash2, Trophy, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import type { SurveyFormType } from "@/lib/surveys";
+import { listEvents, type EventRecord } from "@/lib/events";
 import {
   createRegistrationForm,
   deleteRegistrationForm,
@@ -23,6 +24,8 @@ export function FormsList() {
   const [creating, setCreating] = useState<SurveyFormType | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | SurveyFormType>("all");
+  const [eventFilter, setEventFilter] = useState("all");
+  const [events, setEvents] = useState<EventRecord[]>([]);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -50,14 +53,38 @@ export function FormsList() {
     return () => { active = false; };
   }, [user?.id]);
 
+  useEffect(() => {
+    let active = true;
+    void listEvents().then((items) => {
+      if (active) setEvents(items);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const eventByForm = useMemo(() => {
+    const map = new Map<string, EventRecord>();
+    events.forEach((event) => {
+      event.form_ids.forEach((formId) => map.set(formId, event));
+    });
+    return map;
+  }, [events]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return forms.filter((form) => {
       if (typeFilter !== "all" && form.formType !== typeFilter) return false;
+      if (eventFilter !== "all") {
+        const event = eventByForm.get(form.id);
+        if (eventFilter === "none") {
+          if (event) return false;
+        } else if (event?.id !== eventFilter) {
+          return false;
+        }
+      }
       if (!q) return true;
       return form.title.toLowerCase().includes(q);
     });
-  }, [forms, search, typeFilter]);
+  }, [forms, search, typeFilter, eventFilter, eventByForm]);
 
   const handleCreate = async (formType: SurveyFormType = "registration") => {
     if (!user?.id || creating || !canManageForms) return;
@@ -144,6 +171,19 @@ export function FormsList() {
             </button>
           ))}
         </div>
+        {events.length > 0 && (
+          <select
+            value={eventFilter}
+            onChange={(event) => setEventFilter(event.target.value)}
+            className="admin-dark-select rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-700 focus:outline-none"
+          >
+            <option value="all">Tất cả sự kiện</option>
+            {events.map((event) => (
+              <option key={event.id} value={event.id}>{event.name}</option>
+            ))}
+            <option value="none">Chưa gán sự kiện</option>
+          </select>
+        )}
       </div>
 
       {loading ? (
@@ -174,6 +214,7 @@ export function FormsList() {
                 <FormCard
                   form={form}
                   canManageForms={canManageForms}
+                  eventName={eventByForm.get(form.id)?.name}
                   onCopy={() => copyLink(form.id)}
                   onDuplicate={() => handleDuplicate(form)}
                   onDelete={() => handleDelete(form)}
@@ -188,9 +229,10 @@ export function FormsList() {
   );
 }
 
-function FormCard({ form, canManageForms, onCopy, onDuplicate, onDelete, duplicating }: {
+function FormCard({ form, canManageForms, eventName, onCopy, onDuplicate, onDelete, duplicating }: {
   form: RegistrationFormSummary;
   canManageForms: boolean;
+  eventName?: string;
   onCopy: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -209,6 +251,11 @@ function FormCard({ form, canManageForms, onCopy, onDuplicate, onDelete, duplica
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold text-slate-900 truncate">{form.title}</h3>
             <p className="text-xs text-slate-600">{getFormTypeLabel(form.formType)} · {form.questionCount} câu hỏi</p>
+            {eventName && (
+              <span className="mt-1.5 inline-flex max-w-full items-center gap-1 truncate rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600">
+                <Layers size={10} /> {eventName}
+              </span>
+            )}
           </div>
         </div>
       </Link>

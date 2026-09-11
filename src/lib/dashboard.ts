@@ -29,8 +29,12 @@ export type DashboardData = {
 
 const EMPTY: DashboardData = { forms: [], responses: [], logs: [], pins: {} };
 
-export async function loadDashboardData(): Promise<DashboardData> {
-  const forms = await listRegistrationForms();
+export async function loadDashboardData(formIds?: string[]): Promise<DashboardData> {
+  let forms = await listRegistrationForms();
+  if (Array.isArray(formIds)) {
+    const allowed = new Set(formIds);
+    forms = forms.filter((form) => allowed.has(form.id));
+  }
   if (forms.length === 0) return EMPTY;
 
   const surveyIds = forms.map((form) => form.id);
