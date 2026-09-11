@@ -18,6 +18,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**"],
     "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**"],
+    "/api/cron/email-campaigns": ["./node_modules/@img/**", "./public/fonts/**"],
   },
 
   // Experimental: optimize package imports (tree-shake heavy libs)
