@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, CheckSquare, Mail, ShieldCheck, Upload, CreditCard } from "lucide-react";
+import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { SurveyResponse } from "@/lib/surveys";
 import { logCheckinEvent, type CheckinLog } from "@/lib/checkinLogs";
@@ -26,6 +26,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [questionMeta, setQuestionMeta] = useState<Record<string, { type: string; options: string[] | null; isHall: boolean }>>({});
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name" | "checkin" | "hall">("newest");
+  const [statusFilter, setStatusFilter] = useState<"all" | "checked" | "unchecked" | "email_failed" | "payment_pending">("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editAnswers, setEditAnswers] = useState<Record<string, string>>({});
   const [showAddForm, setShowAddForm] = useState(false);
@@ -116,6 +117,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
     return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, [surveyId, refreshData]);
+
+  // Close the detail modal with Esc
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setSelectedResponse(null); setEditingId(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const findName = (answers: Record<string, unknown>): string => {
     // Use question order to get first text-like field (usually name)
@@ -329,6 +339,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const checkedCount = responses.filter((r) => r.checked_in).length;
   const totalCount = responses.length;
+  const uncheckedCount = totalCount - checkedCount;
+  const pendingPaymentCount = responses.filter((r) => r.payment_status === "pending").length;
+  const emailFailedCount = responses.filter((r) => r.email_status === "failed").length;
 
   // Stats: check-in by hour, by hall
   const checkinRate = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
@@ -353,6 +366,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const filtered = responses.filter((r) => {
     if (hallFilter && r.hall !== hallFilter) return false;
+    if (statusFilter === "checked" && !r.checked_in) return false;
+    if (statusFilter === "unchecked" && r.checked_in) return false;
+    if (statusFilter === "email_failed" && r.email_status !== "failed") return false;
+    if (statusFilter === "payment_pending" && r.payment_status !== "pending") return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const matchesAnswer = Object.values(r.answers).some((v) =>
@@ -579,58 +596,62 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   return (
     <div className="min-h-dvh bg-slate-50">
       {/* Header */}
-      <div className="bg-white border-b border-slate-200 px-4 py-4 sticky top-0 z-10 shadow-sm shadow-slate-200/40">
+      <div className="glass sticky top-0 z-20 border-b border-[color:var(--border)] px-4 py-4">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
+              <div className="mb-2 h-1.5 w-12 rounded-full" style={{ background: "linear-gradient(135deg, #0ea5e9, #06b6d4)" }} />
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Danh sách đăng ký</p>
               <h1 className="mt-1 text-xl sm:text-2xl font-bold text-slate-900 leading-snug break-words">{surveyTitle}</h1>
             </div>
-            <div className="flex items-center gap-2 text-sm text-slate-600 sm:pt-1">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 font-medium"><Users size={14} /> {totalCount}</span>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 font-semibold"><UserCheck size={14} /> {checkedCount}</span>
+            <div className="flex flex-wrap items-center gap-2 text-sm sm:pt-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-100 bg-sky-50 px-3 py-1 font-semibold text-sky-700"><Users size={14} /> {totalCount}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 font-semibold text-emerald-700"><UserCheck size={14} /> {checkedCount}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 font-semibold text-indigo-700">{checkinRate}%</span>
             </div>
           </div>
           <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
             <button onClick={() => { setShowAddForm(true); setNewAnswers({}); }}
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-600 text-on-brand text-sm font-medium hover:bg-sky-500 transition-colors">
+              className="admin-primary flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition-transform hover:scale-[1.01]">
               <Plus size={14} /> Thêm
             </button>
             <Link href={`/attendees/${surveyId}/import`}
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium transition-colors hover:bg-slate-200">
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
               <Upload size={14} /> Import CSV
             </Link>
             <button onClick={exportCSV}
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors">
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
               <Download size={14} /> CSV
             </button>
             <button onClick={printAllBadges}
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors">
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
               <Printer size={14} /> In thẻ
             </button>
             <button onClick={sendReminders} disabled={resending}
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition-colors disabled:opacity-50">
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50">
               <Mail size={14} /> {resending ? "Đang gửi..." : "Nhắc lịch"}
             </button>
-            {responses.some((r) => r.email_status === "failed") && (
+            {emailFailedCount > 0 && (
               <button onClick={sendFailed} disabled={resending}
-                className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100 transition-colors disabled:opacity-50">
-                <RotateCcw size={14} /> Gửi lại lỗi
+                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50">
+                <RotateCcw size={14} /> Gửi lại lỗi ({emailFailedCount})
               </button>
             )}
             {selectedIds.size > 0 && (
               <button onClick={sendSelected} disabled={resending}
-                className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100 transition-colors disabled:opacity-50">
+                className="flex shrink-0 items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50">
                 <Mail size={14} /> Gửi cho đã chọn ({selectedIds.size})
               </button>
             )}
             <Link href={`/scan/${surveyId}${hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
-              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 text-on-brand text-sm font-medium hover:bg-indigo-500 transition-colors">
+              className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
+              style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>
               <QrCode size={14} /> Scan
             </Link>
             {vipCheckinEnabled && (
               <Link href={`/face-checkin/${surveyId}${hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
-                className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-600 text-on-brand text-sm font-medium hover:bg-sky-500 transition-colors">
+                className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
+                style={{ background: "linear-gradient(135deg, #0ea5e9, #0891b2)" }}>
                 <ShieldCheck size={14} /> VIP Face
               </Link>
             )}
@@ -640,23 +661,16 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
       <div className="max-w-6xl mx-auto px-4 py-4">
         {/* Stats dashboard */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-            <p className="text-2xl font-bold text-slate-800">{totalCount}</p>
-            <p className="text-xs text-slate-500 mt-0.5">Tổng đăng ký</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-            <p className="text-2xl font-bold text-emerald-600">{checkedCount}</p>
-            <p className="text-xs text-slate-500 mt-0.5">Đã check-in</p>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
-            <p className="text-2xl font-bold text-indigo-600">{checkinRate}%</p>
-            <p className="text-xs text-slate-500 mt-0.5">Tỷ lệ</p>
-          </div>
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard icon={Users} label="Tổng đăng ký" value={totalCount} color="#0ea5e9" />
+          <KpiCard icon={UserCheck} label="Đã check-in" value={checkedCount} hint={`${checkinRate}%`} color="#10b981" />
+          <KpiCard icon={Clock} label="Chưa check-in" value={uncheckedCount} color="#f59e0b" />
+          <KpiCard icon={CreditCard} label="Chờ thanh toán" value={pendingPaymentCount} color="#6366f1" />
         </div>
 
         {/* Progress bar */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm mb-4">
+        <div className="glass relative mb-4 overflow-hidden rounded-2xl p-4 sm:p-5">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #0ea5e9, #06b6d400)" }} />
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-slate-600">Tiến độ check-in</span>
             <span className="text-xs text-slate-500">{checkedCount}/{totalCount}</span>
@@ -676,7 +690,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                     <span className="text-slate-500">{h.checked}/{h.total}</span>
                   </div>
                   <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${h.total > 0 ? (h.checked / h.total) * 100 : 0}%` }} />
+                    <div className="h-full rounded-full" style={{ width: `${h.total > 0 ? (h.checked / h.total) * 100 : 0}%`, background: "linear-gradient(90deg, #6366f1, #8b5cf6)" }} />
                   </div>
                 </div>
               ))}
@@ -692,7 +706,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   const count = hourBuckets[h] || 0;
                   return (
                     <div key={h} className="flex-1 flex flex-col items-center gap-1">
-                      <div className={`w-full rounded-t ${count > 0 ? "bg-indigo-500" : "bg-slate-100"}`} style={{ height: `${count > 0 ? (count / maxHourCount) * 100 : 5}%`, minHeight: "2px" }} title={`${count} người`} />
+                      <div className="w-full rounded-t" style={{ height: `${count > 0 ? (count / maxHourCount) * 100 : 5}%`, minHeight: "2px", background: count > 0 ? "linear-gradient(180deg, #818cf8, #6366f1)" : "#e2e8f0" }} title={`${count} người`} />
                       <span className="text-[9px] text-slate-400">{h}h</span>
                     </div>
                   );
@@ -703,9 +717,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         </div>
 
         {/* Sessions panel */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-4 overflow-hidden">
+        <div className="glass relative mb-4 overflow-hidden rounded-2xl">
+          <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #6366f1, #6366f100)" }} />
           <button onClick={() => setShowSessions((s) => !s)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors">
+            className="flex w-full items-center justify-between px-4 py-3 transition-colors hover:bg-white/50">
             <span className="text-sm font-semibold text-slate-700 flex items-center gap-2">🕐 Điểm danh nhiều buổi {sessions.length > 0 && <span className="text-xs text-slate-400">({sessions.length} buổi)</span>}</span>
             <span className="text-slate-400 text-xs">{showSessions ? "▲" : "▼"}</span>
           </button>
@@ -744,7 +759,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         <AnimatePresence>
           {showAddForm && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden mb-4">
-              <div className="bg-white rounded-2xl border border-emerald-200 p-4 shadow-sm">
+              <div className="glass rounded-2xl border border-emerald-200 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-slate-800">Thêm người mới</h3>
                   <button onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
@@ -754,7 +769,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                     <div key={k}>
                       <label className="text-[11px] text-slate-500 mb-0.5 block">{questionLabels[k]}</label>
                       <input value={newAnswers[k] ?? ""} onChange={(e) => setNewAnswers({ ...newAnswers, [k]: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-indigo-400" />
+                        className="admin-field w-full rounded-lg px-3 py-2 text-sm focus:outline-none" />
                     </div>
                   ))}
                 </div>
@@ -766,65 +781,86 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
           )}
         </AnimatePresence>
 
-        {/* Search + Hall filter */}
-        <div className="flex flex-col gap-2 mb-4 lg:flex-row">
-          <div className="relative flex-1">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm theo tên, SĐT, tỉnh thành..."
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:border-indigo-400 shadow-sm" />
-          </div>
-          <div className="flex gap-2">
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              className="min-w-44 flex-1 px-3 py-3 rounded-xl border border-slate-200 text-sm bg-white text-slate-800 focus:outline-none focus:border-indigo-400 lg:flex-none">
-              <option value="newest">Mới nhất</option>
-              <option value="oldest">Cũ nhất</option>
-              <option value="name">Tên A-Z</option>
-              <option value="checkin">Chưa check-in trước</option>
-              <option value="hall">Theo hội trường</option>
-            </select>
-            {halls.length > 0 && (
-              <select value={hallFilter} onChange={(e) => setHallFilter(e.target.value)}
-                className="min-w-44 flex-1 px-3 py-3 rounded-xl border border-slate-200 text-sm bg-white text-slate-800 focus:outline-none focus:border-indigo-400 lg:flex-none">
-                <option value="">Tất cả hội trường</option>
-                {halls.map((h) => <option key={h} value={h}>{h}</option>)}
+        {/* Search + filters */}
+        <div className="mb-4 space-y-2">
+          <div className="flex flex-col gap-2 lg:flex-row">
+            <div className="relative flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Tìm theo tên, SĐT, email, tỉnh thành..."
+                className="admin-field w-full rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none" />
+            </div>
+            <div className="flex gap-2">
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="admin-dark-select admin-field min-w-44 flex-1 rounded-xl px-3 py-3 text-sm focus:outline-none lg:flex-none">
+                <option value="newest">Mới nhất</option>
+                <option value="oldest">Cũ nhất</option>
+                <option value="name">Tên A-Z</option>
+                <option value="checkin">Chưa check-in trước</option>
+                <option value="hall">Theo hội trường</option>
               </select>
-            )}
+              {halls.length > 0 && (
+                <select value={hallFilter} onChange={(e) => setHallFilter(e.target.value)}
+                  className="admin-dark-select admin-field min-w-44 flex-1 rounded-xl px-3 py-3 text-sm focus:outline-none lg:flex-none">
+                  <option value="">Tất cả hội trường</option>
+                  {halls.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { value: "all", label: `Tất cả (${totalCount})` },
+              { value: "checked", label: `Đã check-in (${checkedCount})` },
+              { value: "unchecked", label: `Chưa check-in (${uncheckedCount})` },
+              { value: "payment_pending", label: `Chờ thanh toán (${pendingPaymentCount})` },
+              { value: "email_failed", label: `Email lỗi (${emailFailedCount})` },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setStatusFilter(option.value)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  statusFilter === option.value
+                    ? "border-sky-300 bg-sky-500 text-on-brand"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-700"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
 
         {/* Bulk actions */}
         {selectedIds.size > 0 && (
-          <div className="mb-3 flex items-center gap-2 flex-wrap bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2.5">
-            <span className="text-sm font-medium text-indigo-700">{selectedIds.size} đã chọn</span>
-            <button onClick={bulkCheckin} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sky-600 text-on-brand hover:bg-sky-500">Check-in tất cả</button>
+          <div className="glass-strong mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 px-4 py-2.5">
+            <span className="text-sm font-semibold text-indigo-700">{selectedIds.size} đã chọn</span>
+            <button onClick={bulkCheckin} className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400">Check-in tất cả</button>
             <button onClick={() => {
               const name = prompt("Tên hội trường:");
               if (name) bulkAssignHall(name);
-            }} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-on-brand hover:bg-indigo-500">Gán hội trường</button>
-<button onClick={printAllBadges} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-700 text-on-brand hover:bg-slate-600">In thẻ đã chọn</button>
-            <button onClick={bulkDelete} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 text-on-brand hover:bg-red-500">Xoá đã chọn</button>
-            <button onClick={clearSelection} className="px-3 py-1.5 rounded-lg text-xs text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Bỏ chọn</button>
-            <button onClick={selectAll} className="px-3 py-1.5 rounded-lg text-xs text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">Chọn tất cả</button>
+            }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-on-brand" style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>Gán hội trường</button>
+            <button onClick={printAllBadges} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-slate-600">In thẻ đã chọn</button>
+            <button onClick={bulkDelete} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Xoá đã chọn</button>
+            <button onClick={clearSelection} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Bỏ chọn</button>
+            <button onClick={selectAll} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Chọn tất cả</button>
           </div>
         )}
 
         {/* List */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100 overflow-hidden">
-          {filtered.map((r, index) => {
+        <div className="glass-strong divide-y divide-[color:var(--border)] overflow-hidden rounded-2xl">
+          {filtered.map((r) => {
             const name = findName(r.answers) || r.id.slice(0, 8).toUpperCase();
             const time = new Date(r.submitted_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
             const rowTone = selectedIds.has(r.id)
-              ? "bg-indigo-50 hover:bg-indigo-100/70"
-              : index % 2 === 0
-                ? "bg-white hover:bg-slate-50"
-                : "bg-cyan-50/45 hover:bg-cyan-50";
+              ? "bg-sky-50/80 hover:bg-sky-50"
+              : "bg-transparent hover:bg-sky-50/50";
 
             return (
               <div key={r.id} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${rowTone}`}>
                 <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0" />
+                  className="h-4 w-4 flex-shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
                 <div className="flex-1 min-w-0 flex items-center gap-3" onClick={() => { void openDetail(r); }}>
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${r.checked_in ? "bg-emerald-100" : "bg-slate-100"}`}>
                     {r.checked_in ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
@@ -845,7 +881,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   <button
                     onClick={(e) => { e.stopPropagation(); doCheckin(r.id); }}
                     disabled={!isPaymentSettled(r.payment_status)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-on-brand hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    className="rounded-lg bg-sky-500 px-2.5 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     Check-in
                   </button>
@@ -856,7 +892,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             );
           })}
           {filtered.length === 0 && (
-            <p className="text-center text-sm text-slate-500 py-8">Không có kết quả</p>
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <Users size={34} className="text-slate-300" />
+              <p className="text-sm text-slate-500">Không có kết quả phù hợp</p>
+            </div>
           )}
         </div>
       </div>
@@ -875,17 +914,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl p-5 w-full max-w-md shadow-2xl max-h-[85vh] overflow-y-auto"
+              className="glass-strong rounded-2xl p-5 w-full max-w-lg shadow-2xl max-h-[85vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Status badge */}
-              <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium mb-3 ${selectedResponse.checked_in ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                {selectedResponse.checked_in ? <><UserCheck size={12} /> Đã check-in</> : <><Users size={12} /> Chưa check-in</>}
-              </div>
-              <div className="mb-3">
+              {/* Status badges */}
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${selectedResponse.checked_in ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                  {selectedResponse.checked_in ? <><UserCheck size={12} /> Đã check-in</> : <><Users size={12} /> Chưa check-in</>}
+                </span>
                 <PaymentStatusBadge response={selectedResponse} />
-              </div>
-              <div className="mb-3">
                 <EmailStatusBadge response={selectedResponse} />
               </div>
 
@@ -1006,36 +1043,36 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               <div className="flex flex-wrap gap-2">
                 {editingId === selectedResponse.id ? (
                   <>
-                    <button onClick={saveEdit} className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-on-brand hover:bg-indigo-500">
+                    <button onClick={saveEdit} className="flex items-center gap-1 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-on-brand hover:bg-sky-400">
                       <Save size={14} /> Lưu
                     </button>
-                    <button onClick={() => setEditingId(null)} className="px-4 py-2 rounded-lg text-sm text-slate-600 bg-slate-100 hover:bg-slate-200">Huỷ</button>
+                    <button onClick={() => setEditingId(null)} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Huỷ</button>
                   </>
                 ) : (
                   <>
-                    <button onClick={() => startEdit(selectedResponse)} className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200">
+                    <button onClick={() => startEdit(selectedResponse)} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                       <Pencil size={14} /> Sửa
                     </button>
-                    <button onClick={() => printBadge(selectedResponse)} className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200">
+                    <button onClick={() => printBadge(selectedResponse)} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                       <Printer size={14} /> In QR
                     </button>
                     <button onClick={() => resendEmail(selectedResponse)} disabled={resending}
-                      className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50">
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                       <Mail size={14} /> {resending ? "Đang gửi..." : "Gửi lại QR"}
                     </button>
                     {!selectedResponse.checked_in ? (
                       <button onClick={() => { doCheckin(selectedResponse.id); setSelectedResponse({ ...selectedResponse, checked_in: true, checked_in_at: new Date().toISOString() }); }}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium bg-sky-600 text-on-brand hover:bg-sky-500">
+                        className="flex items-center gap-1 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-on-brand hover:bg-sky-400">
                         <UserCheck size={14} /> Check-in
                       </button>
                     ) : (
                       <button onClick={() => { undoCheckin(selectedResponse.id); setSelectedResponse({ ...selectedResponse, checked_in: false, checked_in_at: null }); }}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100">
+                        className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100">
                         <RotateCcw size={14} /> Huỷ check-in
                       </button>
                     )}
                     <button onClick={() => { deleteResponse(selectedResponse.id); setSelectedResponse(null); }}
-                      className="flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100">
+                      className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100">
                       <Trash2 size={14} /> Xoá
                     </button>
                   </>
@@ -1043,7 +1080,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
                 {/* Hall assignment */}
                 {editingId !== selectedResponse.id && (
-                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
+                  <div className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 pt-3">
                     <span className="text-xs text-slate-500">Hội trường:</span>
                     <input
                       value={selectedResponse.hall ?? ""}
@@ -1055,7 +1092,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                         if (h && !halls.includes(h)) setHalls([...halls, h]);
                       }}
                       placeholder="Nhập tên..."
-                      className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-800 focus:outline-none focus:border-indigo-400"
+                      className="admin-field flex-1 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
                     />
                   </div>
                 )}
@@ -1070,6 +1107,31 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
 function isPaymentSettled(status: SurveyResponse["payment_status"]) {
   return !status || status === "not_required" || status === "paid";
+}
+
+function KpiCard({ icon: Icon, label, value, hint, color }: {
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  label: string;
+  value: number;
+  hint?: string;
+  color: string;
+}) {
+  return (
+    <div
+      className="glass relative overflow-hidden rounded-2xl p-4"
+      style={{ background: `linear-gradient(135deg, ${color}14, rgba(255,255,255,0.88) 55%)` }}
+    >
+      <div className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${color}, ${color}00)` }} />
+      <div className="mb-2 flex items-center gap-2">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}22`, border: `1px solid ${color}44`, color }}>
+          <Icon size={15} />
+        </div>
+        <span className="text-[11px] uppercase tracking-widest text-slate-500">{label}</span>
+      </div>
+      <div className="text-2xl font-bold tabular-nums text-slate-900">{value.toLocaleString("vi-VN")}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
+    </div>
+  );
 }
 
 function formatPaymentStatus(status: SurveyResponse["payment_status"]) {
