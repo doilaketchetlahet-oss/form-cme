@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Trigger email campaign queue
         run: |
-          curl -sS -X GET "${{ secrets.APP_URL }}/api/cron/email-campaigns" \
+          curl -sS -X GET "https://dangkyhoithao.online/api/cron/email-campaigns" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -w "HTTP %{http_code}\n" -o /tmp/resp.json
           cat /tmp/resp.json
