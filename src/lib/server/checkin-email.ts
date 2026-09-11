@@ -253,7 +253,9 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
 
   let fromOverride = input.from?.trim() || null;
   let replyToOverride: string | null = null;
-  if (supabase && resolvedSurveyId) {
+  // Per-event sender works with Resend (verified domain). SMTP relays (e.g.
+  // Gmail) only allow sending as the authenticated account, so skip it there.
+  if (supabase && resolvedSurveyId && resolveProvider(providerOverride) === "resend") {
     const sender = await resolveEventSender(supabase, resolvedSurveyId);
     if (sender.from) {
       fromOverride = sender.from;
