@@ -63,6 +63,14 @@ export function EmailCampaignsManager() {
   const load = useCallback(async () => {
     setLoading(true);
     const token = await getAccessToken();
+    if (token) {
+      // Process any due campaigns/jobs first (Hobby plan runs the cron once a day).
+      try {
+        await fetch("/api/cron/email-campaigns", { headers: { Authorization: `Bearer ${token}` } });
+      } catch {
+        // ignore queue errors; still refresh the list
+      }
+    }
     const [eventList, formList, campaignRes, templateRes] = await Promise.all([
       listEvents(),
       listRegistrationForms(),
@@ -207,7 +215,7 @@ export function EmailCampaignsManager() {
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10 disabled:opacity-50"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Làm mới
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Chạy &amp; làm mới
           </button>
         }
       />

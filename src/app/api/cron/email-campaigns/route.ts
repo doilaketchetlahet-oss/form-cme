@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
 import { getConfiguredSiteUrl } from "@/lib/site-url";
 import { sendCheckinEmail } from "@/lib/server/checkin-email";
@@ -8,6 +8,32 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const JOB_BATCH = 40;
+
+async function isAuthorized(request: NextRequest): Promise<boolean> {
+  const secret = process.env.CRON_SECRET;
+  const authHeader = request.headers.get("authorization");
+  if (secret && authHeader === `Bearer ${secret}`) return true;
+
+  // Allow a signed-in owner/admin to trigger the queue manually (Hobby plan).
+  const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!token || !url || !anonKey) return false;
+
+  const supabase = createClient(url, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } } });
+  const { data: userData } = await supabase.auth.getUser(token);
+  const email = userData.user?.email?.trim().toLowerCase();
+  if (!email) return false;
+
+  const { data: member } = await supabase
+    .from("admin_members")
+    .select("role, active")
+    .ilike("email", email)
+    .eq("active", true)
+    .maybeSingle();
+
+  return member?.role === "owner" || member?.role === "admin";
+}
 
 type CampaignRow = {
   id: string;
@@ -180,12 +206,8 @@ async function processJobs(supabase: SupabaseClient, origin: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+  if (!(await isAuthorized(request))) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   const supabase = createSupabaseAdmin();
