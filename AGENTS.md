@@ -21,6 +21,16 @@ npm run build
 npm run lint
 ```
 
+## OCR (đọc chữ trong ảnh)
+
+`scripts/ocr.ps1` dùng Tesseract (đã cài ở `C:\Program Files\Tesseract-OCR`,
+gói tiếng Việt ở `%LOCALAPPDATA%\tesseract-oss\tessdata`) để đọc chữ từ ảnh
+chụp màn hình. Model không nhận ảnh trực tiếp, nên OCR là cách đọc nội dung ảnh.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/ocr.ps1 <file-hoặc-thư-mục> [vie+eng]
+```
+
 ## Environment
 
 This app is intended for its own Vercel, Supabase, and Resend projects.
