@@ -5,8 +5,8 @@ import { sendCheckinEmail } from "@/lib/server/checkin-email";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { to, checkinUrl } = body ?? {};
+  const body = await req.json().catch(() => null);
+  const { to, checkinUrl } = (body ?? {}) as { to?: string; checkinUrl?: string };
 
   if (!to || !checkinUrl) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });

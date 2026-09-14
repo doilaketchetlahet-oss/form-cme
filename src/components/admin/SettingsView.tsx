@@ -72,7 +72,7 @@ export function SettingsView() {
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
             placeholder="Mật khẩu mới, tối thiểu 6 ký tự"
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+            className="admin-field w-full rounded-xl px-4 py-3 text-sm admin-placeholder focus:outline-none transition-colors"
           />
           {message && (
             <div className={`text-sm px-3 py-2 rounded-lg ${
@@ -124,8 +124,8 @@ function Field({
       <label className="text-xs text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
         <Icon size={11} /> {label}
       </label>
-      <div className={`bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white ${mono ? "font-mono text-xs" : "text-sm"}`}>
-        {value || <span className="text-slate-600">-</span>}
+      <div className={`admin-field rounded-xl px-4 py-3 ${mono ? "font-mono text-xs" : "text-sm"}`}>
+        {value || <span className="text-slate-400">-</span>}
       </div>
     </div>
   );

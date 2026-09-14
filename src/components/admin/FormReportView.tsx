@@ -106,6 +106,23 @@ export function FormReportView({ formId }: { formId: string }) {
     downloadCSV(buildReportCSV(analytics, filteredResponses), `${slugify(analytics.survey.title)}-report-${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
+  const trend = useMemo(() => {
+    const days = Array.from({ length: 14 }, (_, index) => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - (13 - index));
+      return day;
+    });
+    const responses = analytics?.responses ?? [];
+    const counts = days.map((day) => responses.filter((response) => {
+      const submitted = new Date(response.submitted_at);
+      return submitted.getFullYear() === day.getFullYear()
+        && submitted.getMonth() === day.getMonth()
+        && submitted.getDate() === day.getDate();
+    }).length);
+    return { days, counts, max: Math.max(1, ...counts) };
+  }, [analytics?.responses]);
+
   if (loading) {
     return (
       <div className="px-4 py-8 sm:px-8 sm:py-10 max-w-7xl">
@@ -148,7 +165,7 @@ export function FormReportView({ formId }: { formId: string }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Link href={`/admin/forms/${analytics.survey.id}`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10">
+          <Link href={`/admin/forms/${analytics.survey.id}`} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             <FileText size={16} /> Form
           </Link>
           <Link href={`/attendees/${analytics.survey.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
@@ -159,7 +176,7 @@ export function FormReportView({ formId }: { formId: string }) {
               <Trophy size={16} /> Bảng điểm
             </Link>
           )}
-          <Link href={`/s/${analytics.survey.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-white/10">
+          <Link href={`/s/${analytics.survey.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             <ExternalLink size={16} /> Public
           </Link>
           <button onClick={handleExport} className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500">
@@ -176,6 +193,29 @@ export function FormReportView({ formId }: { formId: string }) {
         <StatCard icon={CalendarClock} label="Mới nhất" value={stats.lastSubmitted ? formatDateTime(stats.lastSubmitted, true) : "-"} color="#f59e0b" compact />
       </div>
 
+      <section className="glass relative mb-6 overflow-hidden rounded-2xl p-4 sm:p-5">
+        <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #0ea5e9, #06b6d400)" }} />
+        <div className="mb-4 flex items-center gap-2">
+          <BarChart3 size={16} className="text-sky-500" />
+          <h2 className="text-base font-semibold text-slate-900">Đăng ký 14 ngày gần nhất</h2>
+        </div>
+        <div className="flex h-40 items-end gap-1.5">
+          {trend.days.map((day, index) => (
+            <div key={index} className="flex flex-1 flex-col items-center gap-2">
+              <div className="text-[10px] font-semibold tabular-nums text-slate-500">{trend.counts[index]}</div>
+              <div className="flex w-full flex-1 items-end">
+                <div
+                  className="w-full rounded-t-md"
+                  style={{ height: `${Math.max(3, (trend.counts[index] / trend.max) * 100)}%`, background: "linear-gradient(180deg, #22d3ee, #0ea5e9)" }}
+                  title={`${trend.counts[index]} đăng ký`}
+                />
+              </div>
+              <div className="text-[9px] text-slate-400">{day.getDate()}/{day.getMonth() + 1}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="glass rounded-2xl p-4 sm:p-5 mb-6">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_160px_180px_auto] lg:items-center">
           <div className="relative">
@@ -184,14 +224,14 @@ export function FormReportView({ formId }: { formId: string }) {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Tìm theo tên, email, số điện thoại, hội trường..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+              className="admin-field w-full rounded-xl pl-10 pr-4 py-2.5 text-sm admin-placeholder focus:outline-none transition-colors"
             />
           </div>
 
           <select
             value={checkinFilter}
             onChange={(event) => setCheckinFilter(event.target.value as CheckinFilter)}
-            className="admin-dark-select bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+            className="admin-dark-select admin-field rounded-xl px-3 py-2.5 text-sm focus:outline-none transition-colors"
           >
             <option value="all">Tất cả check-in</option>
             <option value="checked">Đã check-in</option>
@@ -201,7 +241,7 @@ export function FormReportView({ formId }: { formId: string }) {
           <select
             value={hallFilter}
             onChange={(event) => setHallFilter(event.target.value)}
-            className="admin-dark-select bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+            className="admin-dark-select admin-field rounded-xl px-3 py-2.5 text-sm focus:outline-none transition-colors"
           >
             <option value="">Tất cả hội trường</option>
             {halls.map((hall) => <option key={hall} value={hall}>{hall}</option>)}
@@ -247,7 +287,7 @@ function ResponsesTable({
         <p className="text-xs text-slate-500 mt-1">Bảng read-only để rà soát dữ liệu đã gửi.</p>
       </div>
 
-      <div className="hidden md:grid grid-cols-[170px_minmax(0,1fr)_130px_120px_110px] gap-3 border-b border-white/10 px-5 py-3 text-[11px] uppercase tracking-widest text-slate-500">
+      <div className="hidden md:grid grid-cols-[170px_minmax(0,1fr)_130px_120px_110px] gap-3 border-b border-[color:var(--border)] px-5 py-3 text-[11px] uppercase tracking-widest text-slate-500">
         <span>Thời gian</span>
         <span>Người đăng ký</span>
         <span>Hội trường</span>
@@ -262,7 +302,7 @@ function ResponsesTable({
           <p className="text-sm text-slate-500">Thử đổi từ khóa hoặc bộ lọc.</p>
         </div>
       ) : (
-        <div className="divide-y divide-white/10">
+        <div className="divide-y divide-[color:var(--border)]">
           {responses.map((response, index) => (
             <motion.button
               key={response.id}
