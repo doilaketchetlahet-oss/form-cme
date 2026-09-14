@@ -40,6 +40,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [sessions, setSessions] = useState<string[]>([]);
   const [showSessions, setShowSessions] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [sessionsEnabled, setSessionsEnabled] = useState(false);
   const [vipCheckinEnabled, setVipCheckinEnabled] = useState(false);
   const [qrBranding, setQrBranding] = useState<QRBranding | null>(null);
 
@@ -52,6 +53,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setSurveyTitle(survey?.title ?? "Khảo sát");
     setVipCheckinEnabled(!!(survey as { vip_checkin_enabled?: boolean } | null)?.vip_checkin_enabled);
     setQrBranding(((survey as { checkin_theme?: { qr?: QRBranding } } | null)?.checkin_theme?.qr) ?? null);
+    setSessionsEnabled(!!((survey as { checkin_theme?: { sessionsEnabled?: boolean } } | null)?.checkin_theme?.sessionsEnabled));
     setResponses(resps ?? []);
     const labels: Record<string, string> = {};
     const order: string[] = [];
@@ -718,6 +720,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         )}
 
         {/* Sessions panel */}
+        {sessionsEnabled && (
         <div className="glass relative mb-4 overflow-hidden rounded-2xl">
           <div className="absolute inset-x-0 top-0 h-1" style={{ background: "linear-gradient(90deg, #6366f1, #6366f100)" }} />
           <button onClick={() => setShowSessions((s) => !s)}
@@ -755,6 +758,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             )}
           </AnimatePresence>
         </div>
+        )}
 
         {/* Add new form */}
         <AnimatePresence>
@@ -1018,7 +1022,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               )}
 
               {/* Session check-ins */}
-              {sessions.length > 0 && (
+              {sessionsEnabled && sessions.length > 0 && (
                 <div className="mb-4 border-t border-slate-100 pt-3">
                   <p className="text-xs font-medium text-slate-600 mb-2">Điểm danh theo buổi (bấm để đổi)</p>
                   <div className="space-y-1.5">

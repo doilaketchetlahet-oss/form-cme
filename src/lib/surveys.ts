@@ -59,6 +59,7 @@ export interface CheckinTheme {
   accentColor?: string;
   overlayOpacity?: number; // 0-100, default 40
   qr?: QRBranding;
+  sessionsEnabled?: boolean;
 }
 
 export interface QRBranding {

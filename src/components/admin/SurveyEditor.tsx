@@ -567,6 +567,22 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
             Bật bằng cách thêm câu hỏi loại “Face Check-in VIP” trong tab Câu hỏi. Khi form có câu hỏi này, dashboard sẽ hiện nút VIP Face.
           </p>
         </div>
+        <div className="rounded-xl border border-white/8 bg-white/[0.02] px-3 py-3">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={!!theme.sessionsEnabled}
+              onChange={(e) => patchTheme({ sessionsEnabled: e.target.checked })}
+              className="mt-0.5 h-4 w-4 accent-sky-500"
+            />
+            <span>
+              <span className="block text-xs font-medium text-slate-300">Điểm danh theo buổi</span>
+              <span className="mt-1 block text-[11px] leading-5 text-slate-500">
+                Bật để hiện mục “Điểm danh nhiều buổi” ở trang Danh sách. Mỗi buổi có link quét riêng (dùng cho CME cấp giờ).
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
       )}
 
