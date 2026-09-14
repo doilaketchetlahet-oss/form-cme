@@ -217,17 +217,34 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         finalAnswers[qId] = raw;
       }
     }
+    const original = responses.find((r) => r.id === editingId);
+    const prevEmail = original ? findEmail(original) : undefined;
+    const newEmail = Object.values(finalAnswers).find(
+      (value): value is string => typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+    );
+    const emailChanged = !!newEmail && newEmail.toLowerCase() !== (prevEmail ?? "").toLowerCase();
+
     const patch: Record<string, unknown> = { answers: finalAnswers };
     if (derivedHall !== undefined) patch.hall = derivedHall;
+    if (emailChanged && newEmail) patch.email = newEmail;
 
     await supabase.from("survey_responses").update(patch).eq("id", editingId);
     setResponses((prev) => prev.map((r) => r.id === editingId
-      ? { ...r, answers: finalAnswers, ...(derivedHall !== undefined ? { hall: derivedHall } : {}) }
+      ? { ...r, answers: finalAnswers, ...(derivedHall !== undefined ? { hall: derivedHall } : {}), ...(emailChanged && newEmail ? { email: newEmail } : {}) }
       : r));
     if (selectedResponse?.id === editingId) {
-      setSelectedResponse({ ...selectedResponse, answers: finalAnswers, ...(derivedHall !== undefined ? { hall: derivedHall } : {}) });
+      setSelectedResponse({ ...selectedResponse, answers: finalAnswers, ...(derivedHall !== undefined ? { hall: derivedHall } : {}), ...(emailChanged && newEmail ? { email: newEmail } : {}) });
     }
     setEditingId(null);
+
+    // Auto re-send the check-in email when the email address changed.
+    if (emailChanged && newEmail) {
+      const merged: SurveyResponse = { ...(original ?? ({} as SurveyResponse)), id: editingId, answers: finalAnswers, email: newEmail };
+      const ok = await sendCheckinFor(merged, newEmail);
+      alert(ok
+        ? `Đã lưu và gửi lại QR đến ${newEmail}.`
+        : `Đã lưu email mới nhưng gửi thất bại. Bấm "Gửi lại QR" để thử lại.`);
+    }
   };
 
   const loadCheckinLogs = async (responseId: string) => {
@@ -447,31 +464,38 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setSelectedResponse((current) => current && ids.includes(current.id) ? null : current);
   };
 
+  const sendCheckinFor = async (response: SurveyResponse, email: string): Promise<boolean> => {
+    setResending(true);
+    try {
+      const res = await fetch("/api/send-checkin-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: email,
+          name: findName(response.answers) || "",
+          checkinUrl: buildPublicUrl(`/checkin/${response.id}`),
+          surveyTitle,
+          responseId: response.id,
+          qrStyle: qrBranding,
+        }),
+      });
+      if (res.ok) {
+        await markEmailStatus(response.id, "sent");
+        return true;
+      }
+      const body = await res.json().catch(() => null);
+      await markEmailStatus(response.id, "failed", body?.detail || body?.error || "Gửi thất bại");
+      return false;
+    } finally {
+      setResending(false);
+    }
+  };
+
   const resendEmail = async (r: SurveyResponse) => {
     const email = findEmail(r);
     if (!email) { alert("Không tìm thấy email của người này."); return; }
-    setResending(true);
-    const res = await fetch("/api/send-checkin-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: email,
-        name: findName(r.answers) || "",
-        checkinUrl: buildPublicUrl(`/checkin/${r.id}`),
-        surveyTitle,
-        responseId: r.id,
-        qrStyle: qrBranding,
-      }),
-    });
-    setResending(false);
-    if (res.ok) {
-      await markEmailStatus(r.id, "sent");
-      alert(`Đã gửi lại QR đến ${email}`);
-      return;
-    }
-    const body = await res.json().catch(() => null);
-    await markEmailStatus(r.id, "failed", body?.detail || body?.error || "Gửi thất bại");
-    alert("Gửi thất bại. Thử lại.");
+    const ok = await sendCheckinFor(r, email);
+    alert(ok ? `Đã gửi lại QR đến ${email}` : "Gửi thất bại. Thử lại.");
   };
 
   const sendBulkEmails = async (
