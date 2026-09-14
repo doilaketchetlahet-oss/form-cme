@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, XCircle, UserCheck, RefreshCw, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, UserCheck, SwitchCamera, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { PinGate } from "@/components/ui/PinGate";
 import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
@@ -238,7 +238,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     lastScannedRef.current = pending.responseId;
     setTimeout(() => { lastScannedRef.current = ""; }, 3000);
     setWelcome({ name: pending.name, hall: currentSession || currentHall });
-    setTimeout(() => setWelcome(null), 3500);
+    setTimeout(() => setWelcome(null), 2000);
     setPending(null);
   };
 
@@ -271,7 +271,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     let animFrame: number;
     const start = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } } });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } } });
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); scanningRef.current = true; loop(); }
       } catch { /* denied */ }
     };
@@ -321,8 +321,10 @@ function ScanInner({ surveyId }: { surveyId: string }) {
           {session && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🕐 {session}</span>}
         </div>
         <button onClick={() => setFacingMode((f) => f === "environment" ? "user" : "environment")}
-          className="absolute top-4 right-5 w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-on-brand hover:bg-white/25">
-          <RefreshCw size={16} />
+          title={facingMode === "environment" ? "Chuyển sang camera trước" : "Chuyển sang camera sau"}
+          className="absolute top-4 right-5 flex h-9 items-center gap-1.5 rounded-full bg-white/15 px-3 text-on-brand hover:bg-white/25">
+          <SwitchCamera size={16} />
+          <span className="text-xs font-semibold">Lật</span>
         </button>
 
         <h2 className="text-on-brand font-bold text-xl sm:text-2xl text-center mt-6 sm:mt-2 mb-4 drop-shadow">
@@ -331,7 +333,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
 
         {/* Camera box with scan line */}
         <div className="relative w-full max-w-[720px] aspect-video rounded-[24px] overflow-hidden bg-black/40 border border-white/20">
-          <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+          <video ref={videoRef} className="w-full h-full object-cover" playsInline muted
+            style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }} />
           {/* corner frame */}
           <div className="absolute inset-6 pointer-events-none">
             <span className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 rounded-tl-xl" style={{ borderColor: "var(--checkin-accent)" }} />
