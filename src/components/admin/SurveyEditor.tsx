@@ -12,7 +12,7 @@ import { QRCodeView } from "@/components/ui/QRCodeView";
 
 interface Props {
   initial?: Survey & { questions?: SurveyQuestion[] };
-  onSave: (data: { title: string; form_type: SurveyFormType; is_anonymous: boolean; thank_you_message: string; banner_url: string | null; redirect_url: string | null; redirect_delay: number; checkin_pin: string | null; checkin_theme: CheckinTheme | null; scoring_config: ScoringConfig | null; payment_config: PaymentConfig | null; vip_checkin_enabled: boolean; questions: SurveyQuestionUpsert[] }) => void | Promise<void>;
+  onSave: (data: { title: string; form_type: SurveyFormType; is_anonymous: boolean; thank_you_message: string; banner_url: string | null; redirect_url: string | null; redirect_delay: number; checkin_pin: string | null; checkin_theme: CheckinTheme | null; scoring_config: ScoringConfig | null; payment_config: PaymentConfig | null; vip_checkin_enabled: boolean; is_closed: boolean; close_at: string | null; questions: SurveyQuestionUpsert[] }) => void | Promise<void>;
   onCancel: () => void;
   saving?: boolean;
 }
@@ -73,6 +73,13 @@ const FORM_TYPE_META: Record<SurveyFormType, FormTypeMeta> = {
 };
 
 const newKey = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+function toLocalDateTime(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 // Generate a client-side UUID for new questions so they can be referenced by
 // `show_if` conditions immediately, even before save. The same UUID is sent to
@@ -179,6 +186,9 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
   const emailSubject = initial?.email_subject ?? "";
   const emailBody = initial?.email_body ?? "";
   const [checkinPin, setCheckinPin] = useState((initial as { checkin_pin?: string } | undefined)?.checkin_pin ?? "");
+  const [isClosed, setIsClosed] = useState<boolean>(!!(initial as { is_closed?: boolean } | undefined)?.is_closed);
+  const initialCloseAt = (initial as { close_at?: string | null } | undefined)?.close_at ?? null;
+  const [closeAt, setCloseAt] = useState<string>(initialCloseAt ? toLocalDateTime(initialCloseAt) : "");
   const [theme, setTheme] = useState<CheckinTheme>((initial as { checkin_theme?: CheckinTheme } | undefined)?.checkin_theme ?? {});
   const patchTheme = (p: Partial<CheckinTheme>) => setTheme((t) => ({ ...t, ...p }));
   const patchQr = (p: NonNullable<CheckinTheme["qr"]>) => setTheme((t) => ({ ...t, qr: { ...(t.qr ?? {}), ...p } }));
@@ -329,6 +339,8 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
         expiresInMinutes: Number(paymentExpiresInMinutes),
       }) : null,
       vip_checkin_enabled: isCheckinEnabled && questions.some((q) => q.type === "face_checkin"),
+      is_closed: isClosed,
+      close_at: closeAt ? new Date(closeAt).toISOString() : null,
       questions: final,
     });
   };
@@ -596,6 +608,22 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
 
       {visibleActiveTab === "appearance" && (
       <div className="mb-5 flex flex-col gap-1.5">
+        <CollapsibleSetting label="Đóng form / hẹn giờ tắt" hint={isClosed ? "Đang đóng" : closeAt ? "Đã hẹn" : ""} icon="🛑">
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={isClosed} onChange={(e) => setIsClosed(e.target.checked)} className="h-4 w-4 accent-sky-500" />
+            Đóng form — không nhận phản hồi nữa
+          </label>
+          <div className="mt-3">
+            <span className="mb-1.5 block text-xs font-medium text-slate-500">Tự đóng lúc (tuỳ chọn)</span>
+            <input
+              type="datetime-local"
+              value={closeAt}
+              onChange={(e) => setCloseAt(e.target.value)}
+              className="admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
+            />
+          </div>
+          <p className="mt-2 text-[10px] admin-subtle">Bật “Đóng form” để tạm dừng nhận đăng ký ngay. Hẹn giờ sẽ tự đóng khi tới thời điểm.</p>
+        </CollapsibleSetting>
         {!isCheckinEnabled && (
           <CollapsibleSetting label="Trang form public" hint={bannerUrl || thankYou ? "Tuỳ chỉnh" : ""} icon="🖼️">
             <input

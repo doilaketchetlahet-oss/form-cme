@@ -83,6 +83,8 @@ create table if not exists surveys (
   scoring_config jsonb,
   payment_config jsonb,
   vip_checkin_enabled boolean not null default false,
+  is_closed boolean not null default false,
+  close_at timestamptz,
   created_at timestamptz default now()
 );
 

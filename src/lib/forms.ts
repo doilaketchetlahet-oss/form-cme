@@ -36,6 +36,8 @@ export type RegistrationFormSave = {
   scoring_config: ScoringConfig | null;
   payment_config: PaymentConfig | null;
   vip_checkin_enabled: boolean;
+  is_closed: boolean;
+  close_at: string | null;
   questions: SurveyQuestionUpsert[];
 };
 
@@ -292,6 +294,24 @@ export async function createRegistrationForm(
   return survey.id;
 }
 
+export type FormPreviewQuestion = { text: string; type: string; options: string[] | null };
+
+export async function getFormPreviewQuestions(surveyIds: string[]): Promise<Record<string, FormPreviewQuestion[]>> {
+  if (surveyIds.length === 0) return {};
+  const { data } = await supabase
+    .from("survey_questions")
+    .select("survey_id, text, type, options, position")
+    .in("survey_id", surveyIds)
+    .order("position");
+  const map: Record<string, FormPreviewQuestion[]> = {};
+  (data ?? []).forEach((row: { survey_id: string; text: string; type: string; options: string[] | null }) => {
+    if (row.type === "section" || row.type === "image_banner") return;
+    const list = map[row.survey_id] ?? (map[row.survey_id] = []);
+    if (list.length < 3) list.push({ text: row.text, type: row.type, options: row.options });
+  });
+  return map;
+}
+
 export async function getRegistrationForm(
   surveyId: string
 ): Promise<(Survey & { questions: SurveyQuestion[] }) | null> {
@@ -325,6 +345,8 @@ export async function saveRegistrationForm(surveyId: string, payload: Registrati
         scoring_config: payload.scoring_config,
         payment_config: payload.payment_config,
         vip_checkin_enabled: payload.vip_checkin_enabled,
+        is_closed: payload.is_closed,
+        close_at: payload.close_at,
       })
       .eq("id", surveyId);
 
@@ -359,6 +381,8 @@ export async function saveRegistrationForm(surveyId: string, payload: Registrati
             ...(missingScoringConfig ? {} : { scoring_config: payload.scoring_config }),
             ...(missingPaymentConfig ? {} : { payment_config: payload.payment_config }),
             vip_checkin_enabled: payload.vip_checkin_enabled,
+            is_closed: payload.is_closed,
+            close_at: payload.close_at,
           })
           .eq("id", surveyId);
         if (fallbackError) return { ok: false, error: fallbackError.message };

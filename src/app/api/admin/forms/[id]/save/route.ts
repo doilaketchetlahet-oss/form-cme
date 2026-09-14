@@ -83,6 +83,8 @@ export async function POST(request: Request, context: RouteContext) {
     scoring_config: payload!.scoring_config,
     payment_config: payload!.form_type === "registration" ? payload!.payment_config : null,
     vip_checkin_enabled: payload!.vip_checkin_enabled,
+    is_closed: payload!.is_closed,
+    close_at: payload!.close_at,
   };
 
   const { error: surveyError } = await supabase
@@ -94,8 +96,9 @@ export async function POST(request: Request, context: RouteContext) {
     const missingScoringConfig = isMissingColumn(surveyError, "scoring_config");
     const missingFormType = isMissingColumn(surveyError, "form_type");
     const missingPaymentConfig = isMissingColumn(surveyError, "payment_config");
+    const missingClose = isMissingColumn(surveyError, "is_closed") || isMissingColumn(surveyError, "close_at");
 
-    if (missingScoringConfig || missingFormType || missingPaymentConfig) {
+    if (missingScoringConfig || missingFormType || missingPaymentConfig || missingClose) {
       if (payload!.scoring_config) {
         return NextResponse.json({
           ok: false,
@@ -128,6 +131,7 @@ export async function POST(request: Request, context: RouteContext) {
         ...(missingScoringConfig ? {} : { scoring_config: surveyUpdate.scoring_config }),
         ...(missingPaymentConfig ? {} : { payment_config: surveyUpdate.payment_config }),
         vip_checkin_enabled: surveyUpdate.vip_checkin_enabled,
+        ...(missingClose ? {} : { is_closed: surveyUpdate.is_closed, close_at: surveyUpdate.close_at }),
       };
       const { error: fallbackError } = await supabase
         .from("surveys")

@@ -11,7 +11,9 @@ import {
   createRegistrationForm,
   deleteRegistrationForm,
   duplicateRegistrationForm,
+  getFormPreviewQuestions,
   listRegistrationForms,
+  type FormPreviewQuestion,
   type RegistrationFormSummary,
 } from "@/lib/forms";
 import { PageHeader } from "./PageHeader";
@@ -26,6 +28,7 @@ export function FormsList() {
   const [typeFilter, setTypeFilter] = useState<"all" | SurveyFormType>("all");
   const [eventFilter, setEventFilter] = useState("all");
   const [events, setEvents] = useState<EventRecord[]>([]);
+  const [previews, setPreviews] = useState<Record<string, FormPreviewQuestion[]>>({});
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   const refresh = async () => {
@@ -45,10 +48,12 @@ export function FormsList() {
       });
       return () => { active = false; };
     }
-    listRegistrationForms().then((items) => {
+    listRegistrationForms().then(async (items) => {
       if (!active) return;
       setForms(items);
       setLoading(false);
+      const map = await getFormPreviewQuestions(items.map((item) => item.id));
+      if (active) setPreviews(map);
     });
     return () => { active = false; };
   }, [user?.id]);
@@ -215,6 +220,7 @@ export function FormsList() {
                   form={form}
                   canManageForms={canManageForms}
                   eventName={eventByForm.get(form.id)?.name}
+                  preview={previews[form.id]}
                   onCopy={() => copyLink(form.id)}
                   onDuplicate={() => handleDuplicate(form)}
                   onDelete={() => handleDelete(form)}
@@ -229,10 +235,11 @@ export function FormsList() {
   );
 }
 
-function FormCard({ form, canManageForms, eventName, onCopy, onDuplicate, onDelete, duplicating }: {
+function FormCard({ form, canManageForms, eventName, preview, onCopy, onDuplicate, onDelete, duplicating }: {
   form: RegistrationFormSummary;
   canManageForms: boolean;
   eventName?: string;
+  preview?: FormPreviewQuestion[];
   onCopy: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -259,6 +266,30 @@ function FormCard({ form, canManageForms, eventName, onCopy, onDuplicate, onDele
           </div>
         </div>
       </Link>
+
+      {preview && preview.length > 0 && (
+        <div className="mb-4 space-y-1.5 rounded-xl border border-slate-200 bg-slate-50/70 p-2.5">
+          <div className="px-0.5 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Xem trước</div>
+          {preview.map((question, index) => (
+            <div key={index} className="rounded-lg border border-slate-100 bg-white px-2.5 py-1.5">
+              <div className="truncate text-[11px] text-slate-600">{index + 1}. {question.text || "(chưa có tiêu đề)"}</div>
+              {question.options && question.options.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {question.options.slice(0, 3).map((option, optionIndex) => (
+                    <span key={optionIndex} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">{option}</span>
+                  ))}
+                  {question.options.length > 3 && <span className="text-[9px] text-slate-400">+{question.options.length - 3}</span>}
+                </div>
+              ) : (
+                <div className="mt-1 h-3 rounded bg-slate-100" />
+              )}
+            </div>
+          ))}
+          {form.questionCount > preview.length && (
+            <div className="text-center text-[10px] text-slate-400">+{form.questionCount - preview.length} câu khác</div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">

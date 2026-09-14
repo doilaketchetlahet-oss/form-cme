@@ -31,6 +31,8 @@ export interface Survey {
   scoring_config: ScoringConfig | null;
   payment_config: PaymentConfig | null;
   vip_checkin_enabled: boolean;
+  is_closed: boolean;
+  close_at: string | null;
   created_at: string;
 }
 
@@ -135,7 +137,7 @@ export async function createSurvey(quizId: string, position: number, title = "Kh
   return data;
 }
 
-export async function updateSurvey(id: string, patch: Partial<Pick<Survey, "title" | "form_type" | "is_anonymous" | "position" | "thank_you_message" | "banner_url" | "accent_color" | "redirect_url" | "redirect_delay" | "email_subject" | "email_body" | "checkin_pin" | "checkin_theme" | "scoring_config" | "payment_config" | "vip_checkin_enabled">>): Promise<void> {
+export async function updateSurvey(id: string, patch: Partial<Pick<Survey, "title" | "form_type" | "is_anonymous" | "position" | "thank_you_message" | "banner_url" | "accent_color" | "redirect_url" | "redirect_delay" | "email_subject" | "email_body" | "checkin_pin" | "checkin_theme" | "scoring_config" | "payment_config" | "vip_checkin_enabled" | "is_closed" | "close_at">>): Promise<void> {
   await supabase.from("surveys").update(patch).eq("id", id);
 }
 

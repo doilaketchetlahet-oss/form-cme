@@ -69,6 +69,7 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
   const [questions, setQuestions] = useState<SurveyQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [closed, setClosed] = useState(false);
   const [answers, setAnswers] = useState<Record<string, SurveyAnswerValue>>(() => preview ? {} : loadInitialDraft(surveyId));
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -96,6 +97,9 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
       setSurvey(loadedSurvey);
       setQuestions(qs ?? []);
       if (s.accent_color) setAccent(s.accent_color);
+      const closedNow = !!loadedSurvey.is_closed
+        || (!!loadedSurvey.close_at && new Date(loadedSurvey.close_at).getTime() <= Date.now());
+      if (!preview && closedNow) setClosed(true);
       if (!preview && isCheckinForm(loadedSurvey) && hasSubmittedSurvey(surveyId)) {
         setSubmitted(true);
       }
@@ -190,6 +194,10 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
     if (preview) {
       setShowValidation(true);
       setError("Đây là chế độ xem trước. Form sẽ không ghi dữ liệu.");
+      return;
+    }
+    if (closed) {
+      setError("Form đã đóng, không nhận thêm phản hồi.");
       return;
     }
     if (submitting) return;
@@ -389,6 +397,19 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
         <div className="text-5xl mb-4">📋</div>
         <h1 className="text-2xl font-bold text-slate-800 mb-2">Không tìm thấy khảo sát</h1>
         <p className="text-slate-500">Link không hợp lệ hoặc khảo sát đã bị xoá.</p>
+      </div>
+    );
+  }
+
+  // ─── Closed ────────────────────────────────────────────────────────────────
+  if (closed) {
+    return (
+      <div className="min-h-dvh bg-slate-50 flex flex-col items-center justify-center px-4 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 text-3xl mb-4">🔒</div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-2">Form đã đóng</h1>
+        <p className="text-slate-500 max-w-md">
+          {survey?.title ? `“${survey.title}” đã` : "Form này đã"} ngừng nhận phản hồi. Vui lòng liên hệ Ban tổ chức nếu cần hỗ trợ.
+        </p>
       </div>
     );
   }
