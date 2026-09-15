@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, FileText, Loader2, Lock, Save } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileText, Loader2, Lock, Save, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getRegistrationForm } from "@/lib/forms";
@@ -48,6 +48,8 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [rasterizing, setRasterizing] = useState(false);
+  const [editorKey, setEditorKey] = useState(0);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(null);
 
   useEffect(() => {
@@ -209,6 +211,38 @@ export function InvitePdfPage({ formId }: { formId: string }) {
     }
   };
 
+  const handlePdfFile = async (file: File) => {
+    if (file.type !== "application/pdf") { toast.error("Vui lòng chọn file PDF."); return; }
+    setRasterizing(true);
+    try {
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      const buffer = await file.arrayBuffer();
+      const doc = await pdfjs.getDocument({ data: buffer }).promise;
+      const page = await doc.getPage(1);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Không tạo được canvas.");
+      await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+      if (!blob) throw new Error("Không tạo được ảnh từ PDF.");
+      const pathName = `theme/pdf-${Date.now()}.jpg`;
+      const { error } = await supabase.storage.from("survey-uploads").upload(pathName, blob, { contentType: "image/jpeg", upsert: true });
+      if (error) throw new Error(error.message);
+      const { data } = supabase.storage.from("survey-uploads").getPublicUrl(pathName);
+      setOverlay((prev) => ({ imageUrl: data.publicUrl, width: canvas.width, height: canvas.height, fields: prev?.fields ?? [] }));
+      setEditorKey((key) => key + 1);
+      toast.success("Đã nạp PDF gốc làm ảnh nền.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Đọc PDF thất bại.");
+    } finally {
+      setRasterizing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="px-4 py-8 sm:px-8">
@@ -273,9 +307,24 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       ) : (
         <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
-            Tải ảnh nền (xuất PDF gốc ra ảnh), kéo field <strong>tên</strong> và <strong>QR</strong> vào đúng vị trí. Khi xuất, mỗi người nhận 1 file PDF với tên file = tên người.
+            Tải <strong>file PDF gốc</strong> (tự chuyển thành ảnh nền) hoặc ảnh nền, rồi kéo field <strong>tên</strong> và <strong>QR</strong> vào đúng vị trí. Khi xuất, mỗi người nhận 1 file PDF với tên file = tên người.
           </div>
+          <label className="mb-4 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50">
+            {rasterizing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+            {rasterizing ? "Đang đọc PDF…" : "Tải PDF gốc"}
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void handlePdfFile(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
           <EmailOverlayEditor
+            key={editorKey}
             body={editorBody}
             surveyTitle={form.title}
             questions={questionPayload}
