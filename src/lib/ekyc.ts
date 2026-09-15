@@ -1,66 +1,78 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Config } from "@vladmandic/human";
 
-const MODEL_URL = "/models";
+type HumanModule = typeof import("@vladmandic/human");
+type HumanInstance = InstanceType<HumanModule["default"]>;
 
-type FaceApiModule = typeof import("@vladmandic/face-api");
+const MODEL_BASE = "/models/human/";
 
-// face-api (tfjs) crashes when evaluated during SSR, so it is loaded lazily
-// and only ever runs in the browser.
-let faceApiPromise: Promise<FaceApiModule> | null = null;
+// Human (~ArcFace embedder + BlazeFace + FaceMesh + antispoof) runs in the
+// browser only. It is loaded lazily so SSR never evaluates TensorFlow.
+let humanPromise: Promise<HumanInstance> | null = null;
 
-async function getFaceApi(): Promise<FaceApiModule> {
-  if (!faceApiPromise) {
-    faceApiPromise = import("@vladmandic/face-api").then((mod) => {
-      const candidate = mod as FaceApiModule & { default?: FaceApiModule };
-      return candidate.default?.nets ? candidate.default : candidate;
-    });
-  }
-  return faceApiPromise;
+function humanConfig(): Partial<Config> {
+  return {
+    modelBasePath: MODEL_BASE,
+    cacheModels: true,
+    warmup: "none",
+    debug: false,
+    filter: { enabled: false },
+    face: {
+      enabled: true,
+      detector: { enabled: true, modelPath: "blazeface.json", rotation: true, maxDetected: 4, minConfidence: 0.3, minSize: 40 },
+      mesh: { enabled: true, modelPath: "facemesh.json" },
+      description: { enabled: true, modelPath: "faceres.json", minConfidence: 0.3 },
+      antispoof: { enabled: true, modelPath: "antispoof.json" },
+      iris: { enabled: false },
+      emotion: { enabled: false },
+      gear: { enabled: false },
+      liveness: { enabled: false },
+    },
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+  };
 }
 
-let modelsLoaded = false;
-let loadingPromise: Promise<void> | null = null;
+async function getHuman(): Promise<HumanInstance> {
+  if (!humanPromise) {
+    humanPromise = import("@vladmandic/human").then((mod) => {
+      const HumanClass = (mod.default ?? mod) as HumanModule["default"];
+      return new HumanClass(humanConfig());
+    });
+  }
+  return humanPromise;
+}
 
 export async function loadFaceModels(): Promise<void> {
-  if (modelsLoaded) return;
-  if (loadingPromise) return loadingPromise;
-
-  loadingPromise = (async () => {
-    const faceapi = await getFaceApi();
-    await Promise.all([
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-    ]);
-    modelsLoaded = true;
-  })();
-
-  return loadingPromise;
+  const human = await getHuman();
+  await human.load();
 }
 
 export async function extractFaceDescriptor(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
 ): Promise<Float32Array | null> {
-  const faceapi = await getFaceApi();
-  await loadFaceModels();
-  const detection = await faceapi
-    .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
-    .withFaceLandmarks()
-    .withFaceDescriptor();
-
-  return detection?.descriptor ?? null;
+  const human = await getHuman();
+  await human.load();
+  const result = await human.detect(input);
+  const face = (result.face ?? []).slice().sort((a, b) => b.score - a.score)[0];
+  if (!face?.embedding || face.embedding.length === 0) return null;
+  return Float32Array.from(face.embedding);
 }
 
-export function compareFaces(
-  descriptor1: Float32Array,
-  descriptor2: Float32Array
-): number {
-  let sum = 0;
+// Cosine distance: 0 = identical, 1 = unrelated, 2 = opposite.
+export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Array): number {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
   for (let i = 0; i < descriptor1.length; i += 1) {
-    const diff = descriptor1[i] - descriptor2[i];
-    sum += diff * diff;
+    dot += descriptor1[i] * descriptor2[i];
+    normA += descriptor1[i] * descriptor1[i];
+    normB += descriptor2[i] * descriptor2[i];
   }
-  return Math.sqrt(sum);
+  if (normA === 0 || normB === 0) return 1;
+  const cosine = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return 1 - cosine;
 }
 
 export interface FaceQualityReport {
@@ -76,6 +88,11 @@ export interface FaceQualityReport {
   faceCount: number;
   directionHint: string;
   canAutoCapture: boolean;
+}
+
+function toDegrees(value: number) {
+  // Human returns radians; keep degree values as-is.
+  return Math.abs(value) <= 3.5 ? (value * 180) / Math.PI : value;
 }
 
 export async function assessFaceQuality(
@@ -96,8 +113,8 @@ export async function assessFaceQuality(
     canAutoCapture: false,
   };
 
-  await loadFaceModels();
-  const faceapi = await getFaceApi();
+  const human = await getHuman();
+  await human.load();
 
   const canvas = document.createElement("canvas");
   canvas.width = input instanceof HTMLVideoElement ? input.videoWidth : input.width;
@@ -106,60 +123,32 @@ export async function assessFaceQuality(
   if (!ctx) return defaultReport;
   ctx.drawImage(input, 0, 0, canvas.width, canvas.height);
 
-  const allDetections = await faceapi
-    .detectAllFaces(canvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
-    .withFaceLandmarks();
-
-  const faceCount = allDetections.length;
+  const result = await human.detect(canvas);
+  const faces = (result.face ?? []).slice().sort((a, b) => b.score - a.score);
+  const faceCount = faces.length;
   if (faceCount === 0) return defaultReport;
 
   if (faceCount > 1) {
     return {
       ...defaultReport,
       faceCount,
-      singleFace: false,
       directionHint: "Phát hiện nhiều khuôn mặt. Chỉ giữ 1 người trong khung.",
     };
   }
 
-  const det = allDetections[0];
-  const landmarks = det.landmarks;
-  const leftEye = landmarks.getLeftEye();
-  const rightEye = landmarks.getRightEye();
-  const nose = landmarks.getNose();
-  const jaw = landmarks.getJawOutline();
+  const face = faces[0];
+  const [fx, fy, fw, fh] = face.box;
 
-  const leftEyeCenter = center(leftEye);
-  const rightEyeCenter = center(rightEye);
-  const noseTip = center(nose.slice(Math.max(0, nose.length - 4)));
-  const jawBottom = jaw.length > 0 ? jaw[Math.floor(jaw.length * 0.97)] : noseTip;
-
-  const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
-  const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
-
-  const dx = noseTip.x - eyeCenterX;
-  const dy = noseTip.y - eyeCenterY;
-  const eyeDistance = Math.sqrt(
-    (rightEyeCenter.x - leftEyeCenter.x) ** 2 +
-    (rightEyeCenter.y - leftEyeCenter.y) ** 2
-  );
-
-  const yaw = (dx / eyeDistance) * 100;
-  const rawPitch = (dy / eyeDistance) * 100;
-  const faceBox = det.detection.box;
-  const faceCenterYRatio = (faceBox.y + faceBox.height / 2) / canvas.height;
-  // Top-down camera often makes pitch look negative when user is centered well
-  const pitch = rawPitch + (faceCenterYRatio > 0.45 ? -8 : 0);
-
+  const yaw = toDegrees(face.rotation?.angle.yaw ?? 0);
+  const pitch = toDegrees(face.rotation?.angle.pitch ?? 0);
   const isFrontal = Math.abs(yaw) < 25 && Math.abs(pitch) < 28;
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const { data: pixels } = imageData;
   let totalBrightness = 0;
   let pixelCount = 0;
-  const { x: fx, y: fy, width: fw, height: fh } = faceBox;
-  for (let y = Math.floor(fy); y < Math.floor(fy + fh); y++) {
-    for (let x = Math.floor(fx); x < Math.floor(fx + fw); x++) {
+  for (let y = Math.max(0, Math.floor(fy)); y < Math.min(canvas.height, Math.floor(fy + fh)); y++) {
+    for (let x = Math.max(0, Math.floor(fx)); x < Math.min(canvas.width, Math.floor(fx + fw)); x++) {
       const idx = (y * canvas.width + x) * 4;
       totalBrightness += pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114;
       pixelCount++;
@@ -168,24 +157,22 @@ export async function assessFaceQuality(
   const brightness = pixelCount > 0 ? totalBrightness / pixelCount : 0;
   const isGoodLight = brightness > 35 && brightness < 230;
 
-  let blurScore = 0;
   const faceRegion = ctx.getImageData(
-    Math.floor(fx),
-    Math.floor(fy),
-    Math.min(Math.floor(fw), canvas.width - Math.floor(fx)),
-    Math.min(Math.floor(fh), canvas.height - Math.floor(fy))
+    Math.max(0, Math.floor(fx)),
+    Math.max(0, Math.floor(fy)),
+    Math.max(1, Math.min(Math.floor(fw), canvas.width - Math.floor(fx))),
+    Math.max(1, Math.min(Math.floor(fh), canvas.height - Math.floor(fy)))
   );
-  blurScore = computeLaplacianVariance(faceRegion);
+  const blurScore = computeLaplacianVariance(faceRegion);
   const isNotBlurry = blurScore > 10;
 
-  // Face size ratio (how large face is in frame)
-  const faceAreaRatio = (faceBox.width * faceBox.height) / (canvas.width * canvas.height);
+  const faceAreaRatio = (fw * fh) / (canvas.width * canvas.height);
   const isGoodSize = faceAreaRatio > 0.06 && faceAreaRatio < 0.6;
 
+  const spoofed = typeof face.real === "number" && face.real < 0.3;
+
   let directionHint = "";
-  if (faceCount > 1) {
-    directionHint = "Phát hiện nhiều khuôn mặt. Chỉ giữ 1 người trong khung.";
-  } else if (Math.abs(yaw) > 25) {
+  if (Math.abs(yaw) > 25) {
     directionHint = yaw > 0 ? "← Di chuyển sang trái" : "Di chuyển sang phải →";
   } else if (Math.abs(pitch) > 28) {
     directionHint = pitch > 0 ? "Nhìn lên một chút" : "Nhìn xuống một chút";
@@ -199,6 +186,8 @@ export async function assessFaceQuality(
     directionHint = "Tiến gần camera hơn";
   } else if (!isGoodSize && faceAreaRatio > 0.6) {
     directionHint = "Lùi lại xa hơn";
+  } else if (spoofed) {
+    directionHint = "Có dấu hiệu ảnh giả. Đưa khuôn mặt thật vào khung.";
   } else {
     directionHint = "Đang nhận diện...";
   }
@@ -216,8 +205,9 @@ export async function assessFaceQuality(
   if (isNotBlurry) score += 20;
   if (isGoodSize) score += 15;
   score += Math.max(0, 15 - Math.abs(yaw) * 0.3 - Math.abs(pitch) * 0.2);
+  if (spoofed) score = Math.min(score, 30);
 
-  const canAutoCapture = isFrontal && isGoodLight && isNotBlurry && isGoodSize && faceCount === 1;
+  const canAutoCapture = isFrontal && isGoodLight && isNotBlurry && isGoodSize && faceCount === 1 && !spoofed;
 
   return {
     score: Math.min(100, Math.round(score)),
@@ -233,12 +223,6 @@ export async function assessFaceQuality(
     directionHint,
     canAutoCapture,
   };
-}
-
-function center(points: { x: number; y: number }[]): { x: number; y: number } {
-  const sx = points.reduce((s, p) => s + p.x, 0);
-  const sy = points.reduce((s, p) => s + p.y, 0);
-  return { x: sx / points.length, y: sy / points.length };
 }
 
 function computeLaplacianVariance(imageData: ImageData): number {
@@ -403,7 +387,7 @@ export async function findFaceMatch(
   supabaseClient: SupabaseClient,
   surveyId: string,
   liveDescriptor: Float32Array,
-  threshold = 0.8
+  threshold = 0.5
 ): Promise<{ response_id: string; similarity: number; display_name: string } | null> {
   const [{ data: registrations }, { data: questions }] = await Promise.all([
     supabaseClient
@@ -426,6 +410,7 @@ export async function findFaceMatch(
   for (const reg of registrations) {
     if (!reg.embedding || reg.embedding.length === 0) continue;
     const storedDescriptor = new Float32Array(reg.embedding);
+    // Skip embeddings from a different model (e.g. old 128-d face-api data).
     if (storedDescriptor.length !== liveDescriptor.length) continue;
     const distance = compareFaces(liveDescriptor, storedDescriptor);
     const similarity = 1 - Math.min(distance, 1);
