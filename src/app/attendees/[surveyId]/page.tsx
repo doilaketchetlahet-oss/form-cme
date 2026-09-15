@@ -1,6 +1,8 @@
 ﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { useConfirm } from "@/lib/ui/confirm";
 import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, BarChart3 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { SurveyResponse } from "@/lib/surveys";
@@ -19,6 +21,7 @@ export default function AttendeesPage({ params }: { params: Promise<{ surveyId: 
 }
 
 function AttendeesInner({ surveyId }: { surveyId: string }) {
+  const confirm = useConfirm();
   const [surveyTitle, setSurveyTitle] = useState("");
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [questionLabels, setQuestionLabels] = useState<Record<string, string>>({});
@@ -165,7 +168,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const doCheckin = async (id: string) => {
     const response = responses.find((r) => r.id === id);
     if (response && !isPaymentSettled(response.payment_status)) {
-      alert("Người này chưa hoàn tất thanh toán, chưa thể check-in.");
+      toast.error("Người này chưa hoàn tất thanh toán, chưa thể check-in.");
       return;
     }
     await supabase.from("survey_responses").update({ checked_in: true, checked_in_at: new Date().toISOString() }).eq("id", id);
@@ -183,7 +186,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   };
 
   const deleteResponse = async (id: string) => {
-    if (!confirm("Xoá người này?")) return;
+    if (!(await confirm({ title: "Xoá người này?", destructive: true, confirmText: "Xoá" }))) return;
     await supabase.from("survey_responses").delete().eq("id", id);
     setResponses((prev) => prev.filter((r) => r.id !== id));
   };
@@ -241,9 +244,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     if (emailChanged && newEmail) {
       const merged: SurveyResponse = { ...(original ?? ({} as SurveyResponse)), id: editingId, answers: finalAnswers, email: newEmail };
       const ok = await sendCheckinFor(merged, newEmail);
-      alert(ok
-        ? `Đã lưu và gửi lại QR đến ${newEmail}.`
-        : `Đã lưu email mới nhưng gửi thất bại. Bấm "Gửi lại QR" để thử lại.`);
+      if (ok) toast.success(`Đã lưu và gửi lại QR đến ${newEmail}.`);
+      else toast.error('Đã lưu email mới nhưng gửi thất bại. Bấm "Gửi lại QR" để thử lại.');
     }
   };
 
@@ -430,7 +432,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       return !response || isPaymentSettled(response.payment_status);
     });
     if (ids.length === 0) {
-      alert("Các dòng đã chọn đều chưa hoàn tất thanh toán.");
+      toast.warning("Các dòng đã chọn đều chưa hoàn tất thanh toán.");
       return;
     }
     await Promise.all(ids.map((id) => supabase.from("survey_responses").update({ checked_in: true, checked_in_at: new Date().toISOString() }).eq("id", id)));
@@ -451,11 +453,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const bulkDelete = async () => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    if (!confirm(`Xoá ${ids.length} người đã chọn? Thao tác này không thể hoàn tác.`)) return;
+    if (!(await confirm({ title: `Xoá ${ids.length} người đã chọn?`, description: "Thao tác này không thể hoàn tác.", destructive: true, confirmText: "Xoá" }))) return;
 
     const { error } = await supabase.from("survey_responses").delete().in("id", ids);
     if (error) {
-      alert(`Xoá thất bại: ${error.message}`);
+      toast.error(`Xoá thất bại: ${error.message}`);
       return;
     }
 
@@ -493,9 +495,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const resendEmail = async (r: SurveyResponse) => {
     const email = findEmail(r);
-    if (!email) { alert("Không tìm thấy email của người này."); return; }
+    if (!email) { toast.error("Không tìm thấy email của người này."); return; }
     const ok = await sendCheckinFor(r, email);
-    alert(ok ? `Đã gửi lại QR đến ${email}` : "Gửi thất bại. Thử lại.");
+    if (ok) toast.success(`Đã gửi lại QR đến ${email}`);
+    else toast.error("Gửi thất bại. Thử lại.");
   };
 
   const sendBulkEmails = async (
@@ -503,8 +506,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     mode: "reminder" | "default",
     label: string,
   ) => {
-    if (targets.length === 0) { alert("Không có ai để gửi."); return; }
-    if (!confirm(`${label} ${targets.length} người? (Resend free: tối đa 100 email/ngày)`)) return;
+    if (targets.length === 0) { toast.error("Không có ai để gửi."); return; }
+    if (!(await confirm({ title: label, description: `${targets.length} người? (Resend free: tối đa 100 email/ngày)`, confirmText: "Gửi" }))) return;
     setResending(true);
     let sent = 0, failed = 0;
     // Send sequentially to respect rate limits
@@ -538,7 +541,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       await new Promise((res) => setTimeout(res, 600)); // ~1.6/s to stay under limits
     }
     setResending(false);
-    alert(`Đã gửi ${sent}.${failed > 0 ? ` ${failed} thất bại.` : ""}`);
+    if (failed > 0) toast.warning(`Đã gửi ${sent}. ${failed} thất bại.`);
+    else toast.success(`Đã gửi ${sent}.`);
   };
 
   const sendReminders = () => sendBulkEmails(
@@ -766,7 +770,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                           <p className="text-sm font-medium text-slate-800 truncate">{s}</p>
                           <p className="text-[11px] text-slate-500">{checkedInSession}/{totalCount} đã điểm danh</p>
                         </div>
-                        <button onClick={() => { navigator.clipboard.writeText(scanUrl); alert("Đã copy link quét buổi này!"); }}
+                        <button onClick={() => { navigator.clipboard.writeText(scanUrl); toast.success("Đã copy link quét buổi này!"); }}
                           className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">Copy link</button>
                         <a href={scanUrl} target="_blank" rel="noopener noreferrer"
                           className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-on-brand bg-indigo-600 hover:bg-indigo-500">Mở scan</a>

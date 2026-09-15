@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Loader2, Mail, Save, Trash2 } from "lucide-react";
+import { useConfirm } from "@/lib/ui/confirm";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { supabase } from "@/lib/supabase";
@@ -30,6 +31,7 @@ function defaultBody() {
 export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
   const router = useRouter();
   const { canManageForms } = useAdminAccess();
+  const confirm = useConfirm();
   const initialBody = useMemo(() => defaultBody(), []);
   const [loading, setLoading] = useState(!!templateId);
   const [saving, setSaving] = useState(false);
@@ -113,7 +115,7 @@ export function EmailTemplateEditPage({ templateId }: { templateId?: string }) {
 
   const handleDelete = async () => {
     if (!templateId || !canManageForms) return;
-    if (!window.confirm("Xóa template này?")) return;
+    if (!(await confirm({ title: "Xóa template này?", destructive: true, confirmText: "Xóa" }))) return;
     const token = await getToken();
     if (!token) return;
     await fetch(`/api/admin/email-templates?id=${encodeURIComponent(templateId)}`, {

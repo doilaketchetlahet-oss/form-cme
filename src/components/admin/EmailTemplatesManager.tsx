@@ -7,6 +7,7 @@ import {
   Plus, RefreshCw, Trash2, X,
 } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { useConfirm } from "@/lib/ui/confirm";
 import { supabase } from "@/lib/supabase";
 import { parseEmailTemplate } from "@/lib/email-template";
 import { PageHeader } from "./PageHeader";
@@ -35,6 +36,7 @@ function templateHighlights(body: string) {
 
 export function EmailTemplatesManager() {
   const { canManageForms } = useAdminAccess();
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -101,7 +103,7 @@ export function EmailTemplatesManager() {
 
   const remove = async (template: TemplateSummary) => {
     if (!canManageForms) return;
-    if (!window.confirm(`Xóa template “${template.name}”?`)) return;
+    if (!(await confirm({ title: `Xóa template “${template.name}”?`, destructive: true, confirmText: "Xóa" }))) return;
     setBusyId(template.id);
     setMessage(null);
     try {

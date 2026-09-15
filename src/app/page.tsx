@@ -88,7 +88,7 @@ export default function HomePage() {
             transition={{ delay: 0.16 }}
             className="text-base sm:text-lg text-slate-600 max-w-2xl mb-10 leading-relaxed"
           >
-            Tạo form đăng ký sự kiện, gửi QR check-in qua email, quét QR tại quầy và hỗ trợ face check-in VIP trên một dashboard riêng.
+            Hệ thống tạo form đăng ký sự kiện và giải pháp check-in bằng QR hoặc khuôn mặt.
           </motion.p>
 
           <motion.div

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Calendar, Layers, Loader2, Plus, RefreshCw, Save, Trash2, Users } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { useConfirm } from "@/lib/ui/confirm";
 import { listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms";
 import { listEvents, saveEvent, deleteEvent, type EventRecord } from "@/lib/events";
 import { PageHeader } from "./PageHeader";
@@ -23,6 +24,7 @@ function formTypeLabel(type: RegistrationFormSummary["formType"]) {
 
 export function EventsManager() {
   const { canManageForms } = useAdminAccess();
+  const confirm = useConfirm();
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [forms, setForms] = useState<RegistrationFormSummary[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -119,7 +121,7 @@ export function EventsManager() {
 
   const handleDelete = async (event: EventRecord) => {
     if (!canManageForms) return;
-    if (!window.confirm(`Xóa sự kiện “${event.name}”? Form vẫn được giữ, chỉ bỏ nhóm.`)) return;
+    if (!(await confirm({ title: `Xóa sự kiện “${event.name}”?`, description: "Form vẫn được giữ, chỉ bỏ nhóm.", destructive: true, confirmText: "Xóa" }))) return;
     setBusyId(event.id);
     const result = await deleteEvent(event.id);
     setBusyId(null);

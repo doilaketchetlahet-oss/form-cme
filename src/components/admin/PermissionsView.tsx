@@ -16,6 +16,7 @@ import {
   Users,
 } from "lucide-react";
 import { getAdminRoleLabel, type AdminRole, useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { useConfirm } from "@/lib/ui/confirm";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "./PageHeader";
@@ -58,6 +59,7 @@ const ROLE_META: Record<AdminRole, { label: string; tone: string; description: s
 
 export function PermissionsView() {
   const access = useAdminAccess();
+  const confirm = useConfirm();
   const [members, setMembers] = useState<AdminMember[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -244,7 +246,7 @@ export function PermissionsView() {
       return;
     }
 
-    if (!window.confirm(`Gỡ quyền quản trị của ${member.email}?`)) return;
+    if (!(await confirm({ title: `Gỡ quyền quản trị của ${member.email}?`, destructive: true, confirmText: "Gỡ quyền" }))) return;
 
     const { error } = await supabase.from("admin_members").delete().eq("id", member.id);
     if (error) {

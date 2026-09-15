@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, Mail, Plus, RefreshCw, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
+import { useConfirm } from "@/lib/ui/confirm";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getAccessToken, listEvents, type EventRecord } from "@/lib/events";
 import { listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms";
@@ -51,6 +52,7 @@ function emptyDraft() {
 
 export function EmailCampaignsManager() {
   const { canManageForms } = useAdminAccess();
+  const confirm = useConfirm();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [forms, setForms] = useState<RegistrationFormSummary[]>([]);
@@ -172,7 +174,7 @@ export function EmailCampaignsManager() {
 
   const remove = async (id: string) => {
     if (!canManageForms) return;
-    if (!window.confirm("Xóa chiến dịch này?")) return;
+    if (!(await confirm({ title: "Xóa chiến dịch này?", destructive: true, confirmText: "Xóa" }))) return;
     const token = await getAccessToken();
     if (!token) return;
     setBusy(true);

@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
+import { useConfirm } from "@/lib/ui/confirm";
 import { BarChart3, ClipboardList, Copy, ExternalLink, Layers, Link2, Loader2, Plus, Search, Trash2, Trophy, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
@@ -21,6 +23,7 @@ import { PageHeader } from "./PageHeader";
 export function FormsList() {
   const { user } = useAuth();
   const { canManageForms } = useAdminAccess();
+  const confirm = useConfirm();
   const [forms, setForms] = useState<RegistrationFormSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState<SurveyFormType | null>(null);
@@ -112,12 +115,12 @@ export function FormsList() {
       await refresh();
       return;
     }
-    alert("Nhân bản form thất bại. Vui lòng thử lại.");
+    toast.error("Nhân bản form thất bại. Vui lòng thử lại.");
   };
 
   const handleDelete = async (form: RegistrationFormSummary) => {
     if (!canManageForms) return;
-    if (!confirm(`Xóa form "${form.title}"? Tất cả câu hỏi và đăng ký liên quan sẽ bị xóa.`)) return;
+    if (!(await confirm({ title: `Xóa form "${form.title}"?`, description: "Tất cả câu hỏi và đăng ký liên quan sẽ bị xóa.", destructive: true, confirmText: "Xóa" }))) return;
     await deleteRegistrationForm(form.id);
     await refresh();
   };
