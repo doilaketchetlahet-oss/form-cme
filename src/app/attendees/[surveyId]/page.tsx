@@ -1,6 +1,8 @@
 ﻿"use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
 import { useConfirm } from "@/lib/ui/confirm";
 import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, BarChart3 } from "lucide-react";
@@ -624,6 +626,99 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     w.document.close();
   };
 
+  // ─── Virtualized attendee table ──────────────────────────────────────────────
+  const allFilteredSelected = filtered.length > 0 && filtered.every((r) => selectedIds.has(r.id));
+
+  const columns: ColumnDef<SurveyResponse>[] = [
+    {
+      id: "select",
+      header: () => (
+        <input
+          type="checkbox"
+          checked={allFilteredSelected}
+          onChange={(e) => (e.target.checked ? selectAll() : clearSelection())}
+          className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+        />
+      ),
+      cell: ({ row }) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.original.id)}
+          onChange={() => toggleSelect(row.original.id)}
+          onClick={(e) => e.stopPropagation()}
+          className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+        />
+      ),
+    },
+    {
+      id: "name",
+      header: "Người đăng ký",
+      cell: ({ row }) => {
+        const r = row.original;
+        const name = findName(r.answers) || r.id.slice(0, 8).toUpperCase();
+        const time = new Date(r.submitted_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+        return (
+          <div className="flex min-w-0 items-center gap-3">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${r.checked_in ? "bg-emerald-100" : "bg-slate-100"}`}>
+              {r.checked_in ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-slate-800">
+                {name}{r.hall && <span className="ml-2 text-xs text-indigo-500 md:hidden">🏛 {r.hall}</span>}
+              </p>
+              <p className="text-xs text-slate-500">
+                {time}
+                {r.checked_in_at && <span className="ml-2 text-emerald-600">✓ {new Date(r.checked_in_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
+              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <span className="md:hidden"><PaymentStatusBadge response={r} compact /></span>
+                <EmailStatusBadge response={r} compact />
+              </div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      id: "hall",
+      header: "Hội trường",
+      cell: ({ row }) => <span className="block truncate text-sm text-slate-600">{row.original.hall || "—"}</span>,
+    },
+    {
+      id: "payment",
+      header: "Thanh toán",
+      cell: ({ row }) => <PaymentStatusBadge response={row.original} compact />,
+    },
+    {
+      id: "checkin",
+      header: "",
+      cell: ({ row }) => {
+        const r = row.original;
+        return !r.checked_in ? (
+          <button
+            onClick={(e) => { e.stopPropagation(); doCheckin(r.id); }}
+            disabled={!isPaymentSettled(r.payment_status)}
+            className="rounded-lg bg-sky-500 px-2.5 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            Check-in
+          </button>
+        ) : (
+          <span className="text-xs font-semibold text-emerald-600">✓</span>
+        );
+      },
+    },
+  ];
+
+  const table = useReactTable({ data: filtered, columns, getCoreRowModel: getCoreRowModel() });
+  const rows = table.getRowModel().rows;
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 72,
+    overscan: 8,
+  });
+
   return (
     <div className="min-h-dvh bg-slate-50">
       {/* Header */}
@@ -881,54 +976,51 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         )}
 
         {/* List */}
-        <div className="glass-strong divide-y divide-[color:var(--border)] overflow-hidden rounded-2xl">
-          {filtered.map((r) => {
-            const name = findName(r.answers) || r.id.slice(0, 8).toUpperCase();
-            const time = new Date(r.submitted_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
-            const rowTone = selectedIds.has(r.id)
-              ? "bg-sky-50/80 hover:bg-sky-50"
-              : "bg-transparent hover:bg-sky-50/50";
-
-            return (
-              <div key={r.id} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${rowTone}`}>
-                <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="h-4 w-4 flex-shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
-                <div className="flex-1 min-w-0 flex items-center gap-3" onClick={() => { void openDetail(r); }}>
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${r.checked_in ? "bg-emerald-100" : "bg-slate-100"}`}>
-                    {r.checked_in ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{name}{r.hall && <span className="text-xs text-indigo-500 ml-2">🏛 {r.hall}</span>}</p>
-                    <p className="text-xs text-slate-500">
-                      {time}
-                      {r.checked_in_at && <span className="text-emerald-600 ml-2">✓ {new Date(r.checked_in_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
-                    </p>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      <PaymentStatusBadge response={r} compact />
-                      <EmailStatusBadge response={r} compact />
-                    </div>
-                  </div>
-                </div>
-                {!r.checked_in ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); doCheckin(r.id); }}
-                    disabled={!isPaymentSettled(r.payment_status)}
-                    className="rounded-lg bg-sky-500 px-2.5 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    Check-in
-                  </button>
-                ) : (
-                  <span className="text-emerald-600 text-xs font-semibold">✓</span>
-                )}
-              </div>
-            );
-          })}
-          {filtered.length === 0 && (
+        <div className="glass-strong overflow-hidden rounded-2xl">
+          {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-center">
               <Users size={34} className="text-slate-300" />
               <p className="text-sm text-slate-500">Không có kết quả phù hợp</p>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 border-b border-[color:var(--border)] px-4 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                {table.getHeaderGroups()[0].headers.map((header) => (
+                  <div key={header.id} className={cellClass(header.column.id)}>
+                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                  </div>
+                ))}
+              </div>
+              <div ref={tableScrollRef} className="max-h-[68vh] overflow-auto">
+                <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
+                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const row = rows[virtualRow.index];
+                    const r = row.original;
+                    const rowTone = selectedIds.has(r.id) ? "bg-sky-50/80 hover:bg-sky-50" : "bg-transparent hover:bg-sky-50/50";
+                    return (
+                      <div
+                        key={r.id}
+                        data-index={virtualRow.index}
+                        ref={rowVirtualizer.measureElement}
+                        onClick={() => { void openDetail(r); }}
+                        className={`absolute left-0 top-0 flex w-full items-center gap-3 border-b border-[color:var(--border)] px-4 py-3 cursor-pointer transition-colors ${rowTone}`}
+                        style={{ transform: `translateY(${virtualRow.start}px)` }}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <div
+                            key={cell.id}
+                            className={cellClass(cell.column.id)}
+                            onClick={(e) => { if (cell.column.id === "select") e.stopPropagation(); }}
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -1140,6 +1232,14 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
 function isPaymentSettled(status: SurveyResponse["payment_status"]) {
   return !status || status === "not_required" || status === "paid";
+}
+
+function cellClass(id: string) {
+  if (id === "select") return "flex w-7 shrink-0 items-center";
+  if (id === "name") return "min-w-0 flex-1";
+  if (id === "hall") return "hidden w-[130px] shrink-0 md:block";
+  if (id === "payment") return "hidden w-[150px] shrink-0 md:flex";
+  return "flex w-[96px] shrink-0 justify-end";
 }
 
 function formatPaymentStatus(status: SurveyResponse["payment_status"]) {
