@@ -1,6 +1,10 @@
 "use client";
 import { useMemo, useState } from "react";
-import { motion, AnimatePresence, Reorder, useDragControls, useMotionValue } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   X, Plus, Trash2, Star, BarChart3, AlignLeft, Hash,
   GripVertical, ChevronDown, Phone, Calendar, MapPin, ListChecks, Type, ImageIcon, Upload, Minus, Pencil, Copy, ShieldCheck, Trophy, CreditCard, Mail, ArrowRight,
@@ -343,6 +347,23 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
       close_at: closeAt ? new Date(closeAt).toISOString() : null,
       questions: final,
     });
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = questions.findIndex((q) => q._key === active.id);
+    const newIndex = questions.findIndex((q) => q._key === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = [...questions];
+    const [moved] = next.splice(oldIndex, 1);
+    next.splice(newIndex, 0, moved);
+    setQuestions(next);
   };
 
   return (
@@ -796,27 +817,31 @@ className="admin-field w-full rounded-xl px-4 py-2.5 text-sm admin-placeholder f
           Câu hỏi ({questions.length})
         </label>
 
-        <Reorder.Group
-          axis="y"
-          values={questions}
-          onReorder={(next: DraftQuestion[]) => setQuestions(next)}
-          className="flex flex-col gap-2"
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
         >
-          {questions.map((q) => (
-            <DraftItem
-              key={q._key}
-              question={q}
-              allQuestions={questions}
-              expanded={expandedKey === q._key}
-              onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
-              onUpdate={(patch) => updateQuestion(q._key, patch)}
-              onRemove={() => removeQuestion(q._key)}
-              onDuplicate={() => duplicateQuestion(q._key)}
-              availableQuestionTypes={availableQuestionTypes}
-              allowHallSelector={isCheckinEnabled}
-            />
-          ))}
-        </Reorder.Group>
+          <SortableContext items={questions.map((q) => q._key)} strategy={verticalListSortingStrategy}>
+            <div className="flex flex-col gap-2">
+              {questions.map((q) => (
+                <DraftItem
+                  key={q._key}
+                  question={q}
+                  allQuestions={questions}
+                  expanded={expandedKey === q._key}
+                  onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
+                  onUpdate={(patch) => updateQuestion(q._key, patch)}
+                  onRemove={() => removeQuestion(q._key)}
+                  onDuplicate={() => duplicateQuestion(q._key)}
+                  availableQuestionTypes={availableQuestionTypes}
+                  allowHallSelector={isCheckinEnabled}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
 
         {/* Add question buttons */}
         <div className="grid grid-cols-2 gap-1.5 mt-3">
@@ -1144,20 +1169,14 @@ function DraftItem({
   availableQuestionTypes: typeof QUESTION_TYPES;
   allowHallSelector: boolean;
 }) {
-  const controls = useDragControls();
-  const y = useMotionValue(0);
-  const [isDragging, setIsDragging] = useState(false);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: q._key });
+  const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 30 : undefined };
 
   return (
-    <Reorder.Item
-      value={q}
-      dragListener={false}
-      dragControls={controls}
-      style={{ y }}
-      onDragStart={() => setIsDragging(true)}
-      onDragEnd={() => setIsDragging(false)}
-      className="rounded-xl border border-sky-100 bg-white overflow-hidden"
-      animate={{ scale: isDragging ? 1.01 : 1, boxShadow: isDragging ? "0 8px 22px rgba(0,0,0,0.28)" : "none" }}
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-xl border bg-white overflow-hidden ${isDragging ? "border-sky-300 shadow-lg" : "border-sky-100"}`}
     >
       {/* Header */}
       <div
@@ -1167,7 +1186,8 @@ function DraftItem({
         {/* Drag handle */}
         <button
           type="button"
-          onPointerDown={(e) => { e.preventDefault(); controls.start(e); }}
+          {...attributes}
+          {...listeners}
           onClick={(e) => e.stopPropagation()}
           className="w-7 h-7 -ml-0.5 rounded-md flex items-center justify-center admin-subtle hover:text-slate-300 hover:bg-white/5 transition-colors cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
           title="Kéo để sắp xếp"
@@ -1573,7 +1593,7 @@ function DraftItem({
           </motion.div>
         )}
       </AnimatePresence>
-    </Reorder.Item>
+    </div>
   );
 }
 

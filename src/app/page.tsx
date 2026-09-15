@@ -70,7 +70,7 @@ export default function HomePage() {
             className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 mb-7"
           >
             <Sparkles size={13} className="text-sky-500" />
-            Bộ công cụ đăng ký & check-in sự kiện CME
+            Bộ công cụ chuyên biệt cho hội thảo y tế
           </motion.span>
 
           <motion.h1
@@ -79,7 +79,7 @@ export default function HomePage() {
             transition={{ delay: 0.08 }}
             className="font-display text-5xl sm:text-6xl md:text-7xl font-black tracking-tight text-slate-900 leading-[1.05] mb-6"
           >
-            Form đăng ký <span className="text-sky-600">CME</span>
+            i-Solution<span className="text-sky-600">Manager</span>
           </motion.h1>
 
           <motion.p

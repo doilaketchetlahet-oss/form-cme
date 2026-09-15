@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,11 +15,13 @@ import {
   LogOut,
   Menu,
   X,
+  Search,
   ChevronRight,
 } from "lucide-react";
 import { useAuth, signOut } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { getAdminRoleLabel, useAdminAccess } from "@/components/auth/AdminAccessProvider";
+import { CommandPalette } from "./CommandPalette";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Tổng quan", icon: LayoutDashboard, exact: true },
@@ -39,6 +41,18 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const access = useAdminAccess();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -53,7 +67,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh flex">
       <aside className="hidden lg:flex w-64 flex-col fixed inset-y-0 left-0 glass border-r z-30">
-        <SidebarContent isActive={isActive} />
+        <SidebarContent isActive={isActive} onOpenCommand={() => setCommandOpen(true)} />
         <UserSection
           email={user?.email ?? ""}
           initials={initials}
@@ -85,7 +99,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               >
                 <X size={18} />
               </button>
-              <SidebarContent isActive={isActive} onNavigate={() => setMobileOpen(false)} />
+              <SidebarContent isActive={isActive} onNavigate={() => setMobileOpen(false)} onOpenCommand={() => setCommandOpen(true)} />
               <UserSection
                 email={user?.email ?? ""}
                 initials={initials}
@@ -125,6 +139,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
     </div>
   );
 }
@@ -132,9 +148,11 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
 function SidebarContent({
   isActive,
   onNavigate,
+  onOpenCommand,
 }: {
   isActive: (h: string, e?: boolean) => boolean;
   onNavigate?: () => void;
+  onOpenCommand: () => void;
 }) {
   return (
     <>
@@ -144,6 +162,15 @@ function SidebarContent({
         </div>
         <span className="text-base font-semibold tracking-tight text-slate-900">Form CME</span>
       </Link>
+
+      <button
+        onClick={() => { onNavigate?.(); onOpenCommand(); }}
+        className="mx-3 mt-3 flex items-center gap-2 rounded-xl border border-sky-100 bg-white px-3 py-2 text-sm text-slate-500 transition-colors hover:border-sky-300 hover:text-sky-700"
+      >
+        <Search size={15} />
+        <span className="flex-1 text-left">Tìm kiếm…</span>
+        <kbd className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400">⌘K</kbd>
+      </button>
 
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
         {NAV_ITEMS.map((item) => {
