@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
-import { compileEmailHtml, fillMergeTokens, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
+import { fillMergeTokens, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
 import { composeInviteImage } from "@/lib/email-overlay";
+import { renderCheckinEmailHtml } from "@/lib/server/email-react";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
   values.checkin_url = previewUrl;
   values.qr_image = qrImgUrl;
 
-  let html = compileEmailHtml(rawBody, values, qrImgUrl);
+  let html = await renderCheckinEmailHtml(rawBody, values, qrImgUrl);
 
   const template = parseEmailTemplate(rawBody);
   if (template.includeOverlay === true && template.overlay?.imageUrl) {

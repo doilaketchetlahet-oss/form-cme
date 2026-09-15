@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRequestSiteUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
-import { compileEmailHtml, fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
+import { fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues } from "@/lib/email-template";
+import { renderCheckinEmailHtml } from "@/lib/server/email-react";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { sendEmail } from "@/lib/server/email-provider";
 
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const rawBody = payload?.email_body || survey.email_body || "";
   const rawSubject = payload?.email_subject || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
-  const html = compileEmailHtml(rawBody, values, qrImgUrl);
+  const html = await renderCheckinEmailHtml(rawBody, values, qrImgUrl);
   const attachments: ResendAttachment[] = [];
   const template = parseEmailTemplate(rawBody);
   if (hasOverlayImage(rawBody)) {

@@ -3,13 +3,13 @@ import { buildQrImagePath } from "@/lib/qr-style";
 import type { QRBranding } from "@/lib/surveys";
 import {
   buildMergeValues,
-  compileEmailHtml,
   fillMergeTokens,
   findAttendeeName,
   hasOverlayImage,
   parseEmailTemplate,
   type EmailMergeQuestion,
 } from "@/lib/email-template";
+import { renderCheckinEmailHtml } from "./email-react";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
 
@@ -207,7 +207,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   const htmlValues = buildMergeValues(mergeInput, true);
   const textValues = buildMergeValues(mergeInput, false);
 
-  let html = compileEmailHtml(resolvedBody, htmlValues, qrImgUrl);
+  let html = await renderCheckinEmailHtml(resolvedBody, htmlValues, qrImgUrl);
   const attachments: ResendAttachment[] = [];
   const template = parseEmailTemplate(resolvedBody);
   if (hasOverlayImage(resolvedBody) && template.overlay) {
