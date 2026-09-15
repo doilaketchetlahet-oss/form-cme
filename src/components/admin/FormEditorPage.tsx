@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, BarChart3, CheckCircle2, ExternalLink, Lock, Mail, QrCode, Smartphone, Trophy } from "lucide-react";
+import { ArrowLeft, BarChart3, CheckCircle2, ExternalLink, FileText, Lock, Mail, QrCode, Smartphone, Trophy } from "lucide-react";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { getRegistrationForm, type RegistrationFormSave } from "@/lib/forms";
 import { supabase } from "@/lib/supabase";
@@ -116,6 +116,9 @@ export function FormEditorPage({ formId }: { formId: string }) {
               <Link href={`/admin/forms/${form.id}/email`} className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-sky-600" title="Soạn thư mời">
                 <Mail size={16} />
               </Link>
+              <Link href={`/admin/forms/${form.id}/pdf`} className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-sky-600" title="Thư mời PDF">
+                <FileText size={16} />
+              </Link>
               <Link href={`/attendees/${form.id}`} target="_blank" className="w-10 h-10 rounded-xl glass flex items-center justify-center text-slate-500 hover:text-indigo-600" title="Dashboard check-in">
                 <QrCode size={16} />
               </Link>
@@ -207,6 +210,9 @@ export function FormEditorPage({ formId }: { formId: string }) {
               <>
                 <Link href={`/admin/forms/${form.id}/email`} className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700 hover:bg-sky-100">
                   <Mail size={15} /> Soạn thư mời
+                </Link>
+                <Link href={`/admin/forms/${form.id}/pdf`} className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700 hover:bg-sky-100">
+                  <FileText size={15} /> Thư mời PDF
                 </Link>
                 <Link href={`/attendees/${form.id}`} target="_blank" className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-700 hover:bg-indigo-100">
                   <QrCode size={15} /> Dashboard check-in
