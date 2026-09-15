@@ -7,7 +7,7 @@ import { PinGate } from "@/components/ui/PinGate";
 import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
 import type { CheckinTheme } from "@/lib/surveys";
 import { logCheckinEvent } from "@/lib/checkinLogs";
-import jsQR from "jsqr";
+import QrScanner from "qr-scanner";
 
 function getInitialScanQuery() {
   if (typeof window === "undefined") return { hall: "", session: "" };
@@ -76,8 +76,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const [session, setSession] = useState<string>(initialQuery.session);
   const [theme, setTheme] = useState<CheckinTheme | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const scanningRef = useRef(false);
+  const scannerRef = useRef<QrScanner | null>(null);
   const lastScannedRef = useRef("");
   const surveyIdRef = useRef(surveyId);
   const hallRef = useRef(initialQuery.hall);
@@ -264,33 +263,38 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     handleScan(responseId);
   };
 
-  // Camera
+  // Camera (qr-scanner)
   useEffect(() => {
-    if (!surveyId) return;
-    let stream: MediaStream | null = null;
-    let animFrame: number;
-    const start = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } } });
-        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); scanningRef.current = true; loop(); }
-      } catch { /* denied */ }
+    if (!surveyId || !videoRef.current) return;
+    QrScanner.WORKER_PATH = "/qr-scanner-worker.min.js";
+    const scanner = new QrScanner(
+      videoRef.current,
+      (result) => handleScannedUrl(result.data),
+      {
+        preferredCamera: facingMode,
+        maxScansPerSecond: 8,
+        highlightScanRegion: false,
+        highlightCodeOutline: false,
+        returnDetailedScanResult: true,
+      },
+    );
+    scannerRef.current = scanner;
+    scanner.start().catch(() => { /* camera denied */ });
+    if (busyRef.current) scanner.pause();
+    return () => {
+      scanner.stop();
+      scanner.destroy();
+      scannerRef.current = null;
     };
-    const loop = () => {
-      if (!scanningRef.current || !videoRef.current || !canvasRef.current) return;
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx || video.readyState < 2) { animFrame = requestAnimationFrame(loop); return; }
-      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
-      if (code?.data) handleScannedUrl(code.data);
-      animFrame = requestAnimationFrame(loop);
-    };
-    start();
-    return () => { scanningRef.current = false; cancelAnimationFrame(animFrame); stream?.getTracks().forEach((t) => t.stop()); };
   }, [surveyId, facingMode]);
+
+  // Pause scanning while a modal / welcome screen is showing
+  useEffect(() => {
+    const scanner = scannerRef.current;
+    if (!scanner) return;
+    if (pending || welcome) void scanner.pause();
+    else void scanner.start().catch(() => {});
+  }, [pending, welcome]);
 
   // Auto-clear toast
   useEffect(() => {
@@ -301,9 +305,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
 
   return (
     <CheckinThemeLayer theme={theme}>
-      {/* Hidden video/canvas feed (rendered into card below) */}
-      <canvas ref={canvasRef} className="hidden" />
-
       {/* Glassmorphism check-in card */}
       <div
         className="relative w-full max-w-[900px] rounded-[32px] p-5 sm:p-8 flex flex-col items-center"
