@@ -47,6 +47,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [vipCheckinEnabled, setVipCheckinEnabled] = useState(false);
   const [qrBranding, setQrBranding] = useState<QRBranding | null>(null);
   const [visibleLimit, setVisibleLimit] = useState(200);
+  const [exportingQr, setExportingQr] = useState(false);
 
   const loadData = useCallback(async (id: string) => {
     const [{ data: survey }, { data: resps }, { data: questions }] = await Promise.all([
@@ -572,6 +573,41 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     "Gửi email cho người đã chọn:",
   );
 
+  const downloadQrZip = async () => {
+    const targets = selectedIds.size > 0 ? responses.filter((r) => selectedIds.has(r.id)) : filtered;
+    if (targets.length === 0) { toast.error("Không có ai để xuất."); return; }
+    setExportingQr(true);
+    toast.info(`Đang tạo ${targets.length} mã QR…`);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      const used = new Map<string, number>();
+      for (const r of targets) {
+        const rawName = findName(r.answers) || findEmail(r)?.split("@")[0] || r.id.slice(0, 8);
+        let filename = sanitizeQrFilename(rawName);
+        const seen = used.get(filename) ?? 0;
+        used.set(filename, seen + 1);
+        if (seen > 0) filename = `${filename}_${seen + 1}`;
+        const blob = await buildQrPng(buildPublicUrl(`/checkin/${r.id}`), 512, true);
+        zip.file(`${filename}.png`, blob);
+      }
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `qr-${(surveyTitle || "export").replace(/\s+/g, "-").toLowerCase()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Đã xuất ${targets.length} mã QR.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Xuất QR thất bại.");
+    } finally {
+      setExportingQr(false);
+    }
+  };
+
   const printBadge = (r: SurveyResponse) => {
     const name = findName(r.answers) || r.id.slice(0, 8);
     const checkinUrl = buildPublicUrl(`/checkin/${r.id}`);
@@ -662,6 +698,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             <button onClick={sendReminders} disabled={resending}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50">
               <Mail size={14} /> {resending ? "Đang gửi..." : "Nhắc lịch"}
+            </button>
+            <button onClick={downloadQrZip} disabled={exportingQr}
+              className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+              title="Tải ZIP mã QR (tên file = tên người)">
+              <Download size={14} /> {exportingQr ? "Đang tạo QR…" : selectedIds.size > 0 ? `QR ZIP (${selectedIds.size})` : "QR ZIP"}
             </button>
             {emailFailedCount > 0 && (
               <button onClick={sendFailed} disabled={resending}
@@ -1151,6 +1192,70 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
 function isPaymentSettled(status: SurveyResponse["payment_status"]) {
   return !status || status === "not_required" || status === "paid";
+}
+
+function sanitizeQrFilename(name: string) {
+  return name
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "")
+    .trim()
+    .slice(0, 80) || "khach";
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+async function buildQrPng(url: string, size: number, withLogo: boolean): Promise<Blob> {
+  const mod = await import("qrcode");
+  const QRCode = (mod.default ?? mod) as { toDataURL: (text: string, options?: unknown) => Promise<string> };
+  const dataUrl = await QRCode.toDataURL(url, {
+    width: size,
+    margin: 2,
+    errorCorrectionLevel: "H",
+    color: { dark: "#0f172a", light: "#ffffff" },
+  });
+
+  const fallback = async () => (await fetch(dataUrl)).blob();
+  if (!withLogo) return fallback();
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return fallback();
+
+  const qrImg = await loadImageElement(dataUrl);
+  ctx.drawImage(qrImg, 0, 0, size, size);
+  try {
+    const logo = await loadImageElement("/logo_qr.png");
+    const logoSize = Math.round(size * 0.22);
+    const padding = Math.round(size * 0.022);
+    const box = logoSize + padding * 2;
+    const left = (size - box) / 2;
+    ctx.fillStyle = "#ffffff";
+    roundRectPath(ctx, left, left, box, box, box * 0.22);
+    ctx.fill();
+    ctx.drawImage(logo, (size - logoSize) / 2, (size - logoSize) / 2, logoSize, logoSize);
+  } catch { /* logo unavailable */ }
+
+  return new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
 }
 
 function formatPaymentStatus(status: SurveyResponse["payment_status"]) {
