@@ -7,6 +7,7 @@ import {
   QrCode, ShieldCheck, Trophy, UserCheck, Users,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { supabase } from "@/lib/supabase";
 import { loadDashboardData, type DashboardData } from "@/lib/dashboard";
@@ -126,7 +127,6 @@ export function FormsDashboard() {
       label: `${day.getDate()}/${day.getMonth() + 1}`,
       value: responses.filter((row) => isSameDay(new Date(row.submitted_at), day)).length,
     }));
-    const chartMax = Math.max(1, ...chart.map((point) => point.value));
 
     const missingPin = data.forms.filter((form) => form.formType === "registration" && !data.pins[form.id]);
 
@@ -141,7 +141,6 @@ export function FormsDashboard() {
       pendingPayments,
       emailFailed,
       chart,
-      chartMax,
       missingPin,
     };
   }, [data]);
@@ -232,22 +231,22 @@ export function FormsDashboard() {
             <SectionIcon icon={BarChart3} color="#0ea5e9" />
             <h2 className="text-base font-semibold text-slate-900">Đăng ký 7 ngày gần nhất</h2>
           </div>
-          <div className="flex h-44 items-end gap-2">
-            {metrics.chart.map((point) => (
-              <div key={point.label} className="flex flex-1 flex-col items-center gap-2">
-                <div className="text-xs font-semibold tabular-nums text-slate-500">{point.value}</div>
-                <div className="flex w-full flex-1 items-end">
-                  <div
-                    className="w-full rounded-t-lg"
-                    style={{
-                      height: `${Math.max(4, (point.value / metrics.chartMax) * 100)}%`,
-                      background: "linear-gradient(180deg, #06b6d4, #0ea5e9)",
-                    }}
-                  />
-                </div>
-                <div className="text-[10px] text-slate-400">{point.label}</div>
-              </div>
-            ))}
+          <div className="h-44 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={metrics.chart} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="dashReg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} width={28} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(value) => [`${value} đăng ký`, ""]} labelFormatter={(label) => `Ngày ${label}`} />
+                <Area type="monotone" dataKey="value" stroke="#0ea5e9" strokeWidth={2} fill="url(#dashReg)" />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </section>
 

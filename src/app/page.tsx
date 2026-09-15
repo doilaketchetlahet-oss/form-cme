@@ -107,14 +107,14 @@ export default function HomePage() {
           </motion.div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl text-left">
-            <Feature icon={ClipboardList} iconClass="text-sky-600" title="Trình tạo form" text="Text, số điện thoại, lựa chọn, đánh giá, upload, chữ ký và logic hiện/ẩn." />
-            <Feature icon={QrCode} iconClass="text-cyan-600" title="QR check-in" text="Người đăng ký nhận QR, ban tổ chức quét và xem attendee realtime." />
-            <Feature icon={ShieldCheck} iconClass="text-indigo-600" title="Face VIP" text="Đăng ký khuôn mặt và check-in VIP bằng camera tại quầy." />
+            <Feature icon={ClipboardList} iconClass="text-sky-600" title="Trình tạo form" text="Dễ dàng tạo form đăng ký, khảo sát hoặc post-test, chấm điểm cho hội thảo" />
+            <Feature icon={QrCode} iconClass="text-cyan-600" title="QR check-in" text="Hệ thống check in bằng QR code, quản lý người tham dự hội thảo và hệ thống auto-mailing chuyên nghiệp." />
+            <Feature icon={ShieldCheck} iconClass="text-indigo-600" title="Face VIP" text="Hệ thống nhận diện khuôn mặt hiện đại, tỉ lệ chính xác cao và miễn phí, dùng cho hội thảo chuyên nghiệp." />
           </div>
         </section>
 
         <footer className="text-center text-xs text-slate-500 pb-2 flex items-center justify-center gap-2">
-          <Users size={12} /> Dedicated deployment for CME registration
+          <Users size={12} /> Bản quyền thuộc về Phi Lao
         </footer>
       </div>
     </main>
