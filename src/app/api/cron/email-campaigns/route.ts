@@ -7,7 +7,7 @@ import { sendCheckinEmail } from "@/lib/server/checkin-email";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const JOB_BATCH = 40;
+const JOB_BATCH = 25;
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;

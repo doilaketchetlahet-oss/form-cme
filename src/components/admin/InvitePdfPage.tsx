@@ -50,6 +50,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   const [exporting, setExporting] = useState(false);
   const [rasterizing, setRasterizing] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
+  const [attachToEmail, setAttachToEmail] = useState(false);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(null);
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       setResponses((respResult.data ?? []) as SurveyResponse[]);
       const template = (next as { pdf_template?: EmailOverlay | null } | null)?.pdf_template ?? null;
       setOverlay(template);
+      setAttachToEmail(!!(next as { pdf_attach_email?: boolean } | null)?.pdf_attach_email);
       setLoading(false);
     })();
   }, [formId]);
@@ -92,7 +94,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       const response = await fetch(`/api/admin/forms/${formId}/pdf`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_template: overlay }),
+        body: JSON.stringify({ pdf_template: overlay, pdf_attach_email: attachToEmail }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok || !result?.ok) { toast.error(result?.error ?? "Lưu thất bại."); return; }
@@ -309,6 +311,18 @@ export function InvitePdfPage({ formId }: { formId: string }) {
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
             Tải <strong>file PDF gốc</strong> (tự chuyển thành ảnh nền) hoặc ảnh nền, rồi kéo field <strong>tên</strong> và <strong>QR</strong> vào đúng vị trí. Khi xuất, mỗi người nhận 1 file PDF với tên file = tên người.
           </div>
+          <label className="mb-4 flex cursor-pointer items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2.5 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={attachToEmail}
+              onChange={(e) => setAttachToEmail(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-sky-500"
+            />
+            <span>
+              <span className="block font-medium">Gửi kèm PDF cá nhân hoá trong email</span>
+              <span className="mt-0.5 block text-xs text-slate-500">Mỗi người nhận email sẽ có file PDF (nền + tên + QR) riêng của họ đính kèm.</span>
+            </span>
+          </label>
           <label className="mb-4 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50">
             {rasterizing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
             {rasterizing ? "Đang đọc PDF…" : "Tải PDF gốc"}

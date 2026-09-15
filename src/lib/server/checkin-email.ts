@@ -8,8 +8,10 @@ import {
   hasOverlayImage,
   parseEmailTemplate,
   type EmailMergeQuestion,
+  type EmailOverlay,
 } from "@/lib/email-template";
 import { renderCheckinEmailHtml } from "./email-react";
+import { composeInvitePdf, sanitizePdfName } from "./email-pdf";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
 
@@ -159,6 +161,9 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   let questions: EmailMergeQuestion[] = [];
   let resolvedSurveyId: string | null = null;
 
+  let pdfTemplate: EmailOverlay | null = null;
+  let pdfAttach = false;
+
   if (supabase && responseId) {
     const { data: response } = await supabase
       .from("survey_responses")
@@ -171,23 +176,43 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       resolvedAnswers = (response.answers ?? resolvedAnswers) as Record<string, unknown>;
       resolvedHall = response.hall || resolvedHall;
       resolvedEmail = response.email || resolvedEmail;
-      const { data: survey } = await supabase
+      let { data: survey } = await supabase
         .from("surveys")
-        .select("title, email_subject, email_body, checkin_theme, email_provider")
+        .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email")
         .eq("id", response.survey_id)
         .maybeSingle();
+      if (!survey) {
+        const fallback = await supabase
+          .from("surveys")
+          .select("title, email_subject, email_body, checkin_theme, email_provider")
+          .eq("id", response.survey_id)
+          .maybeSingle();
+        survey = fallback.data as typeof survey;
+      }
       const { data: questionRows } = await supabase
         .from("survey_questions")
         .select("id, text, type, options")
         .eq("survey_id", response.survey_id)
         .order("position");
 
+      const row = survey as {
+        title?: string;
+        email_subject?: string | null;
+        email_body?: string | null;
+        checkin_theme?: unknown;
+        email_provider?: string | null;
+        pdf_template?: EmailOverlay | null;
+        pdf_attach_email?: boolean | null;
+      } | null;
+
       questions = (questionRows ?? []) as EmailMergeQuestion[];
-      resolvedTitle = survey?.title || resolvedTitle;
-      resolvedSubject = resolvedSubject || survey?.email_subject || "";
-      resolvedBody = resolvedBody || survey?.email_body || "";
-      resolvedQrStyle = resolvedQrStyle ?? (survey?.checkin_theme as { qr?: QRBranding } | null)?.qr;
-      providerOverride = providerOverride ?? (survey as { email_provider?: string | null } | null)?.email_provider ?? null;
+      resolvedTitle = row?.title || resolvedTitle;
+      resolvedSubject = resolvedSubject || row?.email_subject || "";
+      resolvedBody = resolvedBody || row?.email_body || "";
+      resolvedQrStyle = resolvedQrStyle ?? (row?.checkin_theme as { qr?: QRBranding } | null)?.qr;
+      providerOverride = providerOverride ?? row?.email_provider ?? null;
+      pdfTemplate = row?.pdf_template ?? null;
+      pdfAttach = !!row?.pdf_attach_email;
       if (!resolvedName) resolvedName = findAttendeeName(resolvedAnswers, questions);
     }
   }
@@ -222,6 +247,20 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   }
   if (template.attachments && template.attachments.length > 0) {
     attachments.push(...await fetchFileAttachments(template.attachments));
+  }
+
+  // Personalized invitation PDF (background + name + QR) attached per recipient.
+  if (pdfAttach && pdfTemplate?.imageUrl) {
+    try {
+      const pdfBuffer = await composeInvitePdf(pdfTemplate, textValues, String(checkinUrl));
+      attachments.push({
+        filename: `${sanitizePdfName(textValues.name || resolvedName)}.pdf`,
+        content: pdfBuffer.toString("base64"),
+        contentType: "application/pdf",
+      });
+    } catch (error) {
+      console.error("Invite PDF attach failed:", error);
+    }
   }
   if (!html && attachments.length === 0) {
     html = defaultHtml({

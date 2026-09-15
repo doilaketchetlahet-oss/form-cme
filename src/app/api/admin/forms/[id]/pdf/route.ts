@@ -46,22 +46,25 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id: surveyId } = await context.params;
-  const payload = await request.json().catch(() => null) as { pdf_template?: unknown } | null;
+  const payload = await request.json().catch(() => null) as { pdf_template?: unknown; pdf_attach_email?: boolean } | null;
   if (!payload) {
     return NextResponse.json({ ok: false, error: "Dữ liệu không hợp lệ." }, { status: 400 });
   }
 
+  const update: Record<string, unknown> = { pdf_template: payload.pdf_template ?? null };
+  if (typeof payload.pdf_attach_email === "boolean") update.pdf_attach_email = payload.pdf_attach_email;
+
   const { error } = await supabase
     .from("surveys")
-    .update({ pdf_template: payload.pdf_template ?? null })
+    .update(update)
     .eq("id", surveyId);
 
   if (error) {
     const message = (error.message ?? "").toLowerCase();
-    if (message.includes("pdf_template")) {
+    if (message.includes("pdf_template") || message.includes("pdf_attach_email")) {
       return NextResponse.json({
         ok: false,
-        error: "Database chưa có cột pdf_template. Hãy chạy file supabase/pdf-template.sql trong Supabase SQL editor.",
+        error: "Database chưa có cột pdf_template/pdf_attach_email. Hãy chạy file supabase/pdf-template.sql trong Supabase SQL editor.",
       }, { status: 400 });
     }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
