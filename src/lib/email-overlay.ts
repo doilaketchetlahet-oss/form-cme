@@ -139,10 +139,12 @@ export async function composeInviteImage(
     composites.push({ input: qrPng, left, top });
   }
 
-  if (composites.length === 0) return image.jpeg({ quality: 88 }).toBuffer();
+  if (composites.length === 0) return image.toColourspace("srgb").jpeg({ quality: 88 }).toBuffer();
 
   return image
     .composite(composites)
+    // Force sRGB so the JPEG is not CMYK (pdf-lib would render CMYK as inverted).
+    .toColourspace("srgb")
     .jpeg({ quality: 88 })
     .toBuffer();
 }
