@@ -418,7 +418,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const filtered = responses.filter((r) => {
     if (hallFilter && r.hall !== hallFilter) return false;
-    if (fieldFilterKey && fieldFilterValue && answerDisplay(r, fieldFilterKey) !== fieldFilterValue) return false;
+    if (fieldFilterKey && fieldFilterValue && !answerDisplay(r, fieldFilterKey).toLowerCase().includes(fieldFilterValue.toLowerCase())) return false;
     if (statusFilter === "checked" && !r.checked_in) return false;
     if (statusFilter === "unchecked" && r.checked_in) return false;
     if (statusFilter === "email_failed" && r.email_status !== "failed") return false;
@@ -925,16 +925,20 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 ))}
               </select>
               {fieldFilterKey && (
-                <select
-                  value={fieldFilterValue}
-                  onChange={(e) => setFieldFilterValue(e.target.value)}
-                  className="admin-dark-select admin-field min-w-44 rounded-xl px-3 py-2.5 text-sm focus:outline-none sm:max-w-xs"
-                >
-                  <option value="">Tất cả giá trị</option>
-                  {fieldFilterOptions.map((value) => (
-                    <option key={value} value={value}>{value}</option>
-                  ))}
-                </select>
+                <div className="relative sm:max-w-xs sm:flex-1">
+                  <input
+                    list="field-filter-values"
+                    value={fieldFilterValue}
+                    onChange={(e) => setFieldFilterValue(e.target.value)}
+                    placeholder="Nhập/tìm giá trị…"
+                    className="admin-field w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none"
+                  />
+                  <datalist id="field-filter-values">
+                    {fieldFilterOptions.map((value) => (
+                      <option key={value} value={value} />
+                    ))}
+                  </datalist>
+                </div>
               )}
               {fieldFilterKey && (
                 <button
