@@ -30,6 +30,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name" | "checkin" | "hall">("newest");
   const [statusFilter, setStatusFilter] = useState<"all" | "checked" | "unchecked" | "email_failed" | "payment_pending">("all");
+  const [fieldFilterKey, setFieldFilterKey] = useState("");
+  const [fieldFilterValue, setFieldFilterValue] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editAnswers, setEditAnswers] = useState<Record<string, string>>({});
   const [showAddForm, setShowAddForm] = useState(false);
@@ -388,8 +390,35 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   for (let i = minHour; i <= maxHour; i++) hourRange.push(i);
   const maxHourCount = Math.max(1, ...Object.values(hourBuckets));
 
+  const answerDisplay = (r: SurveyResponse, qid: string): string => {
+    const value = r.answers[qid];
+    const meta = questionMeta[qid];
+    if (value == null || value === "") return "";
+    if (meta?.type === "choice" && meta.options) {
+      const indexes = Array.isArray(value) ? value : [value];
+      return indexes.map((i) => meta.options![Number(i)] ?? "").filter(Boolean).join(", ");
+    }
+    if (Array.isArray(value)) return value.join(", ");
+    return String(value);
+  };
+
+  const filterableFields = questionOrder
+    .filter((k) => ["text", "paragraph", "choice", "province", "phone", "date"].includes(questionMeta[k]?.type ?? ""))
+    .map((k) => ({ id: k, label: questionLabels[k] || k }));
+
+  const fieldFilterOptions = (() => {
+    if (!fieldFilterKey) return [];
+    const set = new Set<string>();
+    responses.forEach((r) => {
+      const value = answerDisplay(r, fieldFilterKey);
+      if (value) set.add(value);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, "vi"));
+  })();
+
   const filtered = responses.filter((r) => {
     if (hallFilter && r.hall !== hallFilter) return false;
+    if (fieldFilterKey && fieldFilterValue && answerDisplay(r, fieldFilterKey) !== fieldFilterValue) return false;
     if (statusFilter === "checked" && !r.checked_in) return false;
     if (statusFilter === "unchecked" && r.checked_in) return false;
     if (statusFilter === "email_failed" && r.email_status !== "failed") return false;
@@ -883,6 +912,40 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               )}
             </div>
           </div>
+          {filterableFields.length > 0 && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <select
+                value={fieldFilterKey}
+                onChange={(e) => { setFieldFilterKey(e.target.value); setFieldFilterValue(""); }}
+                className="admin-dark-select admin-field min-w-44 rounded-xl px-3 py-2.5 text-sm focus:outline-none sm:max-w-xs"
+              >
+                <option value="">Lọc theo trường…</option>
+                {filterableFields.map((field) => (
+                  <option key={field.id} value={field.id}>{field.label}</option>
+                ))}
+              </select>
+              {fieldFilterKey && (
+                <select
+                  value={fieldFilterValue}
+                  onChange={(e) => setFieldFilterValue(e.target.value)}
+                  className="admin-dark-select admin-field min-w-44 rounded-xl px-3 py-2.5 text-sm focus:outline-none sm:max-w-xs"
+                >
+                  <option value="">Tất cả giá trị</option>
+                  {fieldFilterOptions.map((value) => (
+                    <option key={value} value={value}>{value}</option>
+                  ))}
+                </select>
+              )}
+              {fieldFilterKey && (
+                <button
+                  onClick={() => { setFieldFilterKey(""); setFieldFilterValue(""); }}
+                  className="self-start rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-800 sm:self-auto"
+                >
+                  Xóa lọc
+                </button>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {([
               { value: "all", label: `Tất cả (${totalCount})` },
