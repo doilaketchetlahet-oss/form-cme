@@ -9,6 +9,14 @@ type ResendEvent = {
   data?: {
     email_id?: string;
     to?: string[] | string;
+    from?: string;
+    subject?: string;
+    bounce?: {
+      type?: string;
+      subType?: string;
+      message?: string;
+      diagnosticCode?: string | string[];
+    };
     [key: string]: unknown;
   };
 };
@@ -69,7 +77,28 @@ export async function POST(request: NextRequest) {
   const patch: Record<string, string | null> = { email_last_event: shortType };
   const column = EVENT_COLUMNS[event.type];
   if (column) patch[column] = new Date().toISOString();
-  if (event.type === "email.bounced") patch.email_status = "failed";
+  if (event.type === "email.bounced") {
+    patch.email_status = "failed";
+    // Keep the provider reason so the admin UI can explain the failure.
+    const bounce = event.data?.bounce;
+    const diagnostic = Array.isArray(bounce?.diagnosticCode)
+      ? bounce.diagnosticCode.join(" ")
+      : typeof bounce?.diagnosticCode === "string"
+        ? bounce.diagnosticCode
+        : "";
+    const reason = [bounce?.subType ? `Bounce (${bounce.subType})` : "Bounce", diagnostic || bounce?.message || ""]
+      .filter(Boolean)
+      .join(": ");
+    patch.email_error = reason.slice(0, 500);
+  }
+  if (event.type === "email.failed") {
+    patch.email_status = "failed";
+    patch.email_error = "Nhà cung cấp từ chối gửi thư";
+  }
+  if (event.type === "email.complained") {
+    patch.email_status = "failed";
+    patch.email_error = "Người nhận đánh dấu thư là spam";
+  }
 
   if (responseId) {
     await supabase.from("survey_responses").update(patch).eq("id", responseId);
