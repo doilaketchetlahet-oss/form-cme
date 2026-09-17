@@ -102,7 +102,7 @@ export type SendCheckinEmailInput = {
 function defaultAddress() {
   const from = process.env.RESEND_FROM || process.env.SMTP_FROM || "";
   const match = from.match(/<([^>]+)>/);
-  return (match ? match[1] : from).trim() || "btc@dangkyhoithao.online";
+  return (match ? match[1] : from).trim() || "hotro@hoithaotructuyen.net";
 }
 
 async function resolveEventSender(
