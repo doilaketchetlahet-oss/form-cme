@@ -110,12 +110,16 @@ async function resolveEventSender(
   surveyId: string,
 ): Promise<{ from: string | null; replyTo: string | null }> {
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("events")
       .select("name, from_name, from_email, reply_to")
-      .contains("form_ids", [surveyId])
+      .contains("form_ids", JSON.stringify([surveyId]))
       .limit(1)
       .maybeSingle();
+    if (error) {
+      console.error("resolveEventSender query failed:", error.message);
+      return { from: null, replyTo: null };
+    }
     const row = data as { name?: string | null; from_name?: string | null; from_email?: string | null; reply_to?: string | null } | null;
     if (!row) return { from: null, replyTo: null };
     // Use the event name as the display name even when no explicit sender email
@@ -127,7 +131,8 @@ async function resolveEventSender(
       from: displayName ? `${displayName} <${address}>` : address,
       replyTo: row.reply_to || null,
     };
-  } catch {
+  } catch (error) {
+    console.error("resolveEventSender failed:", error instanceof Error ? error.message : error);
     return { from: null, replyTo: null };
   }
 }
