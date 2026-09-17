@@ -13,6 +13,7 @@ import {
 import { renderCheckinEmailHtml } from "./email-react";
 import { composeInvitePdf, sanitizePdfName } from "./email-pdf";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
+import { QR_INLINE_CONTENT_ID, qrStyleFromBranding, renderQrPng } from "./qr-image";
 import { resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
 
 function stripHtml(html: string) {
@@ -234,7 +235,30 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   }
 
   const isReminder = mode === "reminder";
-  const qrImgUrl = `${origin}${buildQrImagePath(String(checkinUrl), 220, resolvedQrStyle)}`;
+  const template = parseEmailTemplate(resolvedBody);
+  const qrUrl = `${origin}${buildQrImagePath(String(checkinUrl), 220, resolvedQrStyle, "png")}`;
+  // Outlook on Windows cannot render SVG, and blocks remote images by default,
+  // so attach the QR inline (CID) whenever the email actually uses it.
+  const usesQr =
+    !resolvedBody.trim() ||
+    template.blocks.some((block) => block.type === "qr") ||
+    /\{\{qr_image\}\}/.test(resolvedBody);
+  let inlineQr: ResendAttachment | null = null;
+  let qrImgUrl = qrUrl;
+  if (usesQr) {
+    try {
+      const qrBuffer = await renderQrPng(String(checkinUrl), 220, qrStyleFromBranding(resolvedQrStyle));
+      inlineQr = {
+        filename: "qr-checkin.png",
+        content: qrBuffer.toString("base64"),
+        contentId: QR_INLINE_CONTENT_ID,
+        contentType: "image/png",
+      };
+      qrImgUrl = `cid:${QR_INLINE_CONTENT_ID}`;
+    } catch (error) {
+      console.error("QR inline render failed:", error instanceof Error ? error.message : error);
+    }
+  }
   const mergeInput = {
     name: resolvedName,
     email: resolvedEmail,
@@ -247,10 +271,11 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
   };
   const htmlValues = buildMergeValues(mergeInput, true);
   const textValues = buildMergeValues(mergeInput, false);
+  // Plain-text version keeps a real URL instead of the CID reference.
+  textValues.qr_image = qrUrl;
 
   let html = await renderCheckinEmailHtml(resolvedBody, htmlValues, qrImgUrl);
   const attachments: ResendAttachment[] = [];
-  const template = parseEmailTemplate(resolvedBody);
   if (hasOverlayImage(resolvedBody) && template.overlay) {
     try {
       const jpeg = await composeInviteImage(template.overlay, textValues, String(checkinUrl));
@@ -290,6 +315,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       checkinUrl: htmlValues.checkin_url,
     });
   }
+  if (inlineQr) attachments.push(inlineQr);
 
   const subject = resolvedSubject
     ? fillMergeTokens(resolvedSubject, textValues).trim()

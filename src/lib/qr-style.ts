@@ -39,7 +39,7 @@ export function qrStyleKey(qr?: QRBranding | null) {
   ].join("-");
 }
 
-export function buildQrImagePath(data: string, size: number, qr?: QRBranding | null) {
+export function buildQrImagePath(data: string, size: number, qr?: QRBranding | null, format: "svg" | "png" = "svg") {
   const normalized = normalizeQrBranding(qr);
   const params = new URLSearchParams({
     size: String(size),
@@ -52,6 +52,7 @@ export function buildQrImagePath(data: string, size: number, qr?: QRBranding | n
     radius: String(normalized.moduleRadius),
     data,
   });
+  if (format === "png") params.set("format", "png");
   if (normalized.logoUrl) params.set("logoUrl", normalized.logoUrl);
   return `/api/qr?${params.toString()}`;
 }

@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
   const origin = getRequestSiteUrl(request.nextUrl.origin);
   const previewUrl = `${origin}/checkin/preview`;
-  const qrImgUrl = `${origin}${buildQrImagePath(previewUrl, 220, null)}`;
+  const qrImgUrl = `${origin}${buildQrImagePath(previewUrl, 220, null, "png")}`;
   const values = sampleMergeValues(title);
   values.checkin_url = previewUrl;
   values.qr_image = qrImgUrl;

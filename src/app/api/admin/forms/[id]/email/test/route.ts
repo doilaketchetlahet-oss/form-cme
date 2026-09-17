@@ -74,7 +74,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const origin = getRequestSiteUrl(request.nextUrl.origin);
   const previewUrl = `${origin}/checkin/preview`;
   const qrStyle = (survey.checkin_theme as { qr?: Parameters<typeof buildQrImagePath>[2] } | null)?.qr;
-  const qrImgUrl = `${origin}${buildQrImagePath(previewUrl, 220, qrStyle)}`;
+  const qrImgUrl = `${origin}${buildQrImagePath(previewUrl, 220, qrStyle, "png")}`;
   const values = sampleMergeValues(survey.title || "Sự kiện");
   values.checkin_url = previewUrl;
   values.qr_image = qrImgUrl;
