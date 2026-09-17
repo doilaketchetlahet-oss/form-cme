@@ -18,6 +18,6 @@ jobs:
             echo "::error::CRON_SECRET secret is not set in this repository"
             exit 1
           fi
-          curl -fsS -X GET "https://dangkyhoithao.online/api/cron/email-campaigns" \
+          curl -fsSL --max-time 30 -X GET "https://www.dangkyhoithao.online/api/cron/email-campaigns" \
             -H "Authorization: Bearer $CRON_SECRET" \
             -w "\nHTTP %{http_code}\n"
