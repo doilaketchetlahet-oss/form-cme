@@ -16,9 +16,10 @@ const nextConfig: NextConfig = {
   // cannot follow. Include them (and the overlay fonts) in the lambdas that
   // compose invitation images.
   outputFileTracingIncludes: {
-    "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**"],
-    "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**"],
-    "/api/cron/email-campaigns": ["./node_modules/@img/**", "./public/fonts/**"],
+    "/api/qr": ["./node_modules/@img/**", "./public/logo_qr.png"],
+    "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
+    "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
+    "/api/cron/email-campaigns": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
   },
 
   // Experimental: optimize package imports (tree-shake heavy libs)
