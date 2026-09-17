@@ -99,6 +99,12 @@ export type SendCheckinEmailInput = {
   from?: string | null;
 };
 
+function defaultAddress() {
+  const from = process.env.RESEND_FROM || process.env.SMTP_FROM || "";
+  const match = from.match(/<([^>]+)>/);
+  return (match ? match[1] : from).trim() || "no-reply@dangkyhoithao.online";
+}
+
 async function resolveEventSender(
   supabase: NonNullable<ReturnType<typeof createSupabaseAdmin>>,
   surveyId: string,
@@ -106,14 +112,19 @@ async function resolveEventSender(
   try {
     const { data } = await supabase
       .from("events")
-      .select("from_name, from_email, reply_to")
+      .select("name, from_name, from_email, reply_to")
       .contains("form_ids", [surveyId])
       .limit(1)
       .maybeSingle();
-    const row = data as { from_name?: string | null; from_email?: string | null; reply_to?: string | null } | null;
-    if (!row?.from_email) return { from: null, replyTo: null };
+    const row = data as { name?: string | null; from_name?: string | null; from_email?: string | null; reply_to?: string | null } | null;
+    if (!row) return { from: null, replyTo: null };
+    // Use the event name as the display name even when no explicit sender email
+    // is configured, so recipients see the event instead of the app name.
+    const displayName = row.from_name?.trim() || row.name?.trim() || "";
+    const address = row.from_email?.trim() || defaultAddress();
+    if (!displayName && !row.from_email) return { from: null, replyTo: null };
     return {
-      from: row.from_name ? `${row.from_name} <${row.from_email}>` : row.from_email,
+      from: displayName ? `${displayName} <${address}>` : address,
       replyTo: row.reply_to || null,
     };
   } catch {
