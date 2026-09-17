@@ -56,28 +56,46 @@ async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
     return { ok: false, messageId: null, provider: "resend", error: "RESEND_API_KEY missing" };
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: email.from,
-      to: [email.to],
-      reply_to: email.replyTo,
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-      ...(email.attachments?.length ? { attachments: email.attachments } : {}),
-      headers: email.headers,
-    }),
+  // Resend's REST API expects snake_case fields; camelCase keys are ignored,
+  // which silently breaks inline (cid) images.
+  const attachments = email.attachments?.map((attachment) => ({
+    filename: attachment.filename,
+    content: attachment.content,
+    ...(attachment.contentType ? { content_type: attachment.contentType } : {}),
+    ...(attachment.contentId ? { content_id: attachment.contentId } : {}),
+  }));
+
+  const payload = JSON.stringify({
+    from: email.from,
+    to: [email.to],
+    reply_to: email.replyTo,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    ...(attachments?.length ? { attachments } : {}),
+    headers: email.headers,
   });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    return { ok: false, messageId: null, provider: "resend", error: detail || `HTTP ${response.status}` };
+  let lastError = "";
+  // Resend can answer 429 (rate limit) or a transient 5xx; retry once.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: payload,
+    });
+
+    if (response.ok) {
+      const data = await response.json().catch(() => null);
+      return { ok: true, messageId: (data?.id as string) ?? null, provider: "resend" };
+    }
+
+    lastError = (await response.text()) || `HTTP ${response.status}`;
+    if (response.status !== 429 && response.status < 500) break;
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
-  const data = await response.json().catch(() => null);
-  return { ok: true, messageId: (data?.id as string) ?? null, provider: "resend" };
+  return { ok: false, messageId: null, provider: "resend", error: lastError };
 }
 
 async function sendViaSmtp(email: OutgoingEmail): Promise<SendResult> {

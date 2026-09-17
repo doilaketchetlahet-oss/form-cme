@@ -13,7 +13,17 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = getRequestSiteUrl(req.nextUrl.origin);
-  const result = await sendCheckinEmail({ ...body, origin });
+  let result: Awaited<ReturnType<typeof sendCheckinEmail>>;
+  try {
+    result = await sendCheckinEmail({ ...body, origin });
+  } catch (error) {
+    // Always answer with JSON so the UI can show (and store) the real reason.
+    const detail = error instanceof Error ? error.message : "Send crashed";
+    return NextResponse.json(
+      { error: "Send failed", detail, provider: "unknown" },
+      { status: 500 },
+    );
+  }
 
   if (!result.ok) {
     return NextResponse.json(
