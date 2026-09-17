@@ -277,7 +277,7 @@ export function EventsManager() {
                       value={draft.from_email}
                       onChange={(event) => patchDraft(eventRow.id, { from_email: event.target.value })}
                       disabled={!canManageForms}
-                      placeholder="huna2026@hoithaotructuyen.net"
+                      placeholder="btc@dangkyhoithao.online"
                       className="admin-field w-full rounded-xl px-3 py-2.5 text-sm admin-placeholder focus:outline-none disabled:opacity-60"
                     />
                   </label>
