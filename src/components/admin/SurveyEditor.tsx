@@ -1189,7 +1189,7 @@ function DraftItem({
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
-          className="w-7 h-7 -ml-0.5 rounded-md flex items-center justify-center admin-subtle hover:text-slate-300 hover:bg-white/5 transition-colors cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
+          className="w-9 h-9 sm:w-7 sm:h-7 -ml-0.5 rounded-md flex items-center justify-center admin-subtle hover:text-slate-300 hover:bg-white/5 transition-colors cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
           title="Kéo để sắp xếp"
         >
           <GripVertical size={14} />
@@ -1210,7 +1210,7 @@ function DraftItem({
                 });
               }}
               onClick={(e) => e.stopPropagation()}
-               className="admin-dark-select text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider bg-sky-100 text-sky-700 border-none focus:outline-none cursor-pointer appearance-none"
+               className="admin-dark-select text-[11px] sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded font-semibold uppercase tracking-wider bg-sky-100 text-sky-700 border-none focus:outline-none cursor-pointer appearance-none"
                style={{ colorScheme: "light" }}
             >
               {availableQuestionTypes.map((t) => (
@@ -1232,17 +1232,17 @@ function DraftItem({
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
-            className="w-7 h-7 rounded-md flex items-center justify-center admin-subtle hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+            className="w-9 h-9 sm:w-7 sm:h-7 rounded-md flex items-center justify-center admin-subtle hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
             title="Nhân bản câu hỏi"
           >
-            <Copy size={12} />
+            <Copy size={13} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            className="w-7 h-7 rounded-md flex items-center justify-center admin-subtle hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            className="w-9 h-9 sm:w-7 sm:h-7 rounded-md flex items-center justify-center admin-subtle hover:text-red-400 hover:bg-red-500/10 transition-colors"
             title="Xoá câu hỏi"
           >
-            <Trash2 size={12} />
+            <Trash2 size={13} />
           </button>
           <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
             <ChevronDown size={14} className="text-slate-500" />

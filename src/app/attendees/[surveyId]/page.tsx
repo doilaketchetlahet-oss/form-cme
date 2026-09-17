@@ -707,7 +707,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 font-semibold text-indigo-700">{checkinRate}%</span>
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <button onClick={() => { setShowAddForm(true); setNewAnswers({}); }}
               className="admin-primary flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition-transform hover:scale-[1.01]">
               <Plus size={14} /> Thêm

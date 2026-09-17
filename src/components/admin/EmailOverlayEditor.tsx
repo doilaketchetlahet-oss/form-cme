@@ -176,7 +176,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
         ) : (
           <div
             ref={canvasRef}
-            className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
+            className="relative touch-none overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
             onClick={() => setSelectedId(null)}
           >
             <img src={overlay.imageUrl} alt="Thiệp mời" className="block w-full select-none" draggable={false} />
@@ -188,7 +188,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                   key={field.id}
                   onClick={(event) => { event.stopPropagation(); setSelectedId(field.id); }}
                   onPointerDown={(event) => onPointerDown(event, field, "move")}
-                  className={`absolute cursor-move border ${selectedId === field.id ? "border-sky-500 bg-sky-400/10" : "border-white/80 bg-black/5"}`}
+                  className={`absolute touch-none cursor-move border ${selectedId === field.id ? "border-sky-500 bg-sky-400/10" : "border-white/80 bg-black/5"}`}
                   style={{
                     left: `${field.x}%`,
                     top: `${field.y}%`,
@@ -209,7 +209,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                   </div>
                   <div
                     onPointerDown={(event) => onPointerDown(event, field, "resize")}
-                    className="absolute right-0 bottom-0 h-3 w-3 cursor-se-resize bg-sky-500"
+                    className="absolute right-0 bottom-0 h-5 w-5 touch-none cursor-se-resize rounded-tl-md bg-sky-500/80 sm:h-3 sm:w-3 sm:rounded-none sm:bg-sky-500"
                   />
                 </div>
               );

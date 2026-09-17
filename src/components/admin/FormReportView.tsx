@@ -318,14 +318,27 @@ function ResponsesTable({
               onClick={() => onSelect(response)}
               className="w-full text-left grid gap-3 p-4 md:grid-cols-[170px_minmax(0,1fr)_130px_120px_110px] md:items-center md:px-5 hover:bg-white/[0.035] transition-colors"
             >
-              <div className="text-sm text-slate-400">{formatDateTime(response.submitted_at)}</div>
+              <div className="text-sm text-slate-400">
+                <span className="mr-1 text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:hidden">Thời gian:</span>
+                {formatDateTime(response.submitted_at)}
+              </div>
               <div className="min-w-0">
+                <span className="mb-0.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:hidden">Người đăng ký:</span>
                 <div className="truncate text-sm font-semibold text-slate-900">{getDisplayName(response, questions)}</div>
                 <div className="truncate text-xs text-slate-500">{getEmail(response) || getPreviewAnswer(response, questions) || response.id}</div>
               </div>
-              <div className="text-sm text-slate-500 truncate">{response.hall || "-"}</div>
-              <PaymentBadge response={response} />
-              <CheckinBadge checked={!!response.checked_in} />
+              <div className="text-sm text-slate-500 truncate">
+                <span className="mr-1 text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:hidden">Hội trường:</span>
+                {response.hall || "-"}
+              </div>
+              <div className="flex items-center gap-2 md:block">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:hidden">Thanh toán:</span>
+                <PaymentBadge response={response} />
+              </div>
+              <div className="flex items-center gap-2 md:block">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 md:hidden">Check-in:</span>
+                <CheckinBadge checked={!!response.checked_in} />
+              </div>
             </motion.button>
           ))}
         </div>
