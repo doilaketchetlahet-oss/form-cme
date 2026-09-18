@@ -125,7 +125,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: BRAND_GRADIENT }}>
               <QrCode size={14} className="text-on-brand" />
             </div>
-            <span className="text-sm font-semibold text-slate-900">Form CME</span>
+            <span className="text-sm font-semibold text-slate-900">I-solution Manager</span>
           </Link>
           <div className="w-10 h-10 rounded-full flex items-center justify-center bg-sky-100 text-xs font-bold text-sky-700">
             {initials}
@@ -162,7 +162,7 @@ function SidebarContent({
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: BRAND_GRADIENT }}>
           <QrCode size={16} className="text-on-brand" />
         </div>
-        <span className="text-base font-semibold tracking-tight text-slate-900">Form CME</span>
+        <span className="truncate text-base font-semibold tracking-tight text-slate-900">I-solution Manager</span>
       </Link>
 
       <button

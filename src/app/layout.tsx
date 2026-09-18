@@ -14,14 +14,14 @@ const beVietnamPro = Be_Vietnam_Pro({
 });
 
 export const metadata: Metadata = {
-  title: "Form CME - Đăng ký & Check-in",
+  title: "I-solution Manager - Đăng ký & Check-in",
   description: "Form đăng ký, QR check-in, dashboard khách tham dự và face check-in VIP cho sự kiện CME.",
   metadataBase: new URL("https://form-cme.local"),
   openGraph: {
-    title: "Form CME",
+    title: "I-solution Manager",
     description: "Form đăng ký, QR check-in, dashboard khách tham dự và face check-in VIP.",
     url: "https://form-cme.local",
-    siteName: "Form CME",
+    siteName: "I-solution Manager",
     locale: "vi_VN",
     type: "website",
   },

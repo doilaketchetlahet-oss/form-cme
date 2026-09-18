@@ -64,7 +64,7 @@ export function AuthForm({ mode }: Props) {
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: BRAND_GRADIENT, boxShadow: "0 6px 18px rgba(6,182,212,0.3)" }}>
           <QrCode size={16} className="text-on-brand" />
         </div>
-        <span className="text-xl font-semibold tracking-tight text-slate-900">Form CME</span>
+        <span className="text-xl font-semibold tracking-tight text-slate-900">I-solution Manager</span>
       </Link>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-8">
@@ -72,7 +72,7 @@ export function AuthForm({ mode }: Props) {
           {isSignup ? "Tạo tài khoản" : "Đăng nhập dashboard"}
         </h1>
         <p className="text-slate-600">
-          {isSignup ? "Tạo tài khoản quản trị Form CME" : "Quản lý form đăng ký, QR check-in và attendee"}
+          {isSignup ? "Tạo tài khoản I-solution Manager" : "Quản lý form đăng ký, QR check-in và attendee"}
         </p>
       </motion.div>
 
