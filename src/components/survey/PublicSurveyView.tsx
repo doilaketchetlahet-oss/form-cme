@@ -335,18 +335,9 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
         fetch("/api/send-checkin-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: emailAnswer,
-            name: nameAnswer,
-            checkinUrl: buildPublicUrl(`/checkin/${result.responseId}`),
-            surveyTitle: survey?.title || "",
-            customSubject: (survey as unknown as Record<string, unknown>)?.email_subject || "",
-            customBody: (survey as unknown as Record<string, unknown>)?.email_body || "",
-            responseId: result.responseId,
-            qrStyle: survey?.checkin_theme?.qr ?? null,
-            answers: normalized,
-            hall: hallValue,
-          }),
+          // Only the registration id is sent: recipient, subject, body and QR
+          // style are resolved server-side from the database.
+          body: JSON.stringify({ responseId: result.responseId }),
         })
           .then(async (response) => {
             if (response.ok) {

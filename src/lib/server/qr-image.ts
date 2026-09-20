@@ -43,16 +43,47 @@ function roundedRect(x: number, y: number, width: number, height: number, radius
   return `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${width.toFixed(3)}" height="${height.toFixed(3)}" rx="${r.toFixed(3)}" ry="${r.toFixed(3)}" fill="${fill}" />`;
 }
 
+const MAX_LOGO_BYTES = 1_000_000;
+const LOGO_FETCH_TIMEOUT_MS = 3000;
+
+function hostOf(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).host;
+  } catch {
+    return null;
+  }
+}
+
+/** Only our own Supabase storage or site may be fetched server-side (SSRF guard). */
+function isAllowedLogoHost(url: URL): boolean {
+  const allowed = [hostOf(process.env.NEXT_PUBLIC_SUPABASE_URL), hostOf(process.env.NEXT_PUBLIC_SITE_URL)].filter(Boolean);
+  return allowed.includes(url.host);
+}
+
 async function loadLogoDataUri(logoUrl: string | null) {
   try {
     let contentType = "image/png";
     let buffer: Buffer;
 
     if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
-      const response = await fetch(logoUrl);
+      const parsed = new URL(logoUrl);
+      if (!isAllowedLogoHost(parsed)) throw new Error("Logo host not allowed");
+
+      const response = await fetch(parsed, { signal: AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error("Cannot load remote QR logo");
-      contentType = response.headers.get("content-type")?.split(";")[0] || "image/png";
-      buffer = Buffer.from(await response.arrayBuffer());
+
+      const type = (response.headers.get("content-type") || "").split(";")[0].trim();
+      if (!/^image\//i.test(type)) throw new Error("Logo is not an image");
+
+      const declared = Number(response.headers.get("content-length") || 0);
+      if (declared > MAX_LOGO_BYTES) throw new Error("Logo too large");
+
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length > MAX_LOGO_BYTES) throw new Error("Logo too large");
+
+      contentType = type;
+      buffer = bytes;
     } else {
       const logoPath = path.join(process.cwd(), "public", "logo_qr.png");
       buffer = await readFile(logoPath);

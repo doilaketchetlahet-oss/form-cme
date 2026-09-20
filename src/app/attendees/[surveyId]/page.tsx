@@ -500,17 +500,16 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const sendCheckinFor = async (response: SurveyResponse, email: string): Promise<boolean> => {
     setResending(true);
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
       const res = await fetch("/api/send-checkin-email", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: email,
-          name: findName(response.answers) || "",
-          checkinUrl: buildPublicUrl(`/checkin/${response.id}`),
-          surveyTitle,
-          responseId: response.id,
-          qrStyle: qrBranding,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        // Recipient falls back to the stored email server-side.
+        body: JSON.stringify({ responseId: response.id, to: email }),
       });
       if (res.ok) {
         await markEmailStatus(response.id, "sent");
@@ -541,20 +540,21 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     if (!(await confirm({ title: label, description: `${targets.length} người? (Resend free: tối đa 100 email/ngày)`, confirmText: "Gửi" }))) return;
     setResending(true);
     let sent = 0, failed = 0;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
     // Send sequentially to respect rate limits
     for (const { r, email } of targets) {
       try {
         const res = await fetch("/api/send-checkin-email", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
-            to: email,
-            name: findName(r.answers) || "",
-            checkinUrl: buildPublicUrl(`/checkin/${r.id}`),
-            surveyTitle,
-            ...(mode === "reminder" ? { mode: "reminder" } : {}),
             responseId: r.id,
-            qrStyle: qrBranding,
+            to: email,
+            ...(mode === "reminder" ? { mode: "reminder" } : {}),
           }),
         });
         if (res.ok) {

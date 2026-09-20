@@ -85,7 +85,8 @@ function defaultHtml(values: { heading: string; intro: string; title: string; na
 
 export type SendCheckinEmailInput = {
   responseId?: string;
-  to: string;
+  /** Optional when responseId is provided: the stored email is used instead. */
+  to?: string;
   name?: string;
   checkinUrl: string;
   surveyTitle?: string;
@@ -161,7 +162,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
     origin,
   } = input;
 
-  if (!to || !checkinUrl) {
+  if ((!to && !responseId) || !checkinUrl) {
     return { ok: false, messageId: null, provider: resolveProvider(input.providerOverride), error: "Missing fields" };
   }
 
