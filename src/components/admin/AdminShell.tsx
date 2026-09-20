@@ -12,6 +12,7 @@ import {
   Settings,
   Mail,
   QrCode,
+  Gamepad2,
   LogOut,
   Menu,
   X,
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   // bỏ comment dòng dưới để hiện lại.
   // { href: "/admin/campaigns", label: "Chiến dịch email", icon: Send },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
+  { href: "/games", label: "Thư viện game", icon: Gamepad2 },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];
 

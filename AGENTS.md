@@ -51,7 +51,8 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 
 ## Routes
 
-- `/` landing/login entry
+- `/` marketing landing page (I-solution Manager); app entry stays at
+  `/admin`, `/login`, `/signup`
 - `/admin` dashboard
 - `/admin/forms` form list
 - `/admin/forms/[id]` form editor
@@ -90,9 +91,34 @@ items, polls, slides, or badges.
 - `src/components/ekyc/*`
 - check-in routes under `src/app`
 
+## Game portal (added)
+
+This app now also hosts the EventPlay game portal (kiosk mini-games):
+
+- `/games` - catalog; any signed-in account (not admin-only) sees free modules
+  plus modules it owns via `entitlements`.
+- `/games/play?module=<id>` - embeds `/studio/index.html#/games/<id>` in an iframe.
+- `/api/game/entitlements` - Bearer-token auth; returns `allowedIds`.
+- `/api/game/save` - GET/PUT per-user studio state (workspace sync).
+- `/api/game/assets` - uploads to Supabase Storage bucket `game-assets` (public,
+  per-account quota: 30 files / 60MB).
+- `public/studio/` - prebuilt EventPlay Studio bundle (do not edit by hand).
+
+Auth handshake: `/games/play` posts an access token to the studio iframe via
+`postMessage` after the iframe sends `{ type: "eventplay:ready" }`. The studio
+calls the game APIs with `Authorization: Bearer <token>`.
+
+SQL to run once: `supabase/game-modules.sql`, `supabase/game-saves.sql`.
+
+Rebuild the studio bundle from the EventPlay project with `VITE_BASE=./`, copy
+`dist` into `public/studio`, then run the asset optimizer.
+
+Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
+`/play` player runtime mentioned below.
+
 ## Avoid
 
-- Adding `/host`, `/play`, `/q`, `/r`, replay, player, host, item, poll, slide,
-  or badge code back into this app.
+- Adding `/host`, `/q`, `/r`, replay, host, item, poll, slide, or badge code
+  back into this app (the quiz-app game runtime).
 - Sharing env vars with the original quiz app.
 - Logging uploaded files, phone/email data, or face embeddings.

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="color-scheme" content="light" />
+    <title>EventPlay Studio</title>
+    <style>
+      /* Prevent a flash of unstyled background before React mounts. */
+      html, body, #root { height: 100%; margin: 0; }
+      body {
+        background: #eef4ff;
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        font-weight: 500;
+        overscroll-behavior: none;
+      }
+      #ep-boot {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        background: linear-gradient(135deg, #eef4ff, #fef2f8);
+      }
+      #ep-boot .dot {
+        width: 14px; height: 14px; margin: 0 5px; border-radius: 999px; display: inline-block;
+        background: #6366f1; animation: epb 1s ease-in-out infinite;
+      }
+      #ep-boot .dot:nth-child(2){ background:#ec4899; animation-delay: .15s }
+      #ep-boot .dot:nth-child(3){ background:#f59e0b; animation-delay: .3s }
+      @keyframes epb { 0%,100%{ transform: translateY(0); opacity:.5 } 50%{ transform: translateY(-10px); opacity:1 } }
+    </style>
+    <script type="module" crossorigin src="./assets/index-d7f637fa.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C0VAi1ex.css">
+  </head>
+  <body>
+    <div id="root">
+      <div id="ep-boot"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    </div>
+  </body>
+</html>
