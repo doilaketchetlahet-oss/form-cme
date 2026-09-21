@@ -12,6 +12,7 @@ import {
   TEAM_PALETTE,
   type FlapRoom,
 } from "@/lib/flap/race";
+import { broadcastFlap } from "@/lib/flap/broadcast";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,15 +27,8 @@ type FlapStateEvent = {
 };
 
 /** Broadcast chỉ giúp màn LED cập nhật ngay; API polling vẫn là nguồn dữ liệu chuẩn. */
-async function broadcastRoomEvent(admin: SupabaseClient, roomCode: string, event: FlapStateEvent) {
-  const channel = admin.channel(`flap:${roomCode}`);
-  try {
-    await channel.send({ type: "broadcast", event: "flap", payload: event });
-  } catch {
-    // Mất Broadcast không được làm hỏng thao tác của MC.
-  } finally {
-    void admin.removeChannel(channel);
-  }
+async function broadcastRoomEvent(_admin: SupabaseClient, roomCode: string, event: FlapStateEvent) {
+  await broadcastFlap(roomCode, event);
 }
 
 /** Chốt vòng khi đồng hồ hết giờ, kể cả khi MC không mở trang điều khiển. */

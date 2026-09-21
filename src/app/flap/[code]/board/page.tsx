@@ -13,7 +13,6 @@ export default function FlapBoardPage() {
   const code = (params?.code ?? "").toString().toUpperCase();
 
   const [snapshot, setSnapshot] = useState<FlapRoomSnapshot | null>(null);
-  const [error, setError] = useState("");
   const [online, setOnline] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const raceRef = useRef<HTMLDivElement>(null);
@@ -21,11 +20,12 @@ export default function FlapBoardPage() {
   const applySnapshot = useCallback(
     (snap: FlapRoomSnapshot | null) => {
       if (!snap) {
-        setError("Không tìm thấy phòng");
+        // Không xoá hình cũ khi mạng chớp: chỉ báo mất kết nối.
+        setOnline(false);
         return;
       }
       setSnapshot(snap);
-      setError("");
+      setOnline(true);
     },
     [],
   );
@@ -38,25 +38,21 @@ export default function FlapBoardPage() {
     // Đồng bộ lần đầu trong microtask để tránh setState đồng bộ trong effect.
     queueMicrotask(() => void load());
     if (!code) return;
+    // Broadcast chỉ là lớp làm mượt; nguồn dữ liệu chuẩn là API (mạng hội
+    // trường hay chặn websocket nên không được phụ thuộc vào nó).
     const sub = subscribeRoom(code, (event) => {
       if (event.type === "state" || event.type === "reset") void load();
       if (event.type === "standings" && "standings" in event) {
         setSnapshot((prev) => (prev ? { ...prev, standings: event.standings } : prev));
       }
     });
-    // Đồng bộ tuyệt đối với sổ cái mỗi 2s (broadcast chỉ để mượt hình).
-    const sync = setInterval(() => void load(), 2000);
+    // Đồng bộ với sổ cái mỗi giây để hình chạy mượt mà vẫn đúng số.
+    const sync = setInterval(() => void load(), 1000);
     const clock = setInterval(() => setNow(Date.now()), 250);
-    const onOnline = () => setOnline(true);
-    const onOffline = () => setOnline(false);
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
     return () => {
       sub.close();
       clearInterval(sync);
       clearInterval(clock);
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
     };
   }, [code, load]);
 
@@ -71,19 +67,16 @@ export default function FlapBoardPage() {
     return { ms: left, sec: Math.ceil(left / 1000) };
   }, [snapshot, now]);
 
-  if (error) {
-    return (
-      <main className="flex min-h-dvh items-center justify-center bg-slate-900">
-        <p className="text-lg font-bold text-white">{error}</p>
-      </main>
-    );
-  }
-
   if (!snapshot) {
     return (
-      <main className="flex min-h-dvh items-center justify-center gap-3 bg-slate-900">
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-900 px-6 text-center">
         <Loader2 className="animate-spin text-sky-400" size={26} />
-        <p className="text-sm text-slate-300">Đang tải…</p>
+        <p className="text-sm text-slate-300">
+          {online ? "Đang tải phòng…" : "Đang kết nối lại…"}
+        </p>
+        <p className="text-xs text-slate-500">
+          Nếu đứng mãi ở đây, kiểm tra mạng hoặc mã phòng <strong>{code}</strong>.
+        </p>
       </main>
     );
   }

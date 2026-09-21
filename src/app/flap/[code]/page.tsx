@@ -43,16 +43,22 @@ export default function FlapPlayerPage() {
   const pendingRef = useRef(0);
   const lastSentRef = useRef(0);
   const scoreRef = useRef(0);
+  const joinRef = useRef<JoinResult | null>(null);
 
   // ---- Tải trạng thái phòng -------------------------------------------------
   const loadSnapshot = useCallback(async () => {
     const snap = await fetchRoomSnapshot(code);
     if (!snap) {
-      setError("Không tìm thấy phòng. Kiểm tra lại mã QR.");
-      setPhase("error");
+      // Phân biệt "mất mạng" với "sai mã phòng": chỉ báo lỗi khi chưa vào phòng.
+      setOnline(false);
+      if (!joinRef.current) {
+        setError("Không tìm thấy phòng. Kiểm tra lại mã QR.");
+        setPhase("error");
+      }
       return null;
     }
     setSnapshot(snap);
+    setOnline(true);
     return snap;
   }, [code]);
 
@@ -89,11 +95,9 @@ export default function FlapPlayerPage() {
   const roomStatus = snapshot?.room.status ?? null;
   useEffect(() => {
     if (!join || !roomStatus) return;
-    // Không cho tích điểm trước/sau lượt. Nếu giữ hàng chờ từ lượt cũ, điểm
-    // mất mạng có thể bị gửi nhầm sang lượt kế tiếp khi MC bấm bắt đầu lại.
-    const running = roomStatus === "running";
-    counterRef.current?.setActive(running);
-    if (!running) pendingRef.current = 0;
+    // Chỉ bật/tắt việc đếm; KHÔNG xoá điểm đang chờ, vì người chơi có thể đã
+    // lắc trước khi MC bấm bắt đầu.
+    counterRef.current?.setActive(roomStatus === "running");
   }, [join, roomStatus]);
 
   useEffect(() => {
@@ -132,18 +136,18 @@ export default function FlapPlayerPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ playerId: player.playerId, token: player.token, delta }),
       });
+      // Máy chủ trả lời được (kể cả 409 chưa tới lượt) nghĩa là còn kết nối.
+      setOnline(true);
       if (res.ok) {
         const json = (await res.json()) as { score?: number; throttled?: boolean };
         if (typeof json.score === "number") {
           scoreRef.current = json.score;
           setMyScore(json.score);
         }
-        setOnline(true);
       } else if (res.status >= 500) {
         // Chỉ retry lỗi máy chủ. Không giữ điểm khi lượt đã dừng/đổi vòng,
         // nếu không người chơi có thể "để dành" điểm rồi gửi ở lượt sau.
         pendingRef.current += delta;
-        setOnline(false);
       }
     } catch {
       pendingRef.current += delta;
@@ -212,6 +216,7 @@ export default function FlapPlayerPage() {
         }
         const json = (await res.json()) as JoinResult;
         setJoin(json);
+        joinRef.current = json;
         scoreRef.current = 0;
         setMyScore(0);
         lastSentRef.current = 0;

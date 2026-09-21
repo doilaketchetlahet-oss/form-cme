@@ -9,29 +9,12 @@ import {
   MAX_SCORE_PER_SECOND,
   MAX_TOTAL_SCORE,
 } from "@/lib/flap/race";
+import { broadcastFlap } from "@/lib/flap/broadcast";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ code: string }> };
-
-async function broadcastState(
-  admin: NonNullable<ReturnType<typeof createSupabaseAdmin>>,
-  room: { code: string; status: string; started_at: string | null; round: number },
-) {
-  const channel = admin.channel(`flap:${room.code}`);
-  try {
-    await channel.send({
-      type: "broadcast",
-      event: "flap",
-      payload: { type: "state", status: room.status, startedAt: room.started_at, round: room.round },
-    });
-  } catch {
-    // Polling 2 giây của LED/điện thoại vẫn sẽ đồng bộ lại trạng thái.
-  } finally {
-    void admin.removeChannel(channel);
-  }
-}
 
 /**
  * POST /api/flap/[code]/score — trọng tài cộng điểm.
@@ -57,7 +40,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const refreshed = await findRoomByCode(admin, room.code);
       if (refreshed) {
         room = refreshed;
-        await broadcastState(admin, room);
+        await broadcastFlap(room.code, {
+          type: "state",
+          status: room.status,
+          startedAt: room.started_at,
+          round: room.round,
+        });
       }
     }
   }
@@ -112,18 +100,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const players = await loadPlayers(admin, room.id);
   const standings = buildStandings(room.teams, players, room.score_mode, room.track_length);
 
-  // Đẩy hình sang màn LED ngay (không chờ nhịp polling 2s).
-  try {
-    const channel = admin.channel(`flap:${room.code}`);
-    await channel.send({
-      type: "broadcast",
-      event: "flap",
-      payload: { type: "standings", standings },
-    });
-    void admin.removeChannel(channel);
-  } catch {
-    // Broadcast lỗi không ảnh hưởng kết quả: LED vẫn đồng bộ qua polling.
-  }
+  await broadcastFlap(room.code, { type: "standings", standings });
 
   return NextResponse.json({
     ok: true,
