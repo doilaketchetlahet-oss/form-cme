@@ -63,6 +63,24 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - `/face-checkin/[surveyId]` VIP face check-in
 - `/checkin/[id]` QR confirmation page
 
+## Tools & mini-games (added)
+
+- `/admin/tools/booth-draw` - booth lucky draw (admin); public at `/booth-draw`.
+- `/admin/tools/flap` - MC console for the "Lắc điện thoại, Đại bàng tung cánh"
+  team game; creates a room, shows the join QR and the LED board link.
+- `/flap/[code]` - player screen (shakes the phone; falls back to tap when the
+  motion sensor is unavailable or denied).
+- `/flap/[code]/board` - LED race board (open on the venue PC).
+- `/api/flap/[code]` - GET room snapshot / POST create / PUT MC controls.
+- `/api/flap/[code]/join` - issues a per-device session token (hash stored only).
+- `/api/flap/[code]/score` - the referee: token check + per-second and per-batch
+  score caps server-side, then Broadcast for the LED.
+
+Architecture: phones POST batched score deltas to the API (referee), Postgres is
+the ledger, Supabase Realtime Broadcast (`flap:<CODE>`) is the display channel,
+and the LED board re-syncs from the API every 2s so a reconnect never loses the
+true score. Run `supabase/flap-race.sql` once.
+
 ## Data Model Note
 
 The app keeps the legacy `quizzes` table as a lightweight owner/container table
