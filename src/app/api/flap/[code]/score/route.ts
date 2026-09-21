@@ -45,7 +45,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const room = await findRoomByCode(admin, code);
   if (!room) return NextResponse.json({ error: "not_found" }, { status: 404 });
-
   // Hết giờ: chốt vòng ở luồng nền để không làm chậm phản hồi.
   const startedAt = room.started_at ? Date.parse(room.started_at) : Number.NaN;
   if (room.status === "running" && Number.isFinite(startedAt) && Date.now() >= startedAt + room.duration_sec * 1000) {
@@ -80,21 +79,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const newScore = typeof result.score === "number" ? result.score : 0;
   const acceptedDelta = typeof result.accepted_delta === "number" ? result.accepted_delta : 0;
 
-  // Bị chặn bởi trần tốc độ: trả ngay, khỏi đọc bảng xếp hạng.
+  // Bị chặn bởi trần tốc độ: trả ngay.
   if (acceptedDelta <= 0) {
     return NextResponse.json({ ok: true, score: newScore, throttled: true });
   }
 
-  // Chỉ đọc cột cần cho xếp hạng (nhẹ hơn loadPlayers) và phát broadcast ở
-  // luồng nền: độ trễ phản hồi quan trọng hơn việc LED nhận hình sớm vài ms.
-  const scoreRows = await loadScoreRows(admin, room.id);
-  const standings = buildStandings(room.teams, scoreRows, room.score_mode, room.track_length);
+  // Trang người chơi chỉ cần `score` để hiển thị, không cần bảng xếp hạng.
+  // Bảng xếp hạng được đọc và phát cho màn LED ở luồng nền, nhờ đó phản hồi
+  // cho điện thoại nhanh hơn (bớt một vòng gọi Supabase).
+  void (async () => {
+    try {
+      const scoreRows = await loadScoreRows(admin, room.id);
+      const standings = buildStandings(room.teams, scoreRows, room.score_mode, room.track_length);
+      await broadcastFlap(room.code, { type: "standings", standings });
+    } catch (err) {
+      console.warn("flap background standings failed:", err instanceof Error ? err.message : err);
+    }
+  })();
 
-  void broadcastFlap(room.code, { type: "standings", standings });
-
-  return NextResponse.json({
-    ok: true,
-    score: newScore,
-    standings,
-  });
+  return NextResponse.json({ ok: true, score: newScore });
 }
