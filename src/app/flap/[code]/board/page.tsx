@@ -69,9 +69,9 @@ export default function FlapBoardPage() {
 
   if (!snapshot) {
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-900 px-6 text-center">
-        <Loader2 className="animate-spin text-sky-400" size={26} />
-        <p className="text-sm text-slate-300">
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-50 px-6 text-center">
+        <Loader2 className="animate-spin text-sky-500" size={26} />
+        <p className="text-sm font-semibold text-slate-700">
           {online ? "Đang tải phòng…" : "Đang kết nối lại…"}
         </p>
         <p className="text-xs text-slate-500">
@@ -85,24 +85,24 @@ export default function FlapBoardPage() {
   const finishedByScore = standings.some((s) => s.progress >= 1);
 
   return (
-    <main ref={raceRef} className="flex min-h-dvh flex-col bg-gradient-to-b from-sky-950 via-slate-900 to-slate-950 px-6 py-6 text-white">
+    <main ref={raceRef} className="flex min-h-dvh flex-col bg-gradient-to-b from-sky-50 via-white to-cyan-50/60 px-6 py-6 text-slate-900">
       {/* Thanh trên: tiêu đề + trạng thái + đồng hồ */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <span className="rounded-full bg-sky-500/20 px-3 py-1 text-xs font-bold tracking-wider text-sky-300 uppercase">
+          <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-bold tracking-wider text-sky-700 uppercase ring-1 ring-sky-200">
             Phòng {room.code} · Vòng {room.round}
           </span>
-          <h1 className="font-display mt-2 text-2xl font-black sm:text-3xl">🦅 {room.title}</h1>
+          <h1 className="font-display mt-2 text-2xl font-black text-slate-900 sm:text-3xl">🦅 {room.title}</h1>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-xs text-slate-400">
-            Chế độ: <strong className="text-slate-200">{room.score_mode === "average" ? "Trung bình/thiết bị" : "Tổng điểm"}</strong>
+          <span className="text-xs font-medium text-slate-500">
+            Chế độ: <strong className="text-slate-800">{room.score_mode === "average" ? "Trung bình/thiết bị" : "Tổng điểm"}</strong>
           </span>
-          <span className={`flex items-center gap-1.5 text-xs font-semibold ${online ? "text-emerald-400" : "text-red-400"}`}>
+          <span className={`flex items-center gap-1.5 text-xs font-bold ${online ? "text-emerald-600" : "text-red-600"}`}>
             {online ? <Wifi size={14} /> : <WifiOff size={14} />}
             {online ? "Trực tuyến" : "Mất mạng"}
           </span>
-          <span className="font-display rounded-2xl bg-white/10 px-5 py-2 text-3xl font-black tabular-nums">
+          <span className="font-display rounded-2xl bg-white px-5 py-2 text-3xl font-black text-sky-700 tabular-nums shadow-sm ring-1 ring-sky-200">
             {remaining ? remaining.sec : room.status === "finished" ? "HẾT" : "—"}
           </span>
         </div>
@@ -111,13 +111,13 @@ export default function FlapBoardPage() {
       {/* Trạng thái lớn giữa màn hình khi chưa chạy */}
       {room.status !== "running" && (
         <div className="mt-6 flex flex-col items-center gap-2">
-          <p className="font-display text-4xl font-black text-sky-300 sm:text-5xl">
+          <p className="font-display text-4xl font-black text-sky-600 sm:text-5xl">
             {room.status === "lobby" && "Chờ MC bắt đầu"}
             {room.status === "countdown" && "Sẵn sàng…"}
             {room.status === "paused" && "⏸ Tạm dừng"}
             {room.status === "finished" && "🏁 Kết thúc"}
           </p>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm font-medium text-slate-600">
             {snapshot.playerCount} thiết bị đã tham gia · Quét mã QR để vào đội
           </p>
         </div>
@@ -136,18 +136,18 @@ export default function FlapBoardPage() {
           />
         ))}
         {standings.length === 0 && (
-          <p className="text-center text-sm text-slate-400">Chưa có đội nào trong phòng.</p>
+          <p className="text-center text-sm text-slate-500">Chưa có đội nào trong phòng.</p>
         )}
       </div>
 
       {/* Bảng vàng khi kết thúc */}
       {room.status === "finished" && leader && (
-        <div className="mt-6 rounded-3xl bg-gradient-to-r from-amber-500/20 to-amber-300/10 p-6 text-center">
-          <Crown className="mx-auto text-amber-300" size={30} />
-          <p className="font-display mt-2 text-3xl font-black text-amber-200">
+        <div className="mt-6 rounded-3xl bg-gradient-to-r from-amber-100 to-amber-50 p-6 text-center ring-1 ring-amber-200">
+          <Crown className="mx-auto text-amber-500" size={30} />
+          <p className="font-display mt-2 text-3xl font-black text-amber-700">
             {leader.name} vô địch!
           </p>
-          <p className="text-sm text-slate-300">
+          <p className="text-sm font-medium text-slate-600">
             {room.score_mode === "average" ? `${leader.average} điểm/thiết bị` : `${leader.total} điểm`} ·{" "}
             {leader.players} thiết bị
           </p>
@@ -155,7 +155,7 @@ export default function FlapBoardPage() {
       )}
 
       {finishedByScore && room.status === "running" && leader && (
-        <p className="mt-4 text-center text-sm font-bold text-amber-300">
+        <p className="mt-4 text-center text-sm font-bold text-amber-600">
           🏁 {leader.name} đã chạm đích!
         </p>
       )}
@@ -182,28 +182,33 @@ function Lane({
     <div className="flex items-center gap-4">
       <div className="w-28 shrink-0 text-right sm:w-40">
         <div className="flex items-center justify-end gap-2">
-          {isLeader && <Crown size={16} className="text-amber-300" />}
-          <span className="truncate text-sm font-bold sm:text-base" style={{ color: team.color }}>
+          {isLeader && <Crown size={16} className="text-amber-500" />}
+          <span className="truncate text-sm font-black sm:text-base" style={{ color: team.color }}>
             {team.name}
           </span>
         </div>
-        <div className="text-[11px] text-slate-400 tabular-nums">
+        <div className="text-[11px] font-medium text-slate-500 tabular-nums">
           {scoreMode === "average" ? `${team.average}/máy` : `${team.total} điểm`}
           {showAverage && scoreMode === "total" ? ` · TB ${team.average}` : ""}
           {` · ${team.players} máy`}
         </div>
       </div>
 
-      <div className="relative h-14 flex-1 overflow-hidden rounded-2xl bg-white/5 ring-1 ring-white/10">
+      <div className="relative h-14 flex-1 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
         {/* Vạch xuất phát / đích */}
-        <div className="absolute inset-y-0 left-0 w-1 bg-white/20" />
-        <div className="absolute inset-y-0 right-0 w-1.5 bg-emerald-400/60" />
+        <div className="absolute inset-y-0 left-0 w-1 bg-slate-300" />
+        <div className="absolute inset-y-0 right-0 w-1.5 bg-emerald-500" />
         {/* Vạch chia mốc 25/50/75% */}
         {[25, 50, 75].map((mark) => (
-          <div key={mark} className="absolute inset-y-0 w-px bg-white/10" style={{ left: `${mark}%` }} />
+          <div key={mark} className="absolute inset-y-0 w-px bg-slate-200" style={{ left: `${mark}%` }} />
         ))}
+        {/* Vệt màu cho biết đội đang ở đâu trên đường đua */}
+        <div
+          className="absolute inset-y-0 left-0 rounded-r-2xl opacity-15 transition-[width] duration-200"
+          style={{ width: `${percent}%`, background: team.color }}
+        />
         <motion.div
-          className="absolute top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-2xl shadow-lg"
+          className="absolute top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-2xl shadow-md ring-2 ring-white"
           style={{ background: team.color }}
           animate={{ left: `calc(${percent}% - ${Math.round(percent * 0.44)}px)` }}
           transition={{ type: "spring", stiffness: 120, damping: 20 }}
@@ -217,7 +222,7 @@ function Lane({
           {scoreMode === "average" ? Math.round(team.average) : team.total}
         </span>
       </div>
-      <span className="w-6 shrink-0 text-xs font-bold text-slate-500">#{index + 1}</span>
+      <span className="w-6 shrink-0 text-xs font-bold text-slate-400">#{index + 1}</span>
     </div>
   );
 }
