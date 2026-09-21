@@ -588,11 +588,18 @@ export function WishWallManager() {
                   {status === "paused" ? "Mở lại nhận lời chúc" : "Tạm dừng nhận"}
                 </button>
                 <button
-                  onClick={() => void control({ action: "demo" })}
+                  onClick={() => void control({ action: "demo", count: 1 })}
                   disabled={busy}
                   className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
                 >
                   <Sparkles size={15} /> Gửi lời chúc thử
+                </button>
+                <button
+                  onClick={() => void control({ action: "demo", count: 8 })}
+                  disabled={busy}
+                  className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                >
+                  <Sparkles size={15} /> Gửi 8 lời chúc thử
                 </button>
                 <button
                   onClick={() => void control({ action: "absorb-all" })}

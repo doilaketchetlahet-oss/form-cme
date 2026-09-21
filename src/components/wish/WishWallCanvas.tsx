@@ -237,7 +237,7 @@ function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
 
-const SHAPE_BOX = 0.74;
+const SHAPE_BOX = 0.84;
 
 /** Ánh xạ điểm hình ghép (0..1) vào giữa màn hình theo một ô vuông vừa phải. */
 function shapeToScreen(point: ShapePoint, w: number, h: number) {
@@ -627,14 +627,14 @@ export const WishWallCanvas = forwardRef<
           }
         } else {
           const target = item.target ?? { x: w * 0.5, y: h * 0.5 };
-          const k = Math.min(1, dt * 2.4);
+          const k = Math.min(1, dt * 4);
           item.x += (target.x - item.x) * k;
           item.y += (target.y - item.y) * k;
           item.scale += (0.32 - item.scale) * Math.min(1, dt * 2);
-          item.alpha -= dt * 0.9;
+          item.alpha -= dt * 0.7;
           item.rot *= Math.pow(0.4, dt);
           const dist = Math.hypot(target.x - item.x, target.y - item.y);
-          if (dist < 4 || item.alpha <= 0.06) {
+          if (dist < 6 || item.alpha <= 0.05) {
             settledRef.current.push({
               x: target.x,
               y: target.y,
@@ -873,17 +873,17 @@ export const WishWallCanvas = forwardRef<
       }
 
       // Các mảnh đã kết tinh vào hình ghép — hiện đúng biểu tượng của lời chúc.
-      const nodeSize = Math.max(15, Math.min(w, h) * 0.022);
+      const nodeSize = Math.min(64, Math.max(26, Math.min(w, h) * 0.045));
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       for (const node of settledRef.current) {
         ctx.save();
         ctx.globalAlpha = 0.95;
         ctx.shadowColor = node.color;
-        ctx.shadowBlur = 16;
+        ctx.shadowBlur = 18;
         ctx.fillStyle = node.color;
         ctx.beginPath();
-        ctx.arc(node.x, node.y, nodeSize * 0.48, 0, Math.PI * 2);
+        ctx.arc(node.x, node.y, nodeSize * 0.46, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.font = `${nodeSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
@@ -942,6 +942,22 @@ export const WishWallCanvas = forwardRef<
         ctx.translate(w / 2, h / 2);
         ctx.scale(scale, scale);
         drawWishCard(ctx, spot.wish, layout, light);
+        ctx.restore();
+      }
+
+      // Tiến độ dệt hình ghép.
+      if (capacityRef.current > 0 && knownRef.current.size > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.75;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = light ? "#334155" : "rgba(248,250,252,0.88)";
+        ctx.font = `700 ${Math.round(Math.min(w * 0.014, 22))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+        ctx.fillText(
+          `Đang dệt hình ${Math.min(settledRef.current.length, capacityRef.current)}/${capacityRef.current}`,
+          w / 2,
+          h - 26,
+        );
         ctx.restore();
       }
 

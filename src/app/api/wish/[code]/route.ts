@@ -289,22 +289,27 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     case "demo": {
       // Lời chúc thử: chỉ phát lên kênh hiển thị, KHÔNG ghi vào sổ cái.
-      const sample = DEMO_WISHES[Math.floor(Math.random() * DEMO_WISHES.length)]!;
-      const wish: Wish = {
-        id: crypto.randomUUID(),
-        event_id: event.id,
-        kind: sample.content ? "text" : "symbol",
-        symbol: sample.symbol,
-        content: sample.content,
-        drawing: null,
-        color: sample.color,
-        nickname: sample.nickname,
-        edge: event.settings.edge,
-        status: "approved",
-        created_at: new Date().toISOString(),
-      };
-      await broadcastWish(event.code, { type: "wish", wish });
-      return NextResponse.json({ ok: true, wish });
+      const count = Math.min(10, Math.max(1, Number(body?.count) || 1));
+      let last: Wish | null = null;
+      for (let i = 0; i < count; i += 1) {
+        const sample = DEMO_WISHES[Math.floor(Math.random() * DEMO_WISHES.length)]!;
+        const wish: Wish = {
+          id: crypto.randomUUID(),
+          event_id: event.id,
+          kind: sample.content ? "text" : "symbol",
+          symbol: sample.symbol,
+          content: sample.content,
+          drawing: null,
+          color: sample.color,
+          nickname: sample.nickname,
+          edge: event.settings.edge,
+          status: "approved",
+          created_at: new Date().toISOString(),
+        };
+        await broadcastWish(event.code, { type: "wish", wish });
+        last = wish;
+      }
+      return NextResponse.json({ ok: true, wish: last, count });
     }
 
     case "spotlight": {
