@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShieldCheck, AlertTriangle, Loader2, RefreshCw, X } from "lucide-react";
-import { extractFaceDescriptor, loadFaceModels, assessFaceQuality, findFaceMatch } from "@/lib/ekyc";
+import { extractFaceDescriptor, loadFaceModels, assessFaceQuality, findFaceMatch, FACE_MATCH_MIN_SIMILARITY } from "@/lib/ekyc";
 import { useVipVerifyStore } from "@/lib/ekyc-store";
 import { supabase } from "@/lib/supabase";
 import { VipWelcomeScreen } from "./VipWelcomeScreen";
@@ -175,7 +175,9 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
         return;
       }
 
-      const match = await findFaceMatch(supabase, surveyId, descriptor, 0.6);
+      // Only auto-confirm strong matches; weaker ones fall through to review
+      // so an operator confirms them manually.
+      const match = await findFaceMatch(supabase, surveyId, descriptor);
       if (match) {
         setMatch(match.display_name, match.response_id, match.similarity);
         setStep("verified");
@@ -447,7 +449,9 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
             <div className="text-center">
               <p className="text-amber-400 font-semibold text-sm uppercase tracking-wider">Cần kiểm tra</p>
               <h2 className="text-on-brand text-2xl font-bold mt-2">Cần xác nhận thủ công</h2>
-              <p className="text-white/50 text-sm mt-2">Không tìm thấy kết quả khớp tự động. Lễ tân có thể thử quét lại hoặc xác nhận thủ công.</p>
+              <p className="text-white/50 text-sm mt-2">
+                Không có kết quả khớp đủ {Math.round(FACE_MATCH_MIN_SIMILARITY * 100)}%. Lễ tân có thể thử quét lại hoặc xác nhận thủ công.
+              </p>
             </div>
             <div className="w-full max-w-xs flex flex-col gap-3">
               <button onClick={handleManualConfirm} className="w-full py-3 rounded-xl bg-sky-600 text-on-brand font-bold hover:bg-sky-500 transition-colors">

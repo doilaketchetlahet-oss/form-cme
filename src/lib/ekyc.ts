@@ -383,11 +383,22 @@ function pickNameQuestionIds(
   return scored.map((q) => q.id);
 }
 
+/**
+ * Minimum match confidence for a face check-in to be accepted.
+ *
+ * `compareFaces` returns a cosine *distance* (0 identical, 1 unrelated), so the
+ * similarity shown to operators is `1 - distance`. Requiring 85% similarity
+ * means the distance threshold is 0.15. Anything below that goes to manual
+ * review instead of being confirmed automatically.
+ */
+export const FACE_MATCH_MIN_SIMILARITY = 0.85;
+export const FACE_MATCH_DISTANCE_THRESHOLD = 1 - FACE_MATCH_MIN_SIMILARITY;
+
 export async function findFaceMatch(
   supabaseClient: SupabaseClient,
   surveyId: string,
   liveDescriptor: Float32Array,
-  threshold = 0.5
+  threshold = FACE_MATCH_DISTANCE_THRESHOLD
 ): Promise<{ response_id: string; similarity: number; display_name: string } | null> {
   const [{ data: registrations }, { data: questions }] = await Promise.all([
     supabaseClient
