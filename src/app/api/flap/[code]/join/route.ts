@@ -35,8 +35,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const team = room.teams.find((t) => t.id === teamId);
   if (!team) return NextResponse.json({ error: "unknown_team" }, { status: 400 });
 
-  if (room.status !== "lobby" && room.status !== "countdown") {
-    return NextResponse.json({ error: "round_started" }, { status: 409 });
+  // Cho phép vào giữa lượt miễn là phòng chưa kết thúc; người vào sau điểm
+  // bắt đầu từ 0 nên không phá vỡ tính công bằng (chế độ trung bình/máy).
+  if (room.status === "finished") {
+    return NextResponse.json({ error: "room_finished" }, { status: 409 });
   }
 
   const nickname =

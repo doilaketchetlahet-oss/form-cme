@@ -73,6 +73,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const players = await loadPlayers(admin, room.id);
   const standings = buildStandings(room.teams, players, room.score_mode, room.track_length);
 
+  // Đẩy hình sang màn LED ngay (không chờ nhịp polling 2s).
+  try {
+    const channel = admin.channel(`flap:${room.code}`);
+    await channel.send({
+      type: "broadcast",
+      event: "flap",
+      payload: { type: "standings", standings },
+    });
+    void admin.removeChannel(channel);
+  } catch {
+    // Broadcast lỗi không ảnh hưởng kết quả: LED vẫn đồng bộ qua polling.
+  }
+
   return NextResponse.json({
     ok: true,
     score: newScore ?? player.score,

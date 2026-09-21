@@ -89,12 +89,18 @@ export default function FlapPlayerPage() {
   const roomStatus = snapshot?.room.status ?? null;
   useEffect(() => {
     if (!join || !roomStatus) return;
-    if (roomStatus === "running") {
-      counterRef.current?.setActive(true);
-    } else {
-      counterRef.current?.setActive(false);
-    }
+    // Bật lại cảm biến khi phòng chạy, tắt khi dừng. Khi vào trước lúc MC bấm
+    // bắt đầu, việc lắc vẫn được đếm cục bộ và chỉ tống lên server khi chạy.
+    counterRef.current?.setActive(roomStatus === "running");
   }, [join, roomStatus]);
+
+  // Điện thoại tự làm mới trạng thái phòng mỗi 2s để không phụ thuộc broadcast
+  // (mạng hội trường có thể chặn websocket).
+  useEffect(() => {
+    if (!join || !code) return;
+    const sync = setInterval(() => void loadSnapshot(), 2000);
+    return () => clearInterval(sync);
+  }, [join, code, loadSnapshot]);
 
   /** Phase hiển thị suy ra từ trạng thái phòng, không setState trong effect. */
   const roomPhase: Phase | null = !join
@@ -130,7 +136,6 @@ export default function FlapPlayerPage() {
       } else {
         // Chưa tới lượt hoặc bị chặn: trả điểm về hàng chờ để không mất.
         pendingRef.current += delta;
-        if (res.status === 409) counterRef.current?.setActive(false);
       }
     } catch {
       pendingRef.current += delta;
@@ -182,8 +187,8 @@ export default function FlapPlayerPage() {
           setError(
             body?.error === "team_full"
               ? "Đội này đã đủ người."
-              : body?.error === "round_started"
-                ? "Lượt chơi đã bắt đầu, vui lòng chờ lượt sau."
+              : body?.error === "room_finished"
+                ? "Phòng đã kết thúc, chờ MC mở lượt mới."
                 : "Không vào được phòng. Thử lại.",
           );
           setPhase("picker");
@@ -205,10 +210,10 @@ export default function FlapPlayerPage() {
   );
 
   const handleTap = useCallback(() => {
-    if (!join || snapshot?.room.status !== "running") return;
+    if (!join) return;
     pendingRef.current += 1;
     setShakes((s) => s + 1);
-  }, [join, snapshot]);
+  }, [join]);
 
   const teams = useMemo(() => snapshot?.room.teams ?? [], [snapshot]);
 
@@ -313,10 +318,10 @@ export default function FlapPlayerPage() {
 
       {tapMode ? (
         <button
+          type="button"
           onPointerDown={handleTap}
-          disabled={!canPlay}
-          className="w-full rounded-2xl py-10 text-xl font-black text-white transition-transform active:scale-[0.98] disabled:opacity-40"
-          style={{ background: join?.team.color }}
+          className="w-full rounded-2xl py-10 text-xl font-black text-white transition-transform active:scale-[0.98]"
+          style={{ background: join?.team.color, opacity: canPlay ? 1 : 0.5 }}
         >
           CHẠM LIÊN TỤC
         </button>
@@ -335,11 +340,17 @@ export default function FlapPlayerPage() {
         {!canPlay
           ? status === "paused"
             ? "Tạm dừng — chờ MC"
-            : "Chờ MC bắt đầu…"
+            : "Chờ MC bắt đầu… (cứ lắc, điểm sẽ được tính)"
           : tapMode
             ? "Chạm thật nhanh!"
             : "Lắc thật mạnh!"}
       </p>
+
+      {shakes > myScore && (
+        <p className="text-center text-[11px] font-semibold text-amber-600">
+          Đang chờ gửi {shakes - myScore} điểm…
+        </p>
+      )}
 
       {!tapMode && (
         <button onClick={() => void startSensors()} className="flex items-center gap-1.5 text-xs font-semibold text-sky-600">
