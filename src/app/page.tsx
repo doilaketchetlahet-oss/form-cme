@@ -6,6 +6,7 @@ import {
   ArrowRight,
   BarChart3,
   ClipboardList,
+  Dices,
   Gamepad2,
   Mail,
   QrCode,
@@ -26,12 +27,20 @@ const BRAND_GRADIENT = "linear-gradient(135deg, #0ea5e9, #06b6d4)";
 
 const HERO_STATS = [
   { value: "18", label: "Game tương tác" },
-  { value: "6", label: "Nhóm tính năng" },
+  { value: "7", label: "Nhóm tính năng" },
   { value: "02", label: "Cách check-in: QR & khuôn mặt" },
   { value: "24/7", label: "Gửi email tự động" },
 ];
 
 const FEATURES = [
+  {
+    icon: Dices,
+    emoji: "🎡",
+    title: "Bốc thăm gian hàng miễn phí",
+    text: "Quay gian theo từng pool, bố trí trên sơ đồ và hỗ trợ trao đổi vị trí. Không cần đăng nhập.",
+    href: "/booth-draw",
+    cta: "Mở công cụ",
+  },
   {
     icon: ClipboardList,
     emoji: "📋",
@@ -141,6 +150,7 @@ export default function HomePage() {
               <a href="#features" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Tính năng</a>
               <a href="#how" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Quy trình</a>
               <a href="#games" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Thư viện game</a>
+              <Link href="/booth-draw" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Bốc thăm gian hàng</Link>
               <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Đăng nhập</Link>
             </nav>
 
@@ -205,6 +215,9 @@ export default function HomePage() {
               </Link>
               <Link href="/games" className="flex items-center justify-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-slate-700 glass hover:text-slate-900 sm:text-base">
                 Khám phá thư viện game
+              </Link>
+              <Link href="/booth-draw" className="flex items-center justify-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-sky-700 glass hover:text-sky-900 sm:text-base">
+                <Dices size={16} /> Bốc thăm gian hàng
               </Link>
             </motion.div>
 

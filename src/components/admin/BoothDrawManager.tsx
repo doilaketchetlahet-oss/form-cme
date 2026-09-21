@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,8 +14,10 @@ import {
   ArrowLeft,
   ArrowRightLeft,
   Building2,
+  CalendarDays,
   Check,
   CircleHelp,
+  Copy,
   Dices,
   History,
   ImagePlus,
@@ -21,6 +25,8 @@ import {
   Loader2,
   LockKeyhole,
   Map as MapIcon,
+  MapPin,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCw,
@@ -36,6 +42,7 @@ import {
   loadBoothDraw,
   mutateBoothDraw,
   uploadBoothMap,
+  type BoothApiOptions,
   type BoothAssignment,
   type BoothCompany,
   type BoothDrawResponse,
@@ -50,6 +57,13 @@ import { PageHeader } from "./PageHeader";
 
 type Tab = "setup" | "map" | "draw" | "exchange" | "history";
 type Notice = { type: "success" | "error"; text: string } | null;
+
+const ADMIN_API_OPTIONS: BoothApiOptions = {};
+const BoothApiContext = createContext<BoothApiOptions>(ADMIN_API_OPTIONS);
+
+function useBoothApiOptions() {
+  return useContext(BoothApiContext);
+}
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Settings2 }> = [
   { id: "setup", label: "Thiết lập", icon: Settings2 },
@@ -66,6 +80,8 @@ const STATUS_LABEL: Record<BoothSessionStatus, string> = {
   finalized: "Đã chốt",
 };
 
+const SUGGESTED_POOLS = ["Kim cương", "Bạch kim", "Vàng", "Bạc", "Đồng"];
+
 const fieldClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400";
 const primaryButton = "inline-flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButton = "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50";
@@ -78,13 +94,60 @@ function dateTime(value: string) {
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
 }
 
+function dateTimeInput(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Có lỗi xảy ra.";
 }
 
 export function BoothDrawManager() {
   const { canManageForms } = useAdminAccess();
+  return (
+    <BoothApiContext.Provider value={ADMIN_API_OPTIONS}>
+      <BoothDrawWorkspace canManageForms={canManageForms} />
+    </BoothApiContext.Provider>
+  );
+}
+
+export function PublicBoothDrawManager({ initialSessionId = "" }: { initialSessionId?: string }) {
+  const [passcode, setPasscode] = useState(() => {
+    if (typeof window === "undefined" || !initialSessionId) return "";
+    return window.sessionStorage.getItem(`booth-passcode:${initialSessionId}`) ?? "";
+  });
+  const apiOptions = useMemo<BoothApiOptions>(() => ({ publicMode: true, passcode }), [passcode]);
+  return (
+    <BoothApiContext.Provider value={apiOptions}>
+      <BoothDrawWorkspace
+        canManageForms={passcode.trim().length >= 6}
+        publicMode
+        initialSessionId={initialSessionId}
+        passcode={passcode}
+        onPasscodeChange={setPasscode}
+      />
+    </BoothApiContext.Provider>
+  );
+}
+
+function BoothDrawWorkspace({
+  canManageForms,
+  publicMode = false,
+  initialSessionId = "",
+  passcode = "",
+  onPasscodeChange,
+}: {
+  canManageForms: boolean;
+  publicMode?: boolean;
+  initialSessionId?: string;
+  passcode?: string;
+  onPasscodeChange?: (value: string) => void;
+}) {
   const confirm = useConfirm();
+  const apiOptions = useBoothApiOptions();
   const [payload, setPayload] = useState<BoothDrawResponse | null>(null);
   const [sessionId, setSessionId] = useState("");
   const [tab, setTab] = useState<Tab>("setup");
@@ -93,11 +156,12 @@ export function BoothDrawManager() {
   const [notice, setNotice] = useState<Notice>(null);
   const [newEventId, setNewEventId] = useState("");
   const [newSessionName, setNewSessionName] = useState("Bốc thăm gian hàng");
+  const [newPoolText, setNewPoolText] = useState("");
 
   const refresh = useCallback(async (id?: string) => {
     setLoading(true);
     try {
-      const next = await loadBoothDraw(id);
+      const next = await loadBoothDraw(id, { publicMode: apiOptions.publicMode });
       setPayload(next);
       if (id) setSessionId(id);
     } catch (error) {
@@ -105,17 +169,17 @@ export function BoothDrawManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiOptions.publicMode]);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       await Promise.resolve();
-      if (active) await refresh();
+      if (active) await refresh(initialSessionId || undefined);
     };
     void load();
     return () => { active = false; };
-  }, [refresh]);
+  }, [initialSessionId, refresh]);
 
   const current = payload?.current;
   const selectedSession = payload?.sessions.find((session) => session.id === sessionId);
@@ -135,14 +199,20 @@ export function BoothDrawManager() {
   };
 
   const createSession = () => run(async () => {
-    const result = await mutateBoothDraw<{ id: string }>({
-      action: "create_session",
+    const poolNames = lines(newPoolText);
+    const result = await mutateBoothDraw<{ id: string; expiresAt?: string }>({
+      action: publicMode ? "create_public_session" : "create_session",
       eventId: newEventId,
       name: newSessionName,
-    });
+      poolNames,
+    }, apiOptions);
+    if (publicMode && typeof window !== "undefined") {
+      window.sessionStorage.setItem(`booth-passcode:${result.id}`, passcode);
+      window.history.replaceState(null, "", `/booth-draw?session=${encodeURIComponent(result.id)}`);
+    }
     setTab("setup");
     await refresh(result.id);
-  }, "Đã tạo phiên và 5 pool tài trợ mặc định.");
+  }, `Đã tạo phiên với ${lines(newPoolText).length} pool.`);
 
   const openSession = (id: string) => {
     setTab("setup");
@@ -154,6 +224,7 @@ export function BoothDrawManager() {
     setSessionId("");
     setTab("setup");
     setNotice(null);
+    if (publicMode && typeof window !== "undefined") window.history.replaceState(null, "", "/booth-draw");
     void refresh();
   };
 
@@ -170,8 +241,8 @@ export function BoothDrawManager() {
       if (!accepted) return;
     }
     await run(async () => {
-    await mutateBoothDraw({ action: "update_session", sessionId, status });
-    await refresh(sessionId);
+      await mutateBoothDraw({ action: "update_session", sessionId, status }, apiOptions);
+      await refresh(sessionId);
     }, status === "finalized" ? "Đã khóa kết quả phiên." : "Đã mở lại phiên.");
   };
 
@@ -185,17 +256,33 @@ export function BoothDrawManager() {
     });
     if (!accepted) return;
     await run(async () => {
-      await mutateBoothDraw({ action: "delete_session", sessionId });
+      await mutateBoothDraw({ action: "delete_session", sessionId }, apiOptions);
       setSessionId("");
+      if (publicMode && typeof window !== "undefined") {
+        window.sessionStorage.removeItem(`booth-passcode:${sessionId}`);
+        window.history.replaceState(null, "", "/booth-draw");
+      }
       await refresh();
     }, "Đã xóa phiên bốc thăm.");
+  };
+
+  const copyShareLink = async () => {
+    const token = current?.session.share_token;
+    if (typeof window === "undefined" || !token || current?.session.share_enabled === false) return;
+    const url = `${window.location.origin}/booth-map/${encodeURIComponent(token)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setNotice({ type: "success", text: "Đã sao chép link xem sơ đồ. Người nhận không cần đăng nhập hoặc passcode." });
+    } catch {
+      setNotice({ type: "error", text: `Không thể tự sao chép. Link xem: ${url}` });
+    }
   };
 
   return (
     <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-8 sm:py-10">
       <PageHeader
         title="Bốc thăm gian hàng"
-        subtitle="Quay số theo từng pool tài trợ, hiển thị vị trí trên sơ đồ và quản lý trao đổi sau bốc thăm."
+        subtitle={publicMode ? "Công cụ miễn phí, không cần đăng nhập. Dữ liệu được tự động xoá sau 7 ngày." : "Quay số theo từng pool tài trợ, hiển thị vị trí trên sơ đồ và quản lý trao đổi sau bốc thăm."}
         action={
           <button onClick={() => void refresh(sessionId || undefined)} disabled={loading} className={secondaryButton}>
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Làm mới
@@ -212,12 +299,17 @@ export function BoothDrawManager() {
       ) : !current ? (
         <SessionHome
           data={payload}
-          canManage={canManageForms}
+          canManage={publicMode ? true : canManageForms}
           eventId={newEventId}
           sessionName={newSessionName}
+          poolText={newPoolText}
+          passcode={passcode}
+          publicMode={publicMode}
           busy={busy}
           onEventId={setNewEventId}
           onSessionName={setNewSessionName}
+          onPoolText={setNewPoolText}
+          onPasscode={onPasscodeChange}
           onCreate={() => void createSession()}
           onOpen={openSession}
         />
@@ -235,13 +327,16 @@ export function BoothDrawManager() {
                     <StatusBadge status={current.session.status} />
                   </div>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    {payload?.events.find((event) => event.id === current.session.event_id)?.name ?? "Sự kiện"}
+                    {publicMode ? "Phiên công khai" : payload?.events.find((event) => event.id === current.session.event_id)?.name ?? "Sự kiện"}
                     {" · "}{current.companies.length} công ty · {current.booths.length} gian
                   </p>
                 </div>
               </div>
-              {canManageForms && (
-                <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => void copyShareLink()} disabled={!current.session.share_token || current.session.share_enabled === false} className={secondaryButton} title={current.session.share_enabled === false ? "Bật chia sẻ trong tab Thiết lập" : "Link chỉ xem, không cần đăng nhập"}>
+                  <Copy size={15} /> Link xem sơ đồ
+                </button>
+                {canManageForms && <>
                   {current.session.status === "finalized" ? (
                     <button onClick={() => void updateStatus("exchange")} disabled={busy} className={secondaryButton}>
                       <RotateCw size={15} /> Mở lại
@@ -254,9 +349,30 @@ export function BoothDrawManager() {
                   <button onClick={() => void deleteSession()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50">
                     <Trash2 size={15} /> Xóa phiên
                   </button>
-                </div>
-              )}
+                </>}
+              </div>
             </div>
+            {publicMode && (
+              <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold text-slate-500">Passcode chỉnh sửa</span>
+                  <input
+                    type="password"
+                    value={passcode}
+                    onChange={(event) => {
+                      onPasscodeChange?.(event.target.value);
+                      if (sessionId && typeof window !== "undefined") window.sessionStorage.setItem(`booth-passcode:${sessionId}`, event.target.value);
+                    }}
+                    className={fieldClass}
+                    placeholder="Nhập passcode của phiên"
+                    autoComplete="current-password"
+                  />
+                </label>
+                <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
+                  Hết hạn {current.session.expires_at ? dateTime(current.session.expires_at) : "sau 7 ngày"}
+                </div>
+              </div>
+            )}
           </section>
 
           <div className="mb-6 overflow-x-auto pb-1">
@@ -311,9 +427,14 @@ function SessionHome({
   canManage,
   eventId,
   sessionName,
+  poolText,
+  passcode,
+  publicMode,
   busy,
   onEventId,
   onSessionName,
+  onPoolText,
+  onPasscode,
   onCreate,
   onOpen,
 }: {
@@ -321,38 +442,56 @@ function SessionHome({
   canManage: boolean;
   eventId: string;
   sessionName: string;
+  poolText: string;
+  passcode: string;
+  publicMode: boolean;
   busy: boolean;
   onEventId: (value: string) => void;
   onSessionName: (value: string) => void;
+  onPoolText: (value: string) => void;
+  onPasscode?: (value: string) => void;
   onCreate: () => void;
   onOpen: (id: string) => void;
 }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
+    <div className={cn("grid gap-6", publicMode ? "mx-auto max-w-xl" : "xl:grid-cols-[380px_1fr]")}>
       <section className="glass h-fit rounded-2xl p-5">
         <h2 className="flex items-center gap-2 text-base font-bold text-slate-900"><Plus size={17} className="text-sky-500" /> Tạo phiên bốc thăm</h2>
-        <p className="mt-1 text-sm text-slate-500">Mỗi phiên thuộc một sự kiện và có sẵn 5 pool Kim cương, Bạch kim, Vàng, Bạc, Đồng.</p>
+        <p className="mt-1 text-sm text-slate-500">{publicMode ? "Tạo miễn phí, không cần tài khoản. Phiên và dữ liệu sẽ tự xoá sau 7 ngày." : "Mỗi phiên thuộc một sự kiện. Bạn tự đặt tên và số lượng pool theo cơ cấu tài trợ thực tế."}</p>
         <div className="mt-5 space-y-4">
-          <label className="block">
+          {!publicMode && <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-slate-500">Sự kiện</span>
             <select value={eventId} onChange={(event) => onEventId(event.target.value)} disabled={!canManage} className={fieldClass}>
               <option value="">Chọn sự kiện…</option>
               {(data?.events ?? []).map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}
             </select>
-          </label>
+          </label>}
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-slate-500">Tên phiên</span>
             <input value={sessionName} onChange={(event) => onSessionName(event.target.value)} disabled={!canManage} className={fieldClass} />
           </label>
-          {data?.events.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-700">Chưa có sự kiện. Hãy tạo sự kiện tại mục “Sự kiện” trước.</p>}
-          <button onClick={onCreate} disabled={!canManage || busy || !eventId} className={cn(primaryButton, "w-full")}>
+          <label className="block">
+            <span className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold text-slate-500">
+              <span>Danh sách pool <span className="text-red-500">*</span></span>
+              <button type="button" onClick={() => onPoolText(SUGGESTED_POOLS.join("\n"))} disabled={!canManage} className="font-semibold text-sky-600 hover:text-sky-700 disabled:opacity-50">Dùng 5 pool gợi ý</button>
+            </span>
+            <textarea rows={6} value={poolText} onChange={(event) => onPoolText(event.target.value)} disabled={!canManage} className={fieldClass} placeholder={"VIP\nĐối tác chiến lược\nNhà tài trợ"} />
+            <span className="mt-1 block text-[11px] text-slate-400">Mỗi dòng một pool; có thể đổi tên và màu sau khi tạo.</span>
+          </label>
+          {publicMode && <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">Passcode chỉnh sửa <span className="text-red-500">*</span></span>
+            <input type="password" value={passcode} onChange={(event) => onPasscode?.(event.target.value)} className={fieldClass} placeholder="Ít nhất 6 ký tự" minLength={6} maxLength={64} autoComplete="new-password" />
+            <span className="mt-1 block text-[11px] text-slate-400">Hãy lưu lại passcode. Hệ thống chỉ lưu bản băm và không thể khôi phục passcode.</span>
+          </label>}
+          {!publicMode && data?.events.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-700">Chưa có sự kiện. Hãy tạo sự kiện tại mục “Sự kiện” trước.</p>}
+          <button onClick={onCreate} disabled={!canManage || busy || (!publicMode && !eventId) || (publicMode && passcode.trim().length < 6) || lines(poolText).length === 0} className={cn(primaryButton, "w-full")}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Tạo phiên
           </button>
-          {!canManage && <p className="text-xs text-slate-500">Tài khoản của bạn chỉ có quyền xem.</p>}
+          {!publicMode && !canManage && <p className="text-xs text-slate-500">Tài khoản của bạn chỉ có quyền xem.</p>}
         </div>
       </section>
 
-      <section>
+      {!publicMode && <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-bold text-slate-900">Các phiên đã tạo</h2>
           <span className="text-xs text-slate-500">{data?.sessions.length ?? 0} phiên</span>
@@ -379,7 +518,7 @@ function SessionHome({
             })}
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }
@@ -400,12 +539,22 @@ type RunOperation = (operation: () => Promise<void>, success?: string) => Promis
 
 function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void> }) {
   const confirm = useConfirm();
+  const apiOptions = useBoothApiOptions();
   const [companyPoolId, setCompanyPoolId] = useState("");
   const [boothPoolId, setBoothPoolId] = useState("");
   const [companyText, setCompanyText] = useState("");
   const [boothText, setBoothText] = useState("");
   const [poolName, setPoolName] = useState("");
   const [poolColor, setPoolColor] = useState("#0ea5e9");
+  const [editingPoolId, setEditingPoolId] = useState("");
+  const [editingPoolName, setEditingPoolName] = useState("");
+  const [editingPoolColor, setEditingPoolColor] = useState("#0ea5e9");
+  const [shareName, setShareName] = useState(current.session.name);
+  const [startsAt, setStartsAt] = useState(dateTimeInput(current.session.starts_at));
+  const [endsAt, setEndsAt] = useState(dateTimeInput(current.session.ends_at));
+  const [venue, setVenue] = useState(current.session.venue ?? "");
+  const [publicNote, setPublicNote] = useState(current.session.public_note ?? "");
+  const [shareEnabled, setShareEnabled] = useState(current.session.share_enabled !== false);
   const defaultPoolId = current.pools[0]?.id ?? "";
   const selectedCompanyPool = companyPoolId || defaultPoolId;
   const selectedBoothPool = boothPoolId || defaultPoolId;
@@ -413,33 +562,110 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
   const assignedBoothIds = useMemo(() => new Set(current.assignments.map((item) => item.booth_id)), [current.assignments]);
 
   const addCompanies = () => run(async () => {
-    await mutateBoothDraw({ action: "bulk_add_companies", sessionId: current.session.id, poolId: selectedCompanyPool, names: lines(companyText) });
+    await mutateBoothDraw({ action: "bulk_add_companies", sessionId: current.session.id, poolId: selectedCompanyPool, names: lines(companyText) }, apiOptions);
     setCompanyText("");
     await refresh();
   }, "Đã cập nhật danh sách công ty.");
 
   const addBooths = () => run(async () => {
-    await mutateBoothDraw({ action: "bulk_add_booths", sessionId: current.session.id, poolId: selectedBoothPool, codes: lines(boothText) });
+    await mutateBoothDraw({ action: "bulk_add_booths", sessionId: current.session.id, poolId: selectedBoothPool, codes: lines(boothText) }, apiOptions);
     setBoothText("");
     await refresh();
   }, "Đã cập nhật danh sách gian hàng.");
 
   const addPool = () => run(async () => {
-    await mutateBoothDraw({ action: "create_pool", sessionId: current.session.id, name: poolName, color: poolColor, sortOrder: current.pools.length * 10 + 10 });
+    await mutateBoothDraw({ action: "create_pool", sessionId: current.session.id, name: poolName, color: poolColor, sortOrder: current.pools.length * 10 + 10 }, apiOptions);
     setPoolName("");
     await refresh();
   }, "Đã thêm pool.");
 
+  const saveShareInfo = () => run(async () => {
+    await mutateBoothDraw({
+      action: "update_session",
+      sessionId: current.session.id,
+      name: shareName,
+      startsAt: startsAt ? new Date(startsAt).toISOString() : null,
+      endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+      venue,
+      publicNote,
+      shareEnabled,
+    }, apiOptions);
+    await refresh();
+  }, "Đã lưu thông tin trang chia sẻ.");
+
+  const beginEditPool = (pool: BoothPool) => {
+    setEditingPoolId(pool.id);
+    setEditingPoolName(pool.name);
+    setEditingPoolColor(pool.color);
+  };
+
+  const savePool = () => {
+    const pool = current.pools.find((item) => item.id === editingPoolId);
+    if (!pool) return Promise.resolve();
+    return run(async () => {
+      await mutateBoothDraw({
+        action: "update_pool",
+        sessionId: current.session.id,
+        poolId: pool.id,
+        name: editingPoolName,
+        color: editingPoolColor,
+        sortOrder: pool.sort_order,
+      }, apiOptions);
+      setEditingPoolId("");
+      await refresh();
+    }, "Đã cập nhật pool.");
+  };
+
   const remove = async (kind: "company" | "booth" | "pool", id: string, name: string) => {
     if (!(await confirm({ title: `Xóa “${name}”?`, description: "Chỉ có thể xóa dữ liệu chưa phát sinh kết quả quay.", destructive: true, confirmText: "Xóa" }))) return;
     await run(async () => {
-      await mutateBoothDraw({ action: kind === "company" ? "delete_company" : kind === "booth" ? "delete_booth" : "delete_pool", sessionId: current.session.id, [`${kind}Id`]: id });
+      await mutateBoothDraw({ action: kind === "company" ? "delete_company" : kind === "booth" ? "delete_booth" : "delete_pool", sessionId: current.session.id, [`${kind}Id`]: id }, apiOptions);
       await refresh();
     }, "Đã xóa dữ liệu.");
   };
 
   return (
     <div className="space-y-6">
+      <section className="glass overflow-hidden rounded-2xl">
+        <div className="border-b border-slate-100 bg-gradient-to-r from-sky-50 to-cyan-50 px-5 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 font-bold text-slate-900"><MapIcon size={17} className="text-sky-500" /> Thông tin trang chia sẻ</h3>
+              <p className="mt-1 text-xs text-slate-500">Tên, thời gian và địa điểm này sẽ hiển thị trên link xem sơ đồ dành cho khách.</p>
+            </div>
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
+              <input type="checkbox" checked={shareEnabled} onChange={(event) => setShareEnabled(event.target.checked)} disabled={!canManage} className="h-4 w-4 accent-sky-500" /> Cho phép xem qua link
+            </label>
+          </div>
+        </div>
+        <div className="grid gap-4 p-5 lg:grid-cols-2">
+          <label className="block lg:col-span-2">
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">Tên sự kiện / phiên hiển thị</span>
+            <input value={shareName} onChange={(event) => setShareName(event.target.value)} disabled={!canManage} className={fieldClass} placeholder="Triển lãm Y khoa 2026" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500"><CalendarDays size={13} /> Bắt đầu</span>
+            <input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} disabled={!canManage} className={fieldClass} />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500"><CalendarDays size={13} /> Kết thúc</span>
+            <input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} disabled={!canManage} className={fieldClass} />
+          </label>
+          <label className="block lg:col-span-2">
+            <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-500"><MapPin size={13} /> Địa điểm</span>
+            <input value={venue} onChange={(event) => setVenue(event.target.value)} disabled={!canManage} className={fieldClass} placeholder="Trung tâm Hội nghị…, 123 đường…" />
+          </label>
+          <label className="block lg:col-span-2">
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">Ghi chú dành cho khách</span>
+            <textarea rows={3} value={publicNote} onChange={(event) => setPublicNote(event.target.value)} disabled={!canManage} className={fieldClass} placeholder="Hướng dẫn check-in, giờ set-up gian hàng hoặc đầu mối liên hệ…" />
+          </label>
+          {canManage && <div className="flex flex-wrap items-center justify-between gap-3 lg:col-span-2">
+            <p className="text-xs text-slate-500">Link xem không chứa passcode và chỉ cho phép tra cứu, không thể chỉnh sửa.</p>
+            <button onClick={() => void saveShareInfo()} disabled={busy || !shareName.trim()} className={primaryButton}><Check size={16} /> Lưu thông tin</button>
+          </div>}
+        </div>
+      </section>
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {current.pools.map((pool) => {
           const companies = current.companies.filter((item) => item.pool_id === pool.id);
@@ -451,8 +677,11 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
               <div className="absolute inset-x-0 top-0 h-1" style={{ background: pool.color }} />
               <div className="flex items-start justify-between gap-2">
                 <div><p className="font-bold text-slate-900">{pool.name}</p><p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{pool.code}</p></div>
-                {canManage && companies.length === 0 && booths.length === 0 && (
-                  <button onClick={() => void remove("pool", pool.id, pool.name)} className="text-slate-300 hover:text-red-500" title="Xóa pool"><Trash2 size={14} /></button>
+                {canManage && current.session.status !== "finalized" && (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => beginEditPool(pool)} className="text-slate-300 hover:text-sky-600" title="Đổi tên và màu"><Pencil size={14} /></button>
+                    {companies.length === 0 && booths.length === 0 && <button onClick={() => void remove("pool", pool.id, pool.name)} className="text-slate-300 hover:text-red-500" title="Xóa pool"><Trash2 size={14} /></button>}
+                  </div>
                 )}
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2 text-center">
@@ -465,6 +694,19 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
           );
         })}
       </div>
+
+      {canManage && current.session.status !== "finalized" && editingPoolId && (
+        <section className="glass rounded-2xl border-sky-200 p-5">
+          <h3 className="flex items-center gap-2 font-bold text-slate-900"><Pencil size={16} className="text-sky-500" /> Chỉnh sửa pool</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_90px_auto_auto]">
+            <input value={editingPoolName} onChange={(event) => setEditingPoolName(event.target.value)} className={fieldClass} placeholder="Tên pool" />
+            <input type="color" value={editingPoolColor} onChange={(event) => setEditingPoolColor(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white p-1" title="Màu pool" />
+            <button onClick={() => void savePool()} disabled={busy || !editingPoolName.trim()} className={primaryButton}><Check size={16} /> Lưu</button>
+            <button onClick={() => setEditingPoolId("")} disabled={busy} className={secondaryButton}>Huỷ</button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Đổi tên không làm thay đổi công ty, gian hàng hay kết quả đã gắn với pool này.</p>
+        </section>
+      )}
 
       {canManage && current.session.status !== "finalized" && (
         <div className="grid gap-6 xl:grid-cols-2">
@@ -535,6 +777,8 @@ function ListRow({ color, main, detail, onDelete }: { color: string; main: strin
 }
 
 function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; setNotice: (notice: Notice) => void; onRefresh: () => Promise<void> }) {
+  const apiOptions = useBoothApiOptions();
+  const confirm = useConfirm();
   const [selectedId, setSelectedId] = useState(current.booths[0]?.id ?? "");
   const [localBooths, setLocalBooths] = useState(current.booths);
   const [uploading, setUploading] = useState(false);
@@ -550,7 +794,7 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: B
 
   const saveZone = async (zone: BoothZone) => {
     try {
-      await mutateBoothDraw({ action: "update_booth", sessionId: current.session.id, boothId: zone.id, x: zone.x, y: zone.y, width: zone.width, height: zone.height, rotation: zone.rotation });
+      await mutateBoothDraw({ action: "update_booth", sessionId: current.session.id, boothId: zone.id, x: zone.x, y: zone.y, width: zone.width, height: zone.height, rotation: zone.rotation }, apiOptions);
       setNotice({ type: "success", text: `Đã lưu vị trí gian ${zone.booth_code}.` });
     } catch (error) {
       setNotice({ type: "error", text: errorText(error) });
@@ -592,13 +836,48 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: B
     setUploading(true);
     setNotice(null);
     try {
-      await uploadBoothMap(current.session.id, file);
+      await uploadBoothMap(current.session.id, file, apiOptions);
       setNotice({ type: "success", text: "Đã tải sơ đồ lên." });
       await onRefresh();
     } catch (error) {
       setNotice({ type: "error", text: errorText(error) });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const applyStyleToPool = async () => {
+    if (!selected || !canManage) return;
+    const pool = poolById.get(selected.pool_id);
+    const count = localBooths.filter((booth) => booth.pool_id === selected.pool_id).length;
+    const accepted = await confirm({
+      title: `Áp dụng cho ${count} gian pool ${pool?.name ?? "này"}?`,
+      description: "Chiều rộng, chiều cao và góc xoay của ô đang chọn sẽ được áp dụng cho tất cả gian trong pool. Vị trí X/Y của từng gian vẫn được giữ riêng.",
+      confirmText: "Áp dụng tất cả",
+    });
+    if (!accepted) return;
+    setNotice(null);
+    try {
+      await mutateBoothDraw({
+        action: "apply_booth_style_to_pool",
+        sessionId: current.session.id,
+        poolId: selected.pool_id,
+        width: selected.width,
+        height: selected.height,
+        rotation: selected.rotation,
+      }, apiOptions);
+      setLocalBooths((items) => items.map((booth) => booth.pool_id === selected.pool_id ? {
+        ...booth,
+        width: selected.width,
+        height: selected.height,
+        rotation: selected.rotation,
+        x: Math.min(booth.x, 100 - selected.width),
+        y: Math.min(booth.y, 100 - selected.height),
+      } : booth));
+      setNotice({ type: "success", text: `Đã áp dụng kích thước cho ${count} gian thuộc pool ${pool?.name ?? "đã chọn"}.` });
+      await onRefresh();
+    } catch (error) {
+      setNotice({ type: "error", text: errorText(error) });
     }
   };
 
@@ -651,6 +930,9 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: B
             <ZoneField label="Chiều rộng" value={selected.width} min={1} max={100 - selected.x} disabled={!canManage || current.session.status === "finalized"} onChange={(value) => patchLocal(selected.id, { width: value })} onCommit={() => void saveZone(selected)} />
             <ZoneField label="Chiều cao" value={selected.height} min={1} max={100 - selected.y} disabled={!canManage || current.session.status === "finalized"} onChange={(value) => patchLocal(selected.id, { height: value })} onCommit={() => void saveZone(selected)} />
             <ZoneField label="Góc xoay" value={selected.rotation} min={-180} max={180} disabled={!canManage || current.session.status === "finalized"} onChange={(value) => patchLocal(selected.id, { rotation: value })} onCommit={() => void saveZone(selected)} />
+            <button onClick={() => void applyStyleToPool()} disabled={!canManage || busy || current.session.status === "finalized"} className={cn(secondaryButton, "w-full")}>
+              <LayoutGrid size={16} /> Áp dụng cho tất cả gian cùng pool
+            </button>
             <p className="rounded-xl bg-sky-50 p-3 text-xs leading-5 text-sky-700"><CircleHelp size={14} className="mr-1 inline" /> Tọa độ dùng phần trăm nên sơ đồ giữ đúng vị trí trên màn hình lớn lẫn nhỏ.</p>
           </div>
         )}
@@ -660,10 +942,17 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: B
 }
 
 function ZoneField({ label, value, min = 0, max, disabled, onChange, onCommit }: { label: string; value: number; min?: number; max: number; disabled: boolean; onChange: (value: number) => void; onCommit: () => void }) {
-  return <label className="block"><span className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-500"><span>{label}</span><span>{Number(value).toFixed(1)}</span></span><input type="range" value={value} min={min} max={Math.max(min, max)} step="0.2" disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} className="w-full accent-sky-500" /></label>;
+  const safeMax = Math.max(min, max);
+  const update = (raw: string) => {
+    if (raw === "") return;
+    const number = Number(raw);
+    if (Number.isFinite(number)) onChange(Math.max(min, Math.min(safeMax, number)));
+  };
+  return <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span><div className="grid grid-cols-[1fr_82px] items-center gap-3"><input type="range" value={value} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} className="w-full accent-sky-500" /><input type="number" value={Number(value).toFixed(1)} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => update(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit(); } }} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs font-semibold text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-50" /></div></label>;
 }
 
 function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void> }) {
+  const apiOptions = useBoothApiOptions();
   const [poolId, setPoolId] = useState("");
   const [companyId, setCompanyId] = useState("");
   const [rotation, setRotation] = useState(0);
@@ -685,7 +974,7 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
     setWinner(null);
     let result: BoothDrawRpcResult;
     try {
-      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() });
+      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() }, apiOptions);
       result = response.result;
       if (!result) throw new Error("Không nhận được kết quả quay.");
       const selectedIndex = Math.max(0, booths.findIndex((item) => item.id === result.booth_id));
@@ -790,6 +1079,7 @@ function MapImage({ src }: { src: string }) {
 }
 
 function ExchangeTab({ current, canManage, busy, run, refresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void> }) {
+  const apiOptions = useBoothApiOptions();
   const [poolId, setPoolId] = useState("");
   const [mode, setMode] = useState<"swap" | "move">("swap");
   const [companyA, setCompanyA] = useState("");
@@ -806,9 +1096,9 @@ function ExchangeTab({ current, canManage, busy, run, refresh }: { current: Boot
 
   const submit = () => run(async () => {
     if (mode === "swap") {
-      await mutateBoothDraw({ action: "swap", sessionId: current.session.id, companyAId: companyA, companyBId: companyB, reason });
+      await mutateBoothDraw({ action: "swap", sessionId: current.session.id, companyAId: companyA, companyBId: companyB, reason }, apiOptions);
     } else {
-      await mutateBoothDraw({ action: "move", sessionId: current.session.id, companyId: companyA, targetBoothId: targetBooth, reason });
+      await mutateBoothDraw({ action: "move", sessionId: current.session.id, companyId: companyA, targetBoothId: targetBooth, reason }, apiOptions);
     }
     setCompanyA(""); setCompanyB(""); setTargetBooth(""); setReason("");
     await refresh();

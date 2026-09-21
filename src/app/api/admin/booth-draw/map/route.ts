@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeAdminApi } from "@/lib/server/admin-api";
+import { authorizePublicBoothWrite, createBoothServiceClient } from "@/lib/server/booth-public-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,17 +18,28 @@ function jsonError(error: string, status = 400) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeAdminApi(request, true);
-  if ("error" in auth) return jsonError(auth.error, auth.status);
-
   const form = await request.formData().catch(() => null);
   const sessionId = String(form?.get("sessionId") ?? "").trim();
+  const passcode = String(form?.get("passcode") ?? "").trim().slice(0, 64);
   const file = form?.get("file");
   if (!sessionId || !(file instanceof File)) return jsonError("Thiếu phiên hoặc file sơ đồ.");
   if (!ACCEPTED_TYPES.has(file.type)) return jsonError("Sơ đồ phải là ảnh JPG, PNG hoặc WebP.");
   if (file.size <= 0 || file.size > MAX_MAP_BYTES) return jsonError("Ảnh sơ đồ không được lớn hơn 10 MB.");
 
-  const { data: session, error: sessionError } = await auth.service
+  const adminAuth = await authorizeAdminApi(request, true);
+  let service: SupabaseClient;
+  if ("error" in adminAuth) {
+    const publicService = createBoothServiceClient();
+    if (!publicService) return jsonError("Thiếu cấu hình Supabase server.", 500);
+    if (!passcode) return jsonError("Nhập passcode để lưu thay đổi.", 401);
+    const access = await authorizePublicBoothWrite(request, publicService, sessionId, passcode);
+    if ("error" in access) return jsonError(access.error, access.status);
+    service = publicService;
+  } else {
+    service = adminAuth.service;
+  }
+
+  const { data: session, error: sessionError } = await service
     .from("booth_draw_sessions")
     .select("id, map_path, status")
     .eq("id", sessionId)
@@ -38,7 +51,7 @@ export async function POST(request: Request) {
   const extension = ACCEPTED_TYPES.get(file.type) ?? "png";
   const path = `${sessionId}/${crypto.randomUUID()}.${extension}`;
   const bytes = await file.arrayBuffer();
-  const { error: uploadError } = await auth.service.storage
+  const { error: uploadError } = await service.storage
     .from("booth-maps")
     .upload(path, bytes, { contentType: file.type, upsert: false });
   if (uploadError) {
@@ -51,18 +64,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error: updateError } = await auth.service
+  const { error: updateError } = await service
     .from("booth_draw_sessions")
     .update({ map_path: path, updated_at: new Date().toISOString() })
     .eq("id", sessionId);
   if (updateError) {
-    await auth.service.storage.from("booth-maps").remove([path]);
+    await service.storage.from("booth-maps").remove([path]);
     return jsonError(updateError.message, 500);
   }
 
   if (session.map_path && session.map_path !== path) {
-    await auth.service.storage.from("booth-maps").remove([session.map_path]);
+    await service.storage.from("booth-maps").remove([session.map_path]);
   }
-  const { data: signed } = await auth.service.storage.from("booth-maps").createSignedUrl(path, 60 * 60);
+  const { data: signed } = await service.storage.from("booth-maps").createSignedUrl(path, 60 * 60);
   return NextResponse.json({ ok: true, mapUrl: signed?.signedUrl ?? null });
 }

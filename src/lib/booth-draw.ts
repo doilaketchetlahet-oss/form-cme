@@ -10,10 +10,18 @@ export type BoothEvent = {
 
 export type BoothSession = {
   id: string;
-  event_id: string;
+  event_id: string | null;
   name: string;
   status: BoothSessionStatus;
   map_path: string | null;
+  access_mode?: "admin" | "public";
+  expires_at?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  venue?: string | null;
+  public_note?: string | null;
+  share_token?: string;
+  share_enabled?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -116,7 +124,24 @@ export type BoothDrawResponse = {
   events: BoothEvent[];
   sessions: BoothSession[];
   role: "owner" | "admin" | "viewer";
+  publicMode?: boolean;
   current?: BoothDrawState;
+};
+
+export type SharedBoothMapResponse = {
+  ok: boolean;
+  error?: string;
+  session: Pick<BoothSession, "id" | "name" | "status" | "starts_at" | "ends_at" | "venue" | "public_note" | "updated_at">;
+  mapUrl: string | null;
+  pools: BoothPool[];
+  companies: BoothCompany[];
+  booths: BoothZone[];
+  assignments: BoothAssignment[];
+};
+
+export type BoothApiOptions = {
+  publicMode?: boolean;
+  passcode?: string;
 };
 
 async function accessToken() {
@@ -132,11 +157,11 @@ async function readJson<T>(response: Response): Promise<T> {
   return body;
 }
 
-export async function loadBoothDraw(sessionId?: string): Promise<BoothDrawResponse> {
-  const token = await accessToken();
+export async function loadBoothDraw(sessionId?: string, options: BoothApiOptions = {}): Promise<BoothDrawResponse> {
+  const token = options.publicMode ? null : await accessToken();
   const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
   const response = await fetch(`/api/admin/booth-draw${query}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     cache: "no-store",
   });
   return readJson<BoothDrawResponse>(response);
@@ -144,25 +169,32 @@ export async function loadBoothDraw(sessionId?: string): Promise<BoothDrawRespon
 
 export async function mutateBoothDraw<T extends Record<string, unknown> = Record<string, unknown>>(
   payload: Record<string, unknown>,
+  options: BoothApiOptions = {},
 ): Promise<{ ok: true } & T> {
-  const token = await accessToken();
+  const token = options.publicMode ? null : await accessToken();
   const response = await fetch("/api/admin/booth-draw", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
+    body: JSON.stringify(options.publicMode ? { ...payload, passcode: options.passcode ?? "" } : payload),
   });
   return readJson<{ ok: true } & T>(response);
 }
 
-export async function uploadBoothMap(sessionId: string, file: File) {
-  const token = await accessToken();
+export async function uploadBoothMap(sessionId: string, file: File, options: BoothApiOptions = {}) {
+  const token = options.publicMode ? null : await accessToken();
   const form = new FormData();
   form.set("sessionId", sessionId);
   form.set("file", file);
+  if (options.publicMode) form.set("passcode", options.passcode ?? "");
   const response = await fetch("/api/admin/booth-draw/map", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: form,
   });
   return readJson<{ ok: true; mapUrl: string | null }>(response);
+}
+
+export async function loadSharedBoothMap(token: string): Promise<SharedBoothMapResponse> {
+  const response = await fetch(`/api/booth-map/${encodeURIComponent(token)}`, { cache: "no-store" });
+  return readJson<SharedBoothMapResponse>(response);
 }

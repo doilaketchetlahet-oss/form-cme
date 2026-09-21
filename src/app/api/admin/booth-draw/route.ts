@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeAdminApi } from "@/lib/server/admin-api";
+import {
+  authorizePublicBoothWrite,
+  checkPublicBoothRateLimit,
+  createBoothServiceClient,
+  hashBoothPasscode,
+} from "@/lib/server/booth-public-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +18,8 @@ const DEFAULT_POOLS = [
   { code: "SILVER", name: "Bạc", color: "#64748b", sort_order: 40 },
   { code: "BRONZE", name: "Đồng", color: "#b45309", sort_order: 50 },
 ] as const;
+
+const CUSTOM_POOL_COLORS = ["#38bdf8", "#8b5cf6", "#f59e0b", "#64748b", "#b45309", "#10b981", "#ec4899", "#0ea5e9"];
 
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status });
@@ -40,7 +48,11 @@ function databaseError(error: { code?: string; message?: string } | null | undef
   if (message.includes("ASSIGNMENT_NOT_FOUND")) return "Công ty chưa có gian hàng để trao đổi.";
   if (message.includes("COMPANY_NOT_FOUND")) return "Không tìm thấy công ty trong phiên này.";
   if (message.includes("BOOTH_NOT_FOUND")) return "Không tìm thấy gian hàng trong phiên này.";
+  if (message.includes("INVALID_SIZE")) return "Kích thước gian hàng không hợp lệ.";
   if (message.includes("violates foreign key constraint")) return "Dữ liệu đã được sử dụng và không thể xóa.";
+  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("share_token") || message.includes("starts_at")) {
+    return "Chưa cập nhật chức năng phiên công khai. Hãy chạy supabase/booth-draw-public.sql.";
+  }
   return message;
 }
 
@@ -58,16 +70,40 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 }
 
-export async function GET(request: Request) {
-  const auth = await authorizeAdminApi(request);
-  if ("error" in auth) return jsonError(auth.error, auth.status);
+function cleanDateTime(value: unknown) {
+  if (value === null || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
 
+function poolCode(name: string, index: number, used: Set<string>) {
+  const base = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "D")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24) || `POOL_${index + 1}`;
+  let code = base;
+  let suffix = 2;
+  while (used.has(code)) code = `${base.slice(0, 20)}_${suffix++}`;
+  used.add(code);
+  return code;
+}
+
+export async function GET(request: Request) {
   const sessionId = new URL(request.url).searchParams.get("sessionId")?.trim();
+  const auth = await authorizeAdminApi(request);
+  if ("error" in auth) return loadPublicBoothDraw(sessionId);
+
   const [eventsResult, sessionsResult] = await Promise.all([
     auth.service.from("events").select("id, name, event_date").order("event_date", { ascending: false, nullsFirst: false }),
     auth.service
       .from("booth_draw_sessions")
-      .select("id, event_id, name, status, map_path, created_at, updated_at")
+      .select("id, event_id, name, status, map_path, starts_at, ends_at, venue, public_note, share_token, share_enabled, created_at, updated_at")
+      .eq("access_mode", "admin")
       .order("created_at", { ascending: false }),
   ]);
 
@@ -118,17 +154,146 @@ export async function GET(request: Request) {
   });
 }
 
-export async function POST(request: Request) {
-  const auth = await authorizeAdminApi(request, true);
-  if ("error" in auth) return jsonError(auth.error, auth.status);
+async function loadPublicBoothDraw(sessionId?: string) {
+  if (!sessionId) {
+    return NextResponse.json({ ok: true, events: [], sessions: [], role: "viewer", publicMode: true });
+  }
+  const service = createBoothServiceClient();
+  if (!service) return jsonError("Thiếu cấu hình Supabase server.", 500);
+  const { data: session, error: sessionError } = await service
+    .from("booth_draw_sessions")
+    .select("id, event_id, name, status, map_path, access_mode, expires_at, starts_at, ends_at, venue, public_note, share_token, share_enabled, created_at, updated_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (sessionError) return jsonError(databaseError(sessionError), 500);
+  if (!session || session.access_mode !== "public") return jsonError("Không tìm thấy phiên công khai.", 404);
+  if (!session.expires_at || new Date(session.expires_at).getTime() <= Date.now()) {
+    return jsonError("Phiên miễn phí đã hết hạn và đang chờ xoá.", 410);
+  }
 
+  const [pools, companies, booths, assignments, results, exchanges] = await Promise.all([
+    service.from("booth_pools").select("*").eq("session_id", sessionId).order("sort_order"),
+    service.from("booth_companies").select("*").eq("session_id", sessionId).order("draw_order"),
+    service.from("booth_zones").select("*").eq("session_id", sessionId).order("booth_code"),
+    service.from("booth_assignments").select("*").eq("session_id", sessionId),
+    service.from("booth_draw_results").select("*").eq("session_id", sessionId).order("drawn_at"),
+    service.from("booth_exchange_logs").select("*").eq("session_id", sessionId).order("created_at", { ascending: false }),
+  ]);
+  const firstError = [pools.error, companies.error, booths.error, assignments.error, results.error, exchanges.error].find(Boolean);
+  if (firstError) return jsonError(databaseError(firstError), 500);
+
+  let mapUrl: string | null = null;
+  if (session.map_path) {
+    const { data } = await service.storage.from("booth-maps").createSignedUrl(session.map_path, 60 * 60);
+    mapUrl = data?.signedUrl ?? null;
+  }
+  return NextResponse.json({
+    ok: true,
+    events: [],
+    sessions: [session],
+    role: "viewer",
+    publicMode: true,
+    current: {
+      session,
+      mapUrl,
+      pools: pools.data ?? [],
+      companies: companies.data ?? [],
+      booths: booths.data ?? [],
+      assignments: assignments.data ?? [],
+      results: results.data ?? [],
+      exchanges: exchanges.data ?? [],
+    },
+  });
+}
+
+async function createPublicSession(request: Request, payload: Record<string, unknown>) {
+  if (!checkPublicBoothRateLimit(request, "create-session", 5, 60 * 60 * 1000)) {
+    return jsonError("Bạn đã tạo quá nhiều phiên. Vui lòng thử lại sau.", 429);
+  }
+  const service = createBoothServiceClient();
+  if (!service) return jsonError("Thiếu cấu hình Supabase server.", 500);
+  const name = cleanText(payload.name) || "Bốc thăm gian hàng";
+  const passcode = cleanText(payload.passcode, 64);
+  if (passcode.length < 6) return jsonError("Passcode cần có ít nhất 6 ký tự.");
+
+  const seenPoolNames = new Set<string>();
+  const customPoolNames = Array.isArray(payload.poolNames)
+    ? payload.poolNames.map((value) => cleanText(value, 80)).filter((poolName) => {
+      const normalized = poolName.toLocaleLowerCase("vi");
+      if (!poolName || seenPoolNames.has(normalized)) return false;
+      seenPoolNames.add(normalized);
+      return true;
+    }).slice(0, 20)
+    : [];
+  if (customPoolNames.length === 0) return jsonError("Nhập ít nhất một pool.");
+
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: session, error } = await service
+    .from("booth_draw_sessions")
+    .insert({
+      event_id: null,
+      name,
+      access_mode: "public",
+      passcode_hash: hashBoothPasscode(passcode),
+      expires_at: expiresAt,
+      created_by: "public",
+    })
+    .select("id")
+    .single();
+  if (error || !session) return jsonError(databaseError(error), 500);
+
+  const usedCodes = new Set<string>();
+  const pools = customPoolNames.map((poolName, index) => ({
+    session_id: session.id,
+    code: poolCode(poolName, index, usedCodes),
+    name: poolName,
+    color: CUSTOM_POOL_COLORS[index % CUSTOM_POOL_COLORS.length],
+    sort_order: (index + 1) * 10,
+  }));
+  const { error: poolError } = await service.from("booth_pools").insert(pools);
+  if (poolError) {
+    await service.from("booth_draw_sessions").delete().eq("id", session.id);
+    return jsonError(databaseError(poolError), 500);
+  }
+  return NextResponse.json({ ok: true, id: session.id, expiresAt });
+}
+
+export async function POST(request: Request) {
   const payload = await request.json().catch(() => null) as Record<string, unknown> | null;
   const action = cleanText(payload?.action, 40);
   if (!payload || !action) return jsonError("Dữ liệu không hợp lệ.");
 
+  if (action === "create_public_session") return createPublicSession(request, payload);
+
+  const adminAuth = await authorizeAdminApi(request, true);
+  let auth: { email: string; service: SupabaseClient };
+  let publicWrite = false;
+  if ("error" in adminAuth) {
+    const sessionId = cleanText(payload.sessionId, 80);
+    const passcode = cleanText(payload.passcode, 64);
+    const service = createBoothServiceClient();
+    if (!service) return jsonError("Thiếu cấu hình Supabase server.", 500);
+    if (!sessionId || !passcode) return jsonError("Nhập passcode để lưu thay đổi.", 401);
+    const publicAccess = await authorizePublicBoothWrite(request, service, sessionId, passcode);
+    if ("error" in publicAccess) return jsonError(publicAccess.error, publicAccess.status);
+    auth = { email: "public-passcode", service };
+    publicWrite = true;
+  } else {
+    auth = adminAuth;
+  }
+
   if (action === "create_session") {
     const eventId = cleanText(payload.eventId, 80);
     const name = cleanText(payload.name) || "Bốc thăm gian hàng";
+    const seenPoolNames = new Set<string>();
+    const customPoolNames = Array.isArray(payload.poolNames)
+      ? payload.poolNames.map((value) => cleanText(value, 80)).filter((poolName) => {
+        const normalized = poolName.toLocaleLowerCase("vi");
+        if (!poolName || seenPoolNames.has(normalized)) return false;
+        seenPoolNames.add(normalized);
+        return true;
+      }).slice(0, 20)
+      : [];
     if (!eventId) return jsonError("Chọn sự kiện trước.");
 
     const { data: event } = await auth.service.from("events").select("id").eq("id", eventId).maybeSingle();
@@ -141,8 +306,17 @@ export async function POST(request: Request) {
       .single();
     if (error || !session) return jsonError(databaseError(error), 500);
 
+    const usedCodes = new Set<string>();
+    const pools = customPoolNames.length > 0
+      ? customPoolNames.map((poolName, index) => ({
+        code: poolCode(poolName, index, usedCodes),
+        name: poolName,
+        color: CUSTOM_POOL_COLORS[index % CUSTOM_POOL_COLORS.length],
+        sort_order: (index + 1) * 10,
+      }))
+      : DEFAULT_POOLS;
     const { error: poolError } = await auth.service.from("booth_pools").insert(
-      DEFAULT_POOLS.map((pool) => ({ ...pool, session_id: session.id })),
+      pools.map((pool) => ({ ...pool, session_id: session.id })),
     );
     if (poolError) {
       await auth.service.from("booth_draw_sessions").delete().eq("id", session.id);
@@ -156,7 +330,7 @@ export async function POST(request: Request) {
 
   const { data: currentSession, error: currentSessionError } = await auth.service
     .from("booth_draw_sessions")
-    .select("id, status")
+    .select("id, status, starts_at, ends_at")
     .eq("id", sessionId)
     .maybeSingle();
   if (currentSessionError) return jsonError(databaseError(currentSessionError), 500);
@@ -169,6 +343,24 @@ export async function POST(request: Request) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof payload.name === "string") patch.name = cleanText(payload.name) || "Bốc thăm gian hàng";
     if (["draft", "active", "exchange", "finalized"].includes(String(payload.status))) patch.status = payload.status;
+    const startsAt = cleanDateTime(payload.startsAt);
+    const endsAt = cleanDateTime(payload.endsAt);
+    if (payload.startsAt !== undefined) {
+      if (startsAt === undefined) return jsonError("Thời gian bắt đầu không hợp lệ.");
+      patch.starts_at = startsAt;
+    }
+    if (payload.endsAt !== undefined) {
+      if (endsAt === undefined) return jsonError("Thời gian kết thúc không hợp lệ.");
+      patch.ends_at = endsAt;
+    }
+    const nextStart = payload.startsAt !== undefined ? startsAt : currentSession.starts_at;
+    const nextEnd = payload.endsAt !== undefined ? endsAt : currentSession.ends_at;
+    if (nextStart && nextEnd && new Date(nextEnd).getTime() < new Date(nextStart).getTime()) {
+      return jsonError("Thời gian kết thúc phải sau thời gian bắt đầu.");
+    }
+    if (typeof payload.venue === "string") patch.venue = cleanText(payload.venue, 240) || null;
+    if (typeof payload.publicNote === "string") patch.public_note = cleanText(payload.publicNote, 2000) || null;
+    if (typeof payload.shareEnabled === "boolean") patch.share_enabled = payload.shareEnabled;
     const { error } = await auth.service.from("booth_draw_sessions").update(patch).eq("id", sessionId);
     if (error) return jsonError(databaseError(error), 500);
     return NextResponse.json({ ok: true });
@@ -184,8 +376,18 @@ export async function POST(request: Request) {
 
   if (action === "create_pool") {
     const name = cleanText(payload.name, 80);
-    const code = (cleanText(payload.code, 30) || name).toUpperCase().replace(/[^A-Z0-9_-]/g, "_");
-    if (!name || !code) return jsonError("Nhập tên pool.");
+    if (!name) return jsonError("Nhập tên pool.");
+    const { data: existingPools, error: existingPoolError } = await auth.service
+      .from("booth_pools")
+      .select("code, name")
+      .eq("session_id", sessionId);
+    if (existingPoolError) return jsonError(databaseError(existingPoolError), 500);
+    if (publicWrite && (existingPools?.length ?? 0) >= 20) return jsonError("Phiên miễn phí hỗ trợ tối đa 20 pool.");
+    if ((existingPools ?? []).some((pool) => pool.name.trim().toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
+      return jsonError("Tên pool này đã tồn tại.");
+    }
+    const usedCodes = new Set((existingPools ?? []).map((pool) => pool.code));
+    const code = poolCode(cleanText(payload.code, 30) || name, existingPools?.length ?? 0, usedCodes);
     const { data, error } = await auth.service.from("booth_pools").insert({
       session_id: sessionId,
       name,
@@ -201,8 +403,19 @@ export async function POST(request: Request) {
     const poolId = cleanText(payload.poolId, 80);
     const name = cleanText(payload.name, 80);
     if (!poolId || !name) return jsonError("Thiếu pool hoặc tên pool.");
+    const { data: otherPools, error: otherPoolError } = await auth.service
+      .from("booth_pools")
+      .select("code, name")
+      .eq("session_id", sessionId)
+      .neq("id", poolId);
+    if (otherPoolError) return jsonError(databaseError(otherPoolError), 500);
+    if ((otherPools ?? []).some((pool) => pool.name.trim().toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"))) {
+      return jsonError("Tên pool này đã tồn tại.");
+    }
+    const usedCodes = new Set((otherPools ?? []).map((pool) => pool.code));
     const { error } = await auth.service.from("booth_pools").update({
       name,
+      code: poolCode(name, otherPools?.length ?? 0, usedCodes),
       color: cleanColor(payload.color),
       sort_order: Math.round(clampNumber(payload.sortOrder, 0, 9999, 100)),
     }).eq("id", poolId).eq("session_id", sessionId);
@@ -235,6 +448,7 @@ export async function POST(request: Request) {
     const existingNames = new Set((existing ?? []).map((row) => row.name.trim().toLocaleLowerCase("vi")));
     const fresh = names.filter((name) => !existingNames.has(name.toLocaleLowerCase("vi")));
     const { count } = await auth.service.from("booth_companies").select("id", { count: "exact", head: true }).eq("session_id", sessionId);
+    if (publicWrite && (count ?? 0) + fresh.length > 500) return jsonError("Phiên miễn phí hỗ trợ tối đa 500 công ty.");
     if (fresh.length > 0) {
       const { error } = await auth.service.from("booth_companies").insert(
         fresh.map((name, index) => ({ session_id: sessionId, pool_id: poolId, name, draw_order: (count ?? 0) + index })),
@@ -263,6 +477,7 @@ export async function POST(request: Request) {
     const existingCodes = new Set((existing ?? []).map((row) => row.booth_code.toUpperCase()));
     const fresh = codes.filter((code) => !existingCodes.has(code));
     const start = existing?.length ?? 0;
+    if (publicWrite && start + fresh.length > 500) return jsonError("Phiên miễn phí hỗ trợ tối đa 500 gian hàng.");
     if (fresh.length > 0) {
       const { error } = await auth.service.from("booth_zones").insert(
         fresh.map((boothCode, index) => {
@@ -297,6 +512,20 @@ export async function POST(request: Request) {
     const { error } = await auth.service.from("booth_zones").update(patch).eq("id", boothId).eq("session_id", sessionId);
     if (error) return jsonError(databaseError(error), 500);
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "apply_booth_style_to_pool") {
+    const poolId = cleanText(payload.poolId, 80);
+    if (!poolId) return jsonError("Thiếu pool cần áp dụng.");
+    const { data, error } = await auth.service.rpc("apply_booth_style_to_pool", {
+      p_session_id: sessionId,
+      p_pool_id: poolId,
+      p_width: clampNumber(payload.width, 1, 100, 10),
+      p_height: clampNumber(payload.height, 1, 100, 8),
+      p_rotation: clampNumber(payload.rotation, -180, 180, 0),
+    });
+    if (error) return jsonError(databaseError(error), 409);
+    return NextResponse.json({ ok: true, updated: data ?? 0 });
   }
 
   if (action === "delete_booth") {
