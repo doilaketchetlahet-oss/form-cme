@@ -8,5 +8,10 @@
       "path": "/api/cron/email-campaigns",
       "schedule": "0 2 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "src/app/api/flap/**": {
+      "regions": ["hnd1"]
+    }
+  }
 }
