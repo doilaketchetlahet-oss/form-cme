@@ -24,6 +24,15 @@ const EVENT_COLUMNS = "id, code, title, subtitle, status, moderation, settings, 
 const WISH_COLUMNS =
   "id, event_id, kind, symbol, content, drawing, color, nickname, edge, status, created_at";
 const MAX_WISHES = 1000;
+
+/** Mẫu lời chúc dùng cho nút "Gửi thử" để xem hiệu ứng màn LED. */
+const DEMO_WISHES = [
+  { symbol: "❤️", content: "Chúc mừng hạnh phúc trăm năm!", color: "#fb7185", nickname: "Ban tổ chức" },
+  { symbol: "⭐", content: "Mong mọi điều tốt đẹp sẽ đến!", color: "#facc15", nickname: "Một người bạn" },
+  { symbol: "🌸", content: "Chúc sự kiện thành công rực rỡ.", color: "#a855f7", nickname: "Khán giả" },
+  { symbol: "🍀", content: "Vạn sự như ý, an khang thịnh vượng.", color: "#22c55e", nickname: "Đồng nghiệp" },
+  { symbol: "🕊️", content: "Yêu thương và bình an.", color: "#38bdf8", nickname: "Gia đình" },
+];
 /**
  * Mỗi IP chỉ gửi được 1 lời chúc trong khoảng này. Để ngắn vì một tablet dùng
  * chung cho nhiều khách liên tiếp; chống spam nhờ kiểm duyệt + giới hạn độ dài.
@@ -276,6 +285,26 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       await admin.from("wishes").delete().eq("event_id", event.id);
       await broadcastWish(event.code, { type: "clear" });
       return NextResponse.json({ ok: true });
+    }
+
+    case "demo": {
+      // Lời chúc thử: chỉ phát lên kênh hiển thị, KHÔNG ghi vào sổ cái.
+      const sample = DEMO_WISHES[Math.floor(Math.random() * DEMO_WISHES.length)]!;
+      const wish: Wish = {
+        id: crypto.randomUUID(),
+        event_id: event.id,
+        kind: sample.content ? "text" : "symbol",
+        symbol: sample.symbol,
+        content: sample.content,
+        drawing: null,
+        color: sample.color,
+        nickname: sample.nickname,
+        edge: event.settings.edge,
+        status: "approved",
+        created_at: new Date().toISOString(),
+      };
+      await broadcastWish(event.code, { type: "wish", wish });
+      return NextResponse.json({ ok: true, wish });
     }
 
     case "spotlight": {

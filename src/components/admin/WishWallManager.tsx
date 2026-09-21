@@ -546,6 +546,13 @@ export function WishWallManager() {
                   {status === "paused" ? "Mở lại nhận lời chúc" : "Tạm dừng nhận"}
                 </button>
                 <button
+                  onClick={() => void control({ action: "demo" })}
+                  disabled={busy}
+                  className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                >
+                  <Sparkles size={15} /> Gửi lời chúc thử
+                </button>
+                <button
                   onClick={() => void control({ action: "absorb-all" })}
                   disabled={busy}
                   className="flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"

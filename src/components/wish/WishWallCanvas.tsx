@@ -237,6 +237,15 @@ function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
 
+/** Ánh xạ điểm hình ghép (0..1) vào giữa màn hình theo một ô vuông vừa phải. */
+function shapeToScreen(point: ShapePoint, w: number, h: number) {
+  const size = Math.min(w, h) * 0.74;
+  return {
+    x: (w - size) / 2 + point.x * size,
+    y: (h - size) / 2 + point.y * size,
+  };
+}
+
 export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>(function WishWallCanvas(
   { className },
   ref,
@@ -343,13 +352,14 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
 
   const beginAbsorb = useCallback((item: Item) => {
     const points = shapeRef.current;
+    const { w, h } = sizeRef.current;
+    item.phase = "absorbing";
     if (!points.length) {
-      item.phase = "absorbing";
-      item.target = { x: sizeRef.current.w * 0.5, y: sizeRef.current.h * 0.5 };
+      item.target = { x: w * 0.5, y: h * 0.5 };
       return;
     }
-    item.phase = "absorbing";
-    item.target = points[assignRef.current % points.length] ?? points[0]!;
+    const point = points[assignRef.current % points.length] ?? points[0]!;
+    item.target = shapeToScreen(point, w, h);
     assignRef.current += 1;
   }, []);
 
@@ -571,7 +581,8 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
         completionRef.current = now + 10_000;
         const event2 = eventRef.current;
         const accent2 = event2 ? WISH_THEMES[event2.settings.theme].accent : "#facc15";
-        const point = shapeRef.current[0] ?? { x: w * 0.5, y: h * 0.5 };
+        const first = shapeRef.current[0];
+        const point = first ? shapeToScreen(first, w, h) : { x: w * 0.5, y: h * 0.5 };
         spawnSparks(point.x, point.y, accent2, 90);
         showMessage(
           event2 && event2.settings.shape === "text" && event2.settings.shapeText
@@ -591,43 +602,54 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
       radius: number,
       accent: string,
       alpha: number,
+      now: number,
     ) => {
       const img = imagesRef.current.shield;
       ctx.save();
       ctx.globalAlpha = alpha;
       if (img) {
-        const size = radius * 2.2;
+        const size = radius * 2.4;
         ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
         ctx.restore();
         return;
       }
-      const glow = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.6);
-      glow.addColorStop(0, `${accent}88`);
-      glow.addColorStop(0.5, `${accent}22`);
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.8);
+      glow.addColorStop(0, `${accent}cc`);
+      glow.addColorStop(0.45, `${accent}44`);
       glow.addColorStop(1, "transparent");
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(x, y, radius * 1.6, 0, Math.PI * 2);
+      ctx.arc(x, y, radius * 1.8, 0, Math.PI * 2);
       ctx.fill();
 
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(now / 6000);
       ctx.strokeStyle = accent;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 18;
       ctx.beginPath();
       for (let i = 0; i <= 6; i += 1) {
         const angle = (Math.PI / 3) * i - Math.PI / 2;
-        const px = x + Math.cos(angle) * radius;
-        const py = y + Math.sin(angle) * radius;
+        const px = Math.cos(angle) * radius;
+        const py = Math.sin(angle) * radius;
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.stroke();
 
-      ctx.strokeStyle = `${accent}66`;
+      ctx.rotate(-now / 3500);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = `${accent}88`;
       ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 10]);
       ctx.beginPath();
-      ctx.arc(x, y, radius * 0.62, 0, Math.PI * 2);
+      ctx.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
       ctx.restore();
     };
 
@@ -659,8 +681,8 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
         const edge = event.settings.edge;
         const x = edge === "left" ? w * 0.11 : edge === "right" ? w * 0.89 : w * 0.5;
         const y = edge === "center" ? h * 0.13 : h * 0.5;
-        const pulse = 0.25 + 0.12 * Math.sin(now / 700);
-        drawShield(x, y, Math.min(w, h) * 0.11, accent, pulse);
+        const pulse = 0.5 + 0.2 * Math.sin(now / 700);
+        drawShield(x, y, Math.min(w, h) * 0.14, accent, pulse, now);
       }
 
       // Hình ghép tập thể: nền mờ + ảnh admin tải lên.
@@ -683,13 +705,30 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
         ctx.fillText(event.settings.shapeText, w / 2, h / 2);
         ctx.restore();
       } else if (points.length) {
+        // Viền hình ghép tập thể — luôn nhìn thấy để khách biết đang cùng dệt hình gì.
         ctx.save();
-        ctx.globalAlpha = 0.12;
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = accent;
+        ctx.shadowBlur = 22;
+        ctx.beginPath();
+        points.forEach((point, index) => {
+          const screen = shapeToScreen(point, w, h);
+          if (index === 0) ctx.moveTo(screen.x, screen.y);
+          else ctx.lineTo(screen.x, screen.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.45;
         ctx.fillStyle = accent;
-        const radius = Math.min(w, h) * 0.004 + 1.5;
+        const radius = Math.min(w, h) * 0.005 + 1.6;
         for (const point of points) {
+          const screen = shapeToScreen(point, w, h);
           ctx.beginPath();
-          ctx.arc(point.x * w, point.y * h, radius, 0, Math.PI * 2);
+          ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.restore();
