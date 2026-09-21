@@ -20,6 +20,8 @@ const nextConfig: NextConfig = {
     "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
     "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
     "/api/cron/email-campaigns": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
+    // Static EventPlay bundle served by the auth-gated studio route.
+    "/studio/[[...slug]]": ["./studio/**"],
   },
 
   // Experimental: optimize package imports (tree-shake heavy libs)

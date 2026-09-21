@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Prebuilt/vendor bundles served as static files (EventPlay studio, pdf.js...).
     "public/**",
+    // EventPlay studio static export (served by the auth-gated route handler).
+    "studio/**",
     // Standalone Node scripts (CommonJS by design).
     "scripts/**",
   ]),

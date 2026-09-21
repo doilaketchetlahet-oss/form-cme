@@ -7,6 +7,7 @@ import { Lock, Play, LogOut } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { signOut, useAuth } from "@/hooks/useAuth";
 import { CATEGORY_LABELS, GAME_MODULES } from "@/lib/game/catalog";
+import { GameSessionCookie } from "@/components/game/GameSessionCookie";
 
 export default function GamesPage() {
   const router = useRouter();
@@ -50,6 +51,7 @@ export default function GamesPage() {
 
   return (
     <main className="min-h-dvh px-4 py-8">
+      <GameSessionCookie />
       <div className="mx-auto w-full max-w-6xl">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
