@@ -30,6 +30,7 @@ export default function FlapPlayerPage() {
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState("");
+  const [sessionLost, setSessionLost] = useState("");
   const [snapshot, setSnapshot] = useState<FlapRoomSnapshot | null>(null);
   const [nickname, setNickname] = useState("");
   const [join, setJoin] = useState<JoinResult | null>(null);
@@ -166,6 +167,18 @@ export default function FlapPlayerPage() {
           scoreRef.current = json.score;
           setMyScore(json.score);
         }
+      } else if (res.status === 401) {
+        // Phiên không còn hợp lệ (phòng reset): bỏ phiên cũ để quét lại.
+        counterRef.current?.stop();
+        counterRef.current = null;
+        joinRef.current = null;
+        setJoin(null);
+        setMyScore(0);
+        setShakes(0);
+        pendingRef.current = 0;
+        lastSentRef.current = 0;
+        setSessionLost("Phiên chơi đã kết thúc — chọn đội để vào lượt mới.");
+        setPhase("picker");
       } else if (res.status >= 500) {
         // Chỉ retry lỗi máy chủ. Không giữ điểm khi lượt đã dừng/đổi vòng,
         // nếu không người chơi có thể "để dành" điểm rồi gửi ở lượt sau.
@@ -289,6 +302,9 @@ export default function FlapPlayerPage() {
           <p className="text-xs text-amber-600">MC đã khoá đội — chọn đúng đội của bạn.</p>
         )}
         {error && <p className="text-sm text-red-600">{error}</p>}
+        {sessionLost && (
+          <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">{sessionLost}</p>
+        )}
         <input
           value={nickname}
           onChange={(e) => setNickname(e.target.value)}

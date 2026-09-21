@@ -181,3 +181,15 @@ export async function loadPlayers(admin: SupabaseClient, roomId: string): Promis
     .eq("room_id", roomId);
   return (data ?? []) as FlapPlayer[];
 }
+
+/** Chỉ lấy các cột cần cho bảng xếp hạng — nhẹ hơn loadPlayers khi gửi điểm. */
+export async function loadScoreRows(
+  admin: SupabaseClient,
+  roomId: string,
+): Promise<Pick<FlapPlayer, "team_id" | "score" | "active">[]> {
+  const { data } = await admin
+    .from("flap_players")
+    .select("team_id, score, active")
+    .eq("room_id", roomId);
+  return (data ?? []) as Pick<FlapPlayer, "team_id" | "score" | "active">[];
+}

@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Settings2,
   Square,
+  Stethoscope,
   Trash2,
   Users,
 } from "lucide-react";
@@ -154,8 +155,38 @@ export function FlapRaceManager() {
     [authHeaders, loadRoom, room],
   );
 
-  const standings = snapshot?.standings ?? [];
-  const leader = standings[0];
+  /** Kiểm tra bảng/RPC đã được cập nhật chưa để không phải dò log khi hỏng. */
+  const runHealthCheck = useCallback(async () => {
+    if (!room) return;
+    setBusy(true);
+    const toastId = toast.loading("Đang kiểm tra hệ thống…");
+    try {
+      const res = await fetch(`/api/flap/${encodeURIComponent(room.code)}/health`, {
+        headers: await authHeaders(),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: boolean; checks?: { name: string; ok: boolean; detail?: string }[] }
+        | null;
+      if (!res.ok || !body?.checks) {
+        toast.error("Không kiểm tra được hệ thống.", { id: toastId });
+        return;
+      }
+      const failed = body.checks.filter((c) => !c.ok);
+      if (failed.length === 0) {
+        toast.success("Hệ thống sẵn sàng.", { id: toastId });
+        return;
+      }
+      toast.error(
+        `Cần chạy lại supabase/flap-race.sql: ${failed.map((f) => f.name).join(", ")}`,
+        { id: toastId, duration: 12000 },
+      );
+      for (const f of failed) console.warn("flap health:", f.name, f.detail);
+    } finally {
+      setBusy(false);
+    }
+  }, [authHeaders, room]);
+
+  const standings = snapshot?.standings ?? [];  const leader = standings[0];
 
   const joinUrl = useMemo(() => (room ? buildPublicUrl(`/flap/${room.code}`) : ""), [room]);
   const boardUrl = useMemo(() => (room ? buildPublicUrl(`/flap/${room.code}/board`) : ""), [room]);
@@ -501,6 +532,13 @@ export function FlapRaceManager() {
                   className="flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
                 >
                   <RotateCcw size={15} /> Reset phòng
+                </button>
+                <button
+                  onClick={() => void runHealthCheck()}
+                  disabled={busy}
+                  className="flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                >
+                  <Stethoscope size={15} /> Kiểm tra hệ thống
                 </button>
 
                 <span className="ml-auto flex items-center gap-2 text-xs text-slate-500">

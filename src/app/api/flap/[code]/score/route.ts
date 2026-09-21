@@ -4,7 +4,7 @@ import {
   buildStandings,
   findRoomByCode,
   hashToken,
-  loadPlayers,
+  loadScoreRows,
   MAX_SCORE_PER_BATCH,
   MAX_SCORE_PER_SECOND,
   MAX_TOTAL_SCORE,
@@ -30,25 +30,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!admin) return NextResponse.json({ error: "unavailable" }, { status: 503 });
 
   const { code } = await context.params;
-  let room = await findRoomByCode(admin, code);
-  if (!room) return NextResponse.json({ error: "not_found" }, { status: 404 });
-
-  const startedAt = room.started_at ? Date.parse(room.started_at) : Number.NaN;
-  if (room.status === "running" && Number.isFinite(startedAt) && Date.now() >= startedAt + room.duration_sec * 1000) {
-    const { error } = await admin.rpc("flap_finish_round", { p_room_id: room.id, p_reset: false });
-    if (!error) {
-      const refreshed = await findRoomByCode(admin, room.code);
-      if (refreshed) {
-        room = refreshed;
-        await broadcastFlap(room.code, {
-          type: "state",
-          status: room.status,
-          startedAt: room.started_at,
-          round: room.round,
-        });
-      }
-    }
-  }
 
   const body = (await request.json().catch(() => null)) as
     | { playerId?: unknown; token?: unknown; delta?: unknown }
@@ -62,26 +43,28 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "nothing_to_add" }, { status: 400 });
   }
 
-  const { data: player } = await admin
-    .from("flap_players")
-    .select("id, room_id, team_id, score, active, token_hash, last_seen_at")
-    .eq("id", playerId)
-    .eq("room_id", room.id)
-    .eq("token_hash", hashToken(token))
-    .maybeSingle();
+  const room = await findRoomByCode(admin, code);
+  if (!room) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  if (!player) return NextResponse.json({ error: "invalid_session" }, { status: 401 });
-  if (!player.active) return NextResponse.json({ error: "inactive" }, { status: 403 });
+  // Hết giờ: chốt vòng ở luồng nền để không làm chậm phản hồi.
+  const startedAt = room.started_at ? Date.parse(room.started_at) : Number.NaN;
+  if (room.status === "running" && Number.isFinite(startedAt) && Date.now() >= startedAt + room.duration_sec * 1000) {
+    void admin
+      .rpc("flap_finish_round", { p_room_id: room.id, p_reset: false })
+      .then(() => broadcastFlap(room.code, { type: "reset" }));
+    return NextResponse.json({ error: "not_running", status: "finished" }, { status: 409 });
+  }
 
   if (room.status !== "running") {
     // Không nhận điểm ngoài lượt chơi; trả trạng thái để client tự tạm dừng.
     return NextResponse.json({ error: "not_running", status: room.status }, { status: 409 });
   }
 
+  const tokenHash = hashToken(token);
   const { data, error } = await admin.rpc("flap_add_score", {
     p_player_id: playerId,
     p_room_id: room.id,
-    p_token_hash: hashToken(token),
+    p_token_hash: tokenHash,
     p_delta: Math.floor(deltaRaw),
     p_max_delta: MAX_SCORE_PER_BATCH,
     p_max_total: MAX_TOTAL_SCORE,
@@ -91,16 +74,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (error) return NextResponse.json({ error: "add_failed", detail: error.message }, { status: 500 });
 
   const result = Array.isArray(data) ? data[0] : null;
-  const newScore = typeof result?.score === "number" ? result.score : player.score;
-  const acceptedDelta = typeof result?.accepted_delta === "number" ? result.accepted_delta : 0;
+  // RPC trả rỗng khi token sai/hết hạn hoặc đã hết giờ.
+  if (!result) return NextResponse.json({ error: "invalid_session" }, { status: 401 });
+
+  const newScore = typeof result.score === "number" ? result.score : 0;
+  const acceptedDelta = typeof result.accepted_delta === "number" ? result.accepted_delta : 0;
+
+  // Bị chặn bởi trần tốc độ: trả ngay, khỏi đọc bảng xếp hạng.
   if (acceptedDelta <= 0) {
     return NextResponse.json({ ok: true, score: newScore, throttled: true });
   }
 
-  const players = await loadPlayers(admin, room.id);
-  const standings = buildStandings(room.teams, players, room.score_mode, room.track_length);
+  // Chỉ đọc cột cần cho xếp hạng (nhẹ hơn loadPlayers) và phát broadcast ở
+  // luồng nền: độ trễ phản hồi quan trọng hơn việc LED nhận hình sớm vài ms.
+  const scoreRows = await loadScoreRows(admin, room.id);
+  const standings = buildStandings(room.teams, scoreRows, room.score_mode, room.track_length);
 
-  await broadcastFlap(room.code, { type: "standings", standings });
+  void broadcastFlap(room.code, { type: "standings", standings });
 
   return NextResponse.json({
     ok: true,
