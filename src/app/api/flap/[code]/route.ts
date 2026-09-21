@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildStandings,
   clampRoomSettings,
@@ -16,6 +17,48 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ code: string }> };
+
+type FlapStateEvent = {
+  type: "state";
+  status: FlapRoom["status"];
+  startedAt?: string | null;
+  round?: number;
+};
+
+/** Broadcast chỉ giúp màn LED cập nhật ngay; API polling vẫn là nguồn dữ liệu chuẩn. */
+async function broadcastRoomEvent(admin: SupabaseClient, roomCode: string, event: FlapStateEvent) {
+  const channel = admin.channel(`flap:${roomCode}`);
+  try {
+    await channel.send({ type: "broadcast", event: "flap", payload: event });
+  } catch {
+    // Mất Broadcast không được làm hỏng thao tác của MC.
+  } finally {
+    void admin.removeChannel(channel);
+  }
+}
+
+/** Chốt vòng khi đồng hồ hết giờ, kể cả khi MC không mở trang điều khiển. */
+async function finishExpiredRoom(admin: SupabaseClient, room: FlapRoom): Promise<FlapRoom> {
+  const startedAt = room.started_at ? Date.parse(room.started_at) : Number.NaN;
+  const expired = room.status === "running" && Number.isFinite(startedAt) && Date.now() >= startedAt + room.duration_sec * 1000;
+  if (!expired) return room;
+
+  const { error } = await admin.rpc("flap_finish_round", {
+    p_room_id: room.id,
+    p_reset: false,
+  });
+  if (error) return room;
+
+  const refreshed = await findRoomByCode(admin, room.code);
+  if (!refreshed) return room;
+  await broadcastRoomEvent(admin, refreshed.code, {
+    type: "state",
+    status: refreshed.status,
+    startedAt: refreshed.started_at,
+    round: refreshed.round,
+  });
+  return refreshed;
+}
 
 /** Admin/Owner token check for writing actions. */
 async function isAdminRequest(request: NextRequest): Promise<boolean> {
@@ -45,8 +88,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   if (!admin) return NextResponse.json({ error: "unavailable" }, { status: 503 });
 
   const { code } = await context.params;
-  const room = await findRoomByCode(admin, code);
-  if (!room) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const foundRoom = await findRoomByCode(admin, code);
+  if (!foundRoom) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const room = await finishExpiredRoom(admin, foundRoom);
 
   const players = await loadPlayers(admin, room.id);
   const standings = buildStandings(room.teams, players, room.score_mode, room.track_length);
@@ -157,6 +201,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
   switch (action) {
     case "start":
+      if (room.status === "finished") {
+        return NextResponse.json({ error: "reset_required" }, { status: 409 });
+      }
       patch.status = "running";
       patch.started_at = new Date().toISOString();
       break;
@@ -194,14 +241,27 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       patch.status = "lobby";
       patch.started_at = null;
       patch.ended_at = null;
+      patch.round = room.round + 1;
       break;
     }
     case "finish": {
       const { data, error } = await admin.rpc("flap_finish_round", {
         p_room_id: room.id,
-        p_reset: body?.reset !== false,
+        // Kết thúc phải giữ bảng điểm/winner trên LED. MC chủ động bấm Reset
+        // khi muốn xoá người chơi và mở vòng mới.
+        p_reset: body?.reset === true,
       });
       if (error) return NextResponse.json({ error: "finish_failed", detail: error.message }, { status: 500 });
+      if (!data) return NextResponse.json({ error: "round_not_running" }, { status: 409 });
+      const refreshed = await findRoomByCode(admin, room.code);
+      if (refreshed) {
+        await broadcastRoomEvent(admin, refreshed.code, {
+          type: "state",
+          status: refreshed.status,
+          startedAt: refreshed.started_at,
+          round: refreshed.round,
+        });
+      }
       return NextResponse.json({ ok: true, summary: data });
     }
     default:
@@ -216,5 +276,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     .single();
 
   if (error) return NextResponse.json({ error: "update_failed", detail: error.message }, { status: 500 });
+  await broadcastRoomEvent(admin, room.code, {
+    type: "state",
+    status: (data as FlapRoom).status,
+    startedAt: (data as FlapRoom).started_at,
+    round: (data as FlapRoom).round,
+  });
   return NextResponse.json({ room: data as FlapRoom });
 }

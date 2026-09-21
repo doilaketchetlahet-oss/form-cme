@@ -157,10 +157,10 @@ export function buildStandings(
     };
   });
 
-  const peak = Math.max(1, ...standings.map((s) => s.rankValue));
   for (const row of standings) {
-    // Tiến độ theo đội dẫn đầu (để đội về đích đúng khi track_length bị vượt).
-    row.progress = Math.min(1, row.rankValue / Math.max(trackLength, peak));
+    // Luôn đo theo vạch đích đã cấu hình. Nếu dùng điểm của đội dẫn đầu làm
+    // mẫu số, các đội phía sau bị "tụt" trên màn LED ngay khi đội đầu vượt đích.
+    row.progress = Math.min(1, row.rankValue / Math.max(1, trackLength));
   }
 
   return standings.sort((a, b) => b.rankValue - a.rankValue);

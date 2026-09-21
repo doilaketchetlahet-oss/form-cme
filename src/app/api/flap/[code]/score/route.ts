@@ -1,11 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
-import { buildStandings, findRoomByCode, hashToken, loadPlayers, MAX_SCORE_PER_BATCH, MAX_TOTAL_SCORE } from "@/lib/flap/race";
+import {
+  buildStandings,
+  findRoomByCode,
+  hashToken,
+  loadPlayers,
+  MAX_SCORE_PER_BATCH,
+  MAX_SCORE_PER_SECOND,
+  MAX_TOTAL_SCORE,
+} from "@/lib/flap/race";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ code: string }> };
+
+async function broadcastState(
+  admin: NonNullable<ReturnType<typeof createSupabaseAdmin>>,
+  room: { code: string; status: string; started_at: string | null; round: number },
+) {
+  const channel = admin.channel(`flap:${room.code}`);
+  try {
+    await channel.send({
+      type: "broadcast",
+      event: "flap",
+      payload: { type: "state", status: room.status, startedAt: room.started_at, round: room.round },
+    });
+  } catch {
+    // Polling 2 giây của LED/điện thoại vẫn sẽ đồng bộ lại trạng thái.
+  } finally {
+    void admin.removeChannel(channel);
+  }
+}
 
 /**
  * POST /api/flap/[code]/score — trọng tài cộng điểm.
@@ -14,15 +40,27 @@ type RouteContext = { params: Promise<{ code: string }> };
  * - Bắt buộc token phiên khớp hash đã lưu.
  * - Giới hạn điểm mỗi lần gửi (MAX_SCORE_PER_BATCH).
  * - Giới hạn tổng tốc độ theo thời gian thực (MAX_SCORE_PER_SECOND),
- *   server tự tính từ lần gửi trước, client không thể khai khống.
+ *   được thực hiện atomically trong Postgres để request song song không vượt trần.
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   const admin = createSupabaseAdmin();
   if (!admin) return NextResponse.json({ error: "unavailable" }, { status: 503 });
 
   const { code } = await context.params;
-  const room = await findRoomByCode(admin, code);
+  let room = await findRoomByCode(admin, code);
   if (!room) return NextResponse.json({ error: "not_found" }, { status: 404 });
+
+  const startedAt = room.started_at ? Date.parse(room.started_at) : Number.NaN;
+  if (room.status === "running" && Number.isFinite(startedAt) && Date.now() >= startedAt + room.duration_sec * 1000) {
+    const { error } = await admin.rpc("flap_finish_round", { p_room_id: room.id, p_reset: false });
+    if (!error) {
+      const refreshed = await findRoomByCode(admin, room.code);
+      if (refreshed) {
+        room = refreshed;
+        await broadcastState(admin, room);
+      }
+    }
+  }
 
   const body = (await request.json().catch(() => null)) as
     | { playerId?: unknown; token?: unknown; delta?: unknown }
@@ -52,23 +90,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "not_running", status: room.status }, { status: 409 });
   }
 
-  // Trần theo thời gian: tính từ lần gửi trước để client không thể bù dồn.
-  const elapsed = Math.max(0, Date.now() - Date.parse(player.last_seen_at as string)) / 1000;
-  const allowance = Math.floor(elapsed * 12) + 4;
-  const delta = Math.max(0, Math.min(Math.floor(deltaRaw), MAX_SCORE_PER_BATCH, allowance));
-  if (delta === 0) {
-    return NextResponse.json({ ok: true, score: player.score, throttled: true });
-  }
-
-  const { data: newScore, error } = await admin.rpc("flap_add_score", {
+  const { data, error } = await admin.rpc("flap_add_score", {
     p_player_id: playerId,
+    p_room_id: room.id,
     p_token_hash: hashToken(token),
-    p_delta: delta,
+    p_delta: Math.floor(deltaRaw),
     p_max_delta: MAX_SCORE_PER_BATCH,
     p_max_total: MAX_TOTAL_SCORE,
+    p_max_per_second: MAX_SCORE_PER_SECOND,
   });
 
   if (error) return NextResponse.json({ error: "add_failed", detail: error.message }, { status: 500 });
+
+  const result = Array.isArray(data) ? data[0] : null;
+  const newScore = typeof result?.score === "number" ? result.score : player.score;
+  const acceptedDelta = typeof result?.accepted_delta === "number" ? result.accepted_delta : 0;
+  if (acceptedDelta <= 0) {
+    return NextResponse.json({ ok: true, score: newScore, throttled: true });
+  }
 
   const players = await loadPlayers(admin, room.id);
   const standings = buildStandings(room.teams, players, room.score_mode, room.track_length);
@@ -88,7 +127,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   return NextResponse.json({
     ok: true,
-    score: newScore ?? player.score,
+    score: newScore,
     standings,
   });
 }

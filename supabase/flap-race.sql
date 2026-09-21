@@ -44,6 +44,8 @@ create table if not exists public.flap_players (
   score         integer not null default 0,           -- điểm đã chốt trong sổ cái
   sensor_ok     boolean not null default true,        -- false = chơi bằng chạm dự phòng
   active        boolean not null default true,
+  rate_tokens   numeric not null default 12,          -- token bucket chống flood request
+  rate_refilled_at timestamptz not null default now(),
   last_seen_at  timestamptz not null default now(),
   created_at    timestamptz not null default now()
 );
@@ -54,6 +56,11 @@ create index if not exists idx_flap_players_token on public.flap_players(token_h
 
 -- Cho phép tra cứu nhanh theo token mà không lộ danh sách.
 create unique index if not exists idx_flap_players_room_token on public.flap_players(room_id, token_hash);
+
+-- Tương thích phòng chơi đã tạo từ phiên bản đầu tiên của game.
+alter table public.flap_players
+  add column if not exists rate_tokens numeric not null default 12,
+  add column if not exists rate_refilled_at timestamptz not null default now();
 
 -- ------------------------------------------------------------
 -- BẢNG: flap_rounds (lịch sử từng lượt chơi)
@@ -97,38 +104,88 @@ create policy "flap rounds admin read" on public.flap_rounds
 
 -- ------------------------------------------------------------
 -- RPC: cộng điểm có trần (rate limit) — chống gian lận.
---   Trả về tổng điểm mới của người chơi, hoặc null nếu bị từ chối.
+--   Khoá hàng người chơi và dùng token bucket ngay trong transaction, nên nhiều
+--   request song song cũng không thể cộng vượt tốc độ quy định.
 -- ------------------------------------------------------------
+drop function if exists public.flap_add_score(uuid, text, integer, integer, integer);
+drop function if exists public.flap_add_score(uuid, text, integer, integer, integer, integer);
+
 create or replace function public.flap_add_score(
   p_player_id  uuid,
+  p_room_id    uuid,
   p_token_hash text,
   p_delta      integer,
   p_max_delta  integer default 40,
-  p_max_total  integer default 100000
+  p_max_total  integer default 100000,
+  p_max_per_second integer default 12
 )
-returns integer
+returns table(score integer, accepted_delta integer)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_delta integer;
-  v_new   integer;
+  v_delta          integer;
+  v_new            integer;
+  v_score          integer;
+  v_tokens         numeric;
+  v_refilled_at    timestamptz;
+  v_max_per_second integer;
+  v_room_status    text;
+  v_started_at     timestamptz;
+  v_duration_sec   integer;
 begin
-  v_delta := greatest(0, least(coalesce(p_delta, 0), p_max_delta));
-  if v_delta = 0 then
-    return null;
+  -- Khoá phòng trước, để không có điểm nào lọt qua sau khi MC/hệ thống kết
+  -- thúc vòng. Sau đó mới khoá hàng người chơi để xử lý token bucket.
+  select r.status, r.started_at, r.duration_sec
+    into v_room_status, v_started_at, v_duration_sec
+    from public.flap_rooms r
+   where r.id = p_room_id
+   for update;
+
+  if not found
+     or v_room_status <> 'running'
+     or (v_started_at is not null and now() >= v_started_at + make_interval(secs => v_duration_sec)) then
+    return;
   end if;
+
+  select p.score, p.rate_tokens, p.rate_refilled_at
+    into v_score, v_tokens, v_refilled_at
+    from public.flap_players p
+   where p.id = p_player_id
+     and p.room_id = p_room_id
+     and p.token_hash = p_token_hash
+     and p.active = true
+   for update;
+
+  if not found then
+    return;
+  end if;
+
+  v_max_per_second := greatest(1, coalesce(p_max_per_second, 12));
+  v_tokens := least(
+    v_max_per_second::numeric,
+    greatest(0, coalesce(v_tokens, v_max_per_second))
+      + greatest(0, extract(epoch from now() - coalesce(v_refilled_at, now()))) * v_max_per_second
+  );
+  v_delta := least(
+    greatest(0, coalesce(p_delta, 0)),
+    greatest(0, coalesce(p_max_delta, 40)),
+    floor(v_tokens)::integer,
+    greatest(0, coalesce(p_max_total, 100000) - v_score)
+  );
 
   update public.flap_players
      set score        = least(score + v_delta, p_max_total),
+         rate_tokens  = greatest(0, v_tokens - v_delta),
+         rate_refilled_at = now(),
          last_seen_at = now()
    where id = p_player_id
      and token_hash = p_token_hash
      and active = true
   returning score into v_new;
 
-  return v_new;
+  return query select v_new, v_delta;
 end;
 $$;
 
@@ -147,8 +204,15 @@ declare
   v_winner  text;
   v_round   integer;
 begin
-  select * into v_room from public.flap_rooms where id = p_room_id;
+  -- Khoá phòng để hai request kết thúc cùng lúc không ghi trùng lịch sử vòng.
+  select * into v_room from public.flap_rooms where id = p_room_id for update;
   if not found then
+    return null;
+  end if;
+
+  -- Một vòng chỉ được chốt khi đang chạy/tạm dừng. Request tới muộn sau khi
+  -- đồng hồ hết giờ sẽ nhận null thay vì tạo thêm một bản ghi kết quả rỗng.
+  if v_room.status not in ('running', 'paused') then
     return null;
   end if;
 

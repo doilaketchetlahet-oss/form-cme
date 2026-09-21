@@ -473,7 +473,7 @@ export function FlapRaceManager() {
               <div className="glass flex flex-wrap items-center gap-2 rounded-3xl p-4">
                 <button
                   onClick={() => void control("start")}
-                  disabled={busy || room.status === "running"}
+                  disabled={busy || room.status === "running" || room.status === "finished"}
                   className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
                   <Play size={16} /> Bắt đầu

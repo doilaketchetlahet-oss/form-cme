@@ -89,10 +89,16 @@ export default function FlapPlayerPage() {
   const roomStatus = snapshot?.room.status ?? null;
   useEffect(() => {
     if (!join || !roomStatus) return;
-    // Bật lại cảm biến khi phòng chạy, tắt khi dừng. Khi vào trước lúc MC bấm
-    // bắt đầu, việc lắc vẫn được đếm cục bộ và chỉ tống lên server khi chạy.
-    counterRef.current?.setActive(roomStatus === "running");
+    // Không cho tích điểm trước/sau lượt. Nếu giữ hàng chờ từ lượt cũ, điểm
+    // mất mạng có thể bị gửi nhầm sang lượt kế tiếp khi MC bấm bắt đầu lại.
+    const running = roomStatus === "running";
+    counterRef.current?.setActive(running);
+    if (!running) pendingRef.current = 0;
   }, [join, roomStatus]);
+
+  useEffect(() => {
+    return () => counterRef.current?.stop();
+  }, []);
 
   // Điện thoại tự làm mới trạng thái phòng mỗi 2s để không phụ thuộc broadcast
   // (mạng hội trường có thể chặn websocket).
@@ -133,9 +139,11 @@ export default function FlapPlayerPage() {
           setMyScore(json.score);
         }
         setOnline(true);
-      } else {
-        // Chưa tới lượt hoặc bị chặn: trả điểm về hàng chờ để không mất.
+      } else if (res.status >= 500) {
+        // Chỉ retry lỗi máy chủ. Không giữ điểm khi lượt đã dừng/đổi vòng,
+        // nếu không người chơi có thể "để dành" điểm rồi gửi ở lượt sau.
         pendingRef.current += delta;
+        setOnline(false);
       }
     } catch {
       pendingRef.current += delta;
@@ -151,6 +159,13 @@ export default function FlapPlayerPage() {
 
   // ---- Bắt đầu đếm lắc -----------------------------------------------------
   const startSensors = useCallback(async () => {
+    // Bấm "Hiệu chỉnh lại" khi đang chơi phải thay listener cũ, nếu không
+    // hai counter cùng nghe devicemotion và cùng cộng điểm cho một cú lắc.
+    counterRef.current?.stop();
+    counterRef.current = null;
+    setShakes(0);
+    setIntensity(0);
+    lastSentRef.current = 0;
     setPhase("permission");
     const granted = await requestMotionPermission();
     if (!granted) {
@@ -169,9 +184,10 @@ export default function FlapPlayerPage() {
         lastSentRef.current = stats.shakes;
       }
     });
+    counter.setActive(roomStatus === "running");
     setTapMode(false);
     setPhase("ready");
-  }, []);
+  }, [roomStatus]);
 
   const handleJoin = useCallback(
     async (teamId: string) => {
@@ -210,10 +226,10 @@ export default function FlapPlayerPage() {
   );
 
   const handleTap = useCallback(() => {
-    if (!join) return;
+    if (!join || roomStatus !== "running") return;
     pendingRef.current += 1;
     setShakes((s) => s + 1);
-  }, [join]);
+  }, [join, roomStatus]);
 
   const teams = useMemo(() => snapshot?.room.teams ?? [], [snapshot]);
 
@@ -320,6 +336,7 @@ export default function FlapPlayerPage() {
         <button
           type="button"
           onPointerDown={handleTap}
+          disabled={!canPlay}
           className="w-full rounded-2xl py-10 text-xl font-black text-white transition-transform active:scale-[0.98]"
           style={{ background: join?.team.color, opacity: canPlay ? 1 : 0.5 }}
         >
@@ -340,7 +357,7 @@ export default function FlapPlayerPage() {
         {!canPlay
           ? status === "paused"
             ? "Tạm dừng — chờ MC"
-            : "Chờ MC bắt đầu… (cứ lắc, điểm sẽ được tính)"
+            : "Chờ MC bắt đầu… điểm chỉ được tính sau hiệu lệnh"
           : tapMode
             ? "Chạm thật nhanh!"
             : "Lắc thật mạnh!"}
