@@ -21,6 +21,12 @@ npm run build
 npm run lint
 ```
 
+## Git
+
+After every completed change, commit and push to `origin/main` so Vercel
+deploys automatically. Stage only the files related to the change; never commit
+secrets (`.env.local` stays ignored).
+
 ## OCR (đọc chữ trong ảnh)
 
 `scripts/ocr.ps1` dùng Tesseract (đã cài ở `C:\Program Files\Tesseract-OCR`,
