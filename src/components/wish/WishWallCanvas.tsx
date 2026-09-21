@@ -237,13 +237,25 @@ function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
 
+const SHAPE_BOX = 0.74;
+
 /** Ánh xạ điểm hình ghép (0..1) vào giữa màn hình theo một ô vuông vừa phải. */
 function shapeToScreen(point: ShapePoint, w: number, h: number) {
-  const size = Math.min(w, h) * 0.74;
+  const size = Math.min(w, h) * SHAPE_BOX;
   return {
     x: (w - size) / 2 + point.x * size,
     y: (h - size) / 2 + point.y * size,
   };
+}
+
+/** Tỉ lệ vừa khít ảnh vào ô vuông (giữ đúng tỉ lệ ảnh), toạ độ 0..1. */
+function fitRect(width: number, height: number) {
+  if (width >= height) {
+    const dh = height / width;
+    return { dx: 0, dy: (1 - dh) / 2, dw: 1, dh };
+  }
+  const dw = width / height;
+  return { dx: (1 - dw) / 2, dy: 0, dw, dh: 1 };
 }
 
 export type WishCue = "arrive" | "complete" | "milestone";
@@ -274,6 +286,7 @@ export const WishWallCanvas = forwardRef<
   } | null>(null);
   const spotlightRef = useRef<Spotlight | null>(null);
   const lastSpotRef = useRef(0);
+  const capacityRef = useRef(SHAPE_CAPACITY);
   const completionRef = useRef(0);
   const clearSettledAtRef = useRef(0);
   const flashRef = useRef<{ startedAt: number; color: string; duration: number } | null>(null);
@@ -394,29 +407,102 @@ export const WishWallCanvas = forwardRef<
     itemsRef.current = itemsRef.current.filter((item) => item.id !== wishId);
   }, []);
 
-  const setEvent = useCallback((event: WishEvent) => {
-    eventRef.current = event;
-    shapeRef.current = buildShapePoints(event.settings.shape, SHAPE_CAPACITY);
+  /**
+   * Đọc hình dạng ảnh do admin tải lên để biến chính ảnh thành vùng tụ:
+   * lấy các pixel đậm (ảnh nền trắng) hoặc không trong suốt (ảnh PNG) làm điểm hội tụ.
+   */
+  const extractShapePoints = useCallback((img: HTMLImageElement): ShapePoint[] => {
+    const maxSide = 96;
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const iw = Math.max(1, Math.round(img.width * scale));
+    const ih = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = iw;
+    canvas.height = ih;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return [];
+    ctx.drawImage(img, 0, 0, iw, ih);
+    let data: Uint8ClampedArray;
+    try {
+      data = ctx.getImageData(0, 0, iw, ih).data;
+    } catch {
+      return [];
+    }
 
-    const next = {
-      shield: event.settings.shieldImageUrl,
-      target: event.settings.targetImageUrl,
-      bg: event.settings.backgroundUrl,
-    };
-    const load = (url: string | null, key: "shield" | "target" | "bg") => {
-      if (!url || imagesRef.current.urls[key] === url) return;
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = url;
-      img.onload = () => {
-        imagesRef.current[key] = img;
-      };
-      imagesRef.current.urls[key] = url;
-    };
-    load(next.shield, "shield");
-    load(next.target, "target");
-    load(next.bg, "bg");
+    let hasAlpha = false;
+    for (let i = 3; i < data.length; i += 4) {
+      if ((data[i] ?? 255) < 250) {
+        hasAlpha = true;
+        break;
+      }
+    }
+
+    const fit = fitRect(iw, ih);
+    const ink: ShapePoint[] = [];
+    for (let y = 0; y < ih; y += 1) {
+      for (let x = 0; x < iw; x += 1) {
+        const i = (y * iw + x) * 4;
+        const alpha = data[i + 3] ?? 255;
+        const lum = 0.299 * (data[i] ?? 0) + 0.587 * (data[i + 1] ?? 0) + 0.114 * (data[i + 2] ?? 0);
+        const on = hasAlpha ? alpha > 128 : lum < 200;
+        if (on) {
+          ink.push({
+            x: fit.dx + ((x + 0.5) / iw) * fit.dw,
+            y: fit.dy + ((y + 0.5) / ih) * fit.dh,
+          });
+        }
+      }
+    }
+
+    if (!ink.length) return [];
+    const target = 160;
+    if (ink.length <= target) return ink;
+    const step = ink.length / target;
+    const out: ShapePoint[] = [];
+    for (let i = 0; i < target; i += 1) out.push(ink[Math.floor(i * step)]!);
+    return out;
   }, []);
+
+  const setEvent = useCallback(
+    (event: WishEvent) => {
+      eventRef.current = event;
+      shapeRef.current = buildShapePoints(event.settings.shape, SHAPE_CAPACITY);
+      capacityRef.current = SHAPE_CAPACITY;
+
+      const applyTarget = (img: HTMLImageElement) => {
+        if (eventRef.current?.settings.shape !== "image") return;
+        const points = extractShapePoints(img);
+        if (points.length) {
+          shapeRef.current = points;
+          capacityRef.current = Math.min(points.length, 100);
+        }
+      };
+
+      const next = {
+        shield: event.settings.shieldImageUrl,
+        target: event.settings.targetImageUrl,
+        bg: event.settings.backgroundUrl,
+      };
+      const load = (url: string | null, key: "shield" | "target" | "bg") => {
+        if (!url || imagesRef.current.urls[key] === url) {
+          if (key === "target" && imagesRef.current.target) applyTarget(imagesRef.current.target);
+          return;
+        }
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = url;
+        img.onload = () => {
+          imagesRef.current[key] = img;
+          if (key === "target") applyTarget(img);
+        };
+        imagesRef.current.urls[key] = url;
+      };
+      load(next.shield, "shield");
+      load(next.target, "target");
+      load(next.bg, "bg");
+    },
+    [extractShapePoints],
+  );
 
   const spotlight = useCallback(
     (wishId: string) => {
@@ -595,7 +681,7 @@ export const WishWallCanvas = forwardRef<
       }
 
       // Đủ số mảnh thì bùng sáng thành hình ghép tập thể.
-      if (settledRef.current.length >= SHAPE_CAPACITY && now > completionRef.current) {
+      if (settledRef.current.length >= capacityRef.current && now > completionRef.current) {
         completionRef.current = now + 12_000;
         const event2 = eventRef.current;
         const accent2 = event2 ? WISH_THEMES[event2.settings.theme].accent : "#facc15";
@@ -723,9 +809,24 @@ export const WishWallCanvas = forwardRef<
       const target = imagesRef.current.target;
       if (event?.settings.shape === "image" && target) {
         ctx.save();
-        ctx.globalAlpha = 0.5;
-        const size = Math.min(w, h) * 0.5;
-        ctx.drawImage(target, w / 2 - size / 2, h / 2 - size / 2, size, size);
+        ctx.globalAlpha = 0.4;
+        const size = Math.min(w, h) * SHAPE_BOX;
+        const bx = (w - size) / 2;
+        const by = (h - size) / 2;
+        const fit = fitRect(target.width, target.height);
+        ctx.drawImage(target, bx + fit.dx * size, by + fit.dy * size, fit.dw * size, fit.dh * size);
+        ctx.restore();
+
+        // Điểm tụ theo hình dạng ảnh — hiện mờ để thấy vùng sẽ lấp đầy.
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = accent;
+        for (const point of points) {
+          const screen = shapeToScreen(point, w, h);
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       } else if (event && event.settings.shape === "text" && event.settings.shapeText) {
         ctx.save();

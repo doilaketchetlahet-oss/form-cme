@@ -413,15 +413,16 @@ export function WishWallManager() {
                 <div className="space-y-2">
                   {draft.shape === "image" && !draft.targetImageUrl && (
                     <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                      Bạn đã chọn “Ảnh tự thiết kế” — hãy tải <strong>Ảnh hình ghép</strong> bên dưới để màn LED dùng
-                      đúng hình của bạn.
+                      Bạn đã chọn “Ảnh tự thiết kế” — hãy tải <strong>Ảnh hình ghép</strong> bên dưới. Các lời chúc sẽ
+                      hội tụ theo đúng hình dạng ảnh (vùng đậm hoặc không trong suốt), nên hãy thiết kế logo/hình trên
+                      nền trong suốt (PNG) hoặc nền trắng.
                     </p>
                   )}
                   <div className="flex flex-wrap gap-2">
                     {(
                       [
                         ["shieldImageUrl", "Ảnh khiên", "Thay hình khiên lục giác", draft.shieldImageUrl],
-                        ["targetImageUrl", "Ảnh hình ghép", "Dùng khi chọn Ảnh tự thiết kế", draft.targetImageUrl],
+                        ["targetImageUrl", "Ảnh hình ghép", "Vùng tụ theo hình dạng ảnh", draft.targetImageUrl],
                         ["backgroundUrl", "Ảnh nền LED", "Nền phía sau màn hình", draft.backgroundUrl],
                       ] as const
                     ).map(([key, label, hint, url]) => (
