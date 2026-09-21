@@ -39,7 +39,14 @@ type Item = {
   target: ShapePoint | null;
 };
 
-type Settled = { x: number; y: number; color: string; symbol: string };
+type Settled = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  angle: number;
+  sprite: HTMLCanvasElement;
+};
 
 type Ring = { x: number; y: number; r: number; maxR: number; alpha: number };
 
@@ -221,6 +228,29 @@ function drawWishCard(
   }
 }
 
+/** Tỉ lệ thu nhỏ của mảnh đã kết tinh so với thẻ gốc. */
+function settledScale(w: number, h: number) {
+  return Math.min(0.5, Math.max(0.22, (Math.min(w, h) * 0.11) / BASE_CARD_W));
+}
+
+const SPRITE_PAD = 34;
+
+/** Vẽ sẵn thẻ lời chúc ra canvas ngoài (cache) để màn LED vẽ lại nhanh. */
+function renderCardSprite(wish: Wish, width: number, light: boolean): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const layout = measureCard(wish, width);
+  const scale = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil((layout.w + SPRITE_PAD * 2) * scale));
+  canvas.height = Math.max(1, Math.ceil((layout.h + SPRITE_PAD * 2) * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.scale(scale, scale);
+  ctx.translate(SPRITE_PAD + layout.w / 2, SPRITE_PAD + layout.h / 2);
+  drawWishCard(ctx, wish, layout, light);
+  return canvas;
+}
+
 function edgePoints(edge: WishEdge, w: number, h: number, layout: CardLayout): { from: ShapePoint; shield: ShapePoint } {
   const jitter = Math.random() * 0.3 + 0.35;
   switch (edge) {
@@ -269,6 +299,7 @@ export const WishWallCanvas = forwardRef<
 
   const itemsRef = useRef<Item[]>([]);
   const settledRef = useRef<Settled[]>([]);
+  const spriteRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const ringsRef = useRef<Ring[]>([]);
   const sparksRef = useRef<Spark[]>([]);
   const knownRef = useRef<Set<string>>(new Set());
@@ -532,6 +563,7 @@ export const WishWallCanvas = forwardRef<
     knownRef.current.clear();
     wishMapRef.current.clear();
     itemDestRef.current.clear();
+    spriteRef.current.clear();
     assignRef.current = 0;
     spotlightRef.current = null;
     messageRef.current = null;
@@ -628,19 +660,36 @@ export const WishWallCanvas = forwardRef<
         } else {
           const target = item.target ?? { x: w * 0.5, y: h * 0.5 };
           const k = Math.min(1, dt * 4);
+          const targetScale = settledScale(w, h);
           item.x += (target.x - item.x) * k;
           item.y += (target.y - item.y) * k;
-          item.scale += (0.32 - item.scale) * Math.min(1, dt * 2);
+          item.scale += (targetScale - item.scale) * Math.min(1, dt * 2);
           item.alpha -= dt * 0.7;
           item.rot *= Math.pow(0.4, dt);
           const dist = Math.hypot(target.x - item.x, target.y - item.y);
           if (dist < 6 || item.alpha <= 0.05) {
-            settledRef.current.push({
-              x: target.x,
-              y: target.y,
-              color: item.wish.color,
-              symbol: item.wish.symbol,
-            });
+            // Mảnh kết tinh = chính thẻ lời chúc thu nhỏ, không phải icon.
+            const light = eventRef.current?.settings.theme === "light";
+            const key = `${item.id}:${light ? 1 : 0}`;
+            let sprite = spriteRef.current.get(key);
+            if (!sprite) {
+              const rendered = renderCardSprite(item.wish, BASE_CARD_W, light);
+              if (rendered) {
+                spriteRef.current.set(key, rendered);
+                sprite = rendered;
+              }
+            }
+            if (sprite) {
+              const layout = measureCard(item.wish, BASE_CARD_W);
+              settledRef.current.push({
+                x: target.x,
+                y: target.y,
+                w: (layout.w + SPRITE_PAD * 2) * targetScale,
+                h: (layout.h + SPRITE_PAD * 2) * targetScale,
+                angle: (Math.random() - 0.5) * 0.25,
+                sprite,
+              });
+            }
             item.alpha = -1;
           }
         }
@@ -872,22 +921,13 @@ export const WishWallCanvas = forwardRef<
         ctx.restore();
       }
 
-      // Các mảnh đã kết tinh vào hình ghép — hiện đúng biểu tượng của lời chúc.
-      const nodeSize = Math.min(64, Math.max(26, Math.min(w, h) * 0.045));
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
+      // Các mảnh đã kết tinh = những lời chúc thu nhỏ xếp thành hình ghép.
       for (const node of settledRef.current) {
         ctx.save();
-        ctx.globalAlpha = 0.95;
-        ctx.shadowColor = node.color;
-        ctx.shadowBlur = 18;
-        ctx.fillStyle = node.color;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, nodeSize * 0.46, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.font = `${nodeSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
-        ctx.fillText(node.symbol, node.x, node.y + 1);
+        ctx.globalAlpha = 0.96;
+        ctx.translate(node.x, node.y);
+        ctx.rotate(node.angle);
+        ctx.drawImage(node.sprite, -node.w / 2, -node.h / 2, node.w, node.h);
         ctx.restore();
       }
 
