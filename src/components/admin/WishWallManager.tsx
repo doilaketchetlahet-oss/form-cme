@@ -410,33 +410,50 @@ export function WishWallManager() {
                   </label>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {(
-                    [
-                      ["shieldImageUrl", "Ảnh khiên", draft.shieldImageUrl],
-                      ["targetImageUrl", "Ảnh hình ghép", draft.targetImageUrl],
-                      ["backgroundUrl", "Ảnh nền LED", draft.backgroundUrl],
-                    ] as const
-                  ).map(([key, label, url]) => (
-                    <div key={key} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2">
-                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
-                        {url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={url} alt={label} className="h-full w-full object-contain" />
-                        ) : (
-                          <ImageIcon size={16} className="text-slate-400" />
+                <div className="space-y-2">
+                  {draft.shape === "image" && !draft.targetImageUrl && (
+                    <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                      Bạn đã chọn “Ảnh tự thiết kế” — hãy tải <strong>Ảnh hình ghép</strong> bên dưới để màn LED dùng
+                      đúng hình của bạn.
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        ["shieldImageUrl", "Ảnh khiên", "Thay hình khiên lục giác", draft.shieldImageUrl],
+                        ["targetImageUrl", "Ảnh hình ghép", "Dùng khi chọn Ảnh tự thiết kế", draft.targetImageUrl],
+                        ["backgroundUrl", "Ảnh nền LED", "Nền phía sau màn hình", draft.backgroundUrl],
+                      ] as const
+                    ).map(([key, label, hint, url]) => (
+                      <div key={key} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2">
+                        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
+                          {url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={url} alt={label} className="h-full w-full object-contain" />
+                          ) : (
+                            <ImageIcon size={16} className="text-slate-400" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <button
+                            onClick={() => openAssetPicker(key)}
+                            className="flex items-center gap-1 text-xs font-semibold text-sky-700"
+                          >
+                            <Upload size={12} /> {label}
+                          </button>
+                          <p className="text-[10px] text-slate-400">{hint}</p>
+                        </div>
+                        {url && (
+                          <button
+                            onClick={() => patch({ [key]: null } as Partial<WishSettings>)}
+                            className="text-slate-400 hover:text-red-500"
+                          >
+                            <X size={14} />
+                          </button>
                         )}
                       </div>
-                      <button onClick={() => openAssetPicker(key)} className="flex items-center gap-1 text-xs font-semibold text-sky-700">
-                        <Upload size={12} /> {label}
-                      </button>
-                      {url && (
-                        <button onClick={() => patch({ [key]: null } as Partial<WishSettings>)} className="text-slate-400 hover:text-red-500">
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
 
                 <button

@@ -81,8 +81,13 @@ export function DrawingPad({ strokes, onStrokesChange, color, brushSize, classNa
   };
 
   const handleMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!currentRef.current) return;
-    currentRef.current.push(pointFromEvent(event));
+    const points = currentRef.current;
+    if (!points) return;
+    const point = pointFromEvent(event);
+    const last = points[points.length - 1];
+    // Bỏ điểm quá sát nhau để nét mượt và payload nhẹ.
+    if (last && Math.hypot(point.x - last.x, point.y - last.y) < 0.004) return;
+    points.push(point);
     paint();
   };
 
@@ -108,7 +113,6 @@ export function DrawingPad({ strokes, onStrokesChange, color, brushSize, classNa
       onPointerMove={handleMove}
       onPointerUp={handleUp}
       onPointerCancel={handleUp}
-      onPointerLeave={handleUp}
       className={className}
       style={{ touchAction: "none" }}
     />

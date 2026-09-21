@@ -160,7 +160,8 @@ export type WishSnapshot = {
 };
 
 export const MAX_STROKES = 60;
-export const MAX_STROKE_POINTS = 800;
+/** Tổng số toạ độ (x,y) tối đa cho cả bức vẽ; quá ngưỡng sẽ giảm mẫu đều. */
+export const MAX_STROKE_POINTS = 2400;
 export const MAX_TEXT_LENGTH = 300;
 export const MAX_NICKNAME_LENGTH = 32;
 
@@ -273,12 +274,26 @@ export function normalizeWishRow(row: Record<string, unknown>): Wish {
 
 const HEX = /^#[0-9a-f]{3,8}$/i;
 
-/** Nét vẽ chỉ nhận toạ độ 0..1, màu hợp lệ; cắt bớt để không phình payload. */
+/** Lấy mẫu đều `keep` điểm (cặp x,y) trên một nét dài. */
+function downsample(points: number[], keep: number): number[] {
+  const pairs = Math.floor(points.length / 2);
+  if (keep >= pairs) return points;
+  const out: number[] = [];
+  for (let i = 0; i < keep; i += 1) {
+    const index = Math.round((i / Math.max(1, keep - 1)) * (pairs - 1)) * 2;
+    out.push(points[index] ?? 0, points[index + 1] ?? 0);
+  }
+  return out;
+}
+
+/**
+ * Nét vẽ chỉ nhận toạ độ 0..1, màu hợp lệ. Khi tổng số điểm vượt ngưỡng thì
+ * GIẢM MẪU ĐỀU từng nét (không bỏ nét), nên bức vẽ không bị mất đoạn sau.
+ */
 export function normalizeDrawing(input: unknown): WishDrawing | null {
   if (!isRecord(input) || !Array.isArray(input.strokes)) return null;
-  const strokes: WishStroke[] = [];
-  let totalPoints = 0;
 
+  const raw: WishStroke[] = [];
   for (const rawStroke of input.strokes.slice(0, MAX_STROKES)) {
     if (!isRecord(rawStroke) || !Array.isArray(rawStroke.p)) continue;
     const color = typeof rawStroke.c === "string" && HEX.test(rawStroke.c) ? rawStroke.c : "#f8fafc";
@@ -289,13 +304,23 @@ export function normalizeDrawing(input: unknown): WishDrawing | null {
       if (!Number.isFinite(n)) continue;
       points.push(Math.min(1, Math.max(0, Math.round(n * 1000) / 1000)));
     }
-    if (points.length < 2) continue;
-    if (totalPoints + points.length > MAX_STROKE_POINTS) break;
-    totalPoints += points.length;
-    strokes.push({ c: color, w: width, p: points });
+    if (points.length < 4) continue;
+    raw.push({ c: color, w: width, p: points });
   }
 
-  return strokes.length ? { strokes } : null;
+  if (!raw.length) return null;
+
+  const totalPairs = raw.reduce((sum, stroke) => sum + Math.floor(stroke.p.length / 2), 0);
+  const maxPairs = Math.floor(MAX_STROKE_POINTS / 2);
+  const factor = totalPairs > maxPairs ? maxPairs / totalPairs : 1;
+
+  const strokes = raw.map((stroke) => {
+    const pairs = Math.floor(stroke.p.length / 2);
+    const keep = Math.max(2, Math.floor(pairs * factor));
+    return keep < pairs ? { ...stroke, p: downsample(stroke.p, keep) } : stroke;
+  });
+
+  return { strokes };
 }
 
 /** Kiểm tra một yêu cầu gửi lời chúc từ tablet. */
