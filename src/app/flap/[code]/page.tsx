@@ -37,6 +37,7 @@ export default function FlapPlayerPage() {
   const [intensity, setIntensity] = useState(0);
   const [myScore, setMyScore] = useState(0);
   const [online, setOnline] = useState(true);
+  const [tick, setTick] = useState(() => Date.now());
   const [tapMode, setTapMode] = useState(false);
 
   const counterRef = useRef<ShakeCounter | null>(null);
@@ -111,6 +112,27 @@ export default function FlapPlayerPage() {
     const sync = setInterval(() => void loadSnapshot(), 2000);
     return () => clearInterval(sync);
   }, [join, code, loadSnapshot]);
+
+  // Hết giờ thì mọi thiết bị đều gọi chốt vòng, để phòng không bị kẹt ở
+  // "running" khi không còn ai gửi điểm nữa (điểm sau giờ luôn bị từ chối).
+  const startedAtMs = snapshot?.room.started_at ? Date.parse(snapshot.room.started_at) : null;
+  const durationSec = snapshot?.room.duration_sec ?? 0;
+  useEffect(() => {
+    if (!snapshot || snapshot.room.status !== "running" || !startedAtMs) return;
+    const finishAt = startedAtMs + durationSec * 1000;
+    const delay = Math.max(0, finishAt - Date.now()) + 400;
+    const timer = setTimeout(() => {
+      void fetch(`/api/flap/${encodeURIComponent(code)}`, { cache: "no-store" }).then(() => loadSnapshot());
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [snapshot, startedAtMs, durationSec, code, loadSnapshot]);
+
+  // Nhịp đồng hồ cho phần đếm ngược.
+  useEffect(() => {
+    if (snapshot?.room.status !== "running") return;
+    const clock = setInterval(() => setTick(Date.now()), 250);
+    return () => clearInterval(clock);
+  }, [snapshot?.room.status]);
 
   /** Phase hiển thị suy ra từ trạng thái phòng, không setState trong effect. */
   const roomPhase: Phase | null = !join
@@ -310,16 +332,28 @@ export default function FlapPlayerPage() {
   const status = displayPhase === "playing" ? "running" : roomStatus ?? "lobby";
   const canPlay = displayPhase === "playing";
 
+  // Đồng hồ đếm ngược, tính từ mốc started_at của server (không tin đồng hồ máy).
+  const countdown =
+    snapshot?.room.status === "running" && startedAtMs
+      ? Math.max(0, Math.ceil((startedAtMs + durationSec * 1000 - tick) / 1000))
+      : null;
+
   return (
     <Shell>
       <div className="flex w-full items-center justify-between text-xs">
         <span className="flex items-center gap-1.5 font-semibold" style={{ color: join?.team.color }}>
           {join?.team.name}
         </span>
-        <span className={`flex items-center gap-1 ${online ? "text-emerald-600" : "text-red-500"}`}>
-          {online ? <Wifi size={13} /> : <WifiOff size={13} />}
-          {online ? "Đã kết nối" : "Mất kết nối"}
-        </span>
+        {countdown !== null ? (
+          <span className="font-display text-sm font-black tabular-nums text-slate-900">
+            ⏱ {countdown}s
+          </span>
+        ) : (
+          <span className={`flex items-center gap-1 ${online ? "text-emerald-600" : "text-red-500"}`}>
+            {online ? <Wifi size={13} /> : <WifiOff size={13} />}
+            {online ? "Đã kết nối" : "Mất kết nối"}
+          </span>
+        )}
       </div>
 
       <div className="flex w-full flex-col items-center gap-1">

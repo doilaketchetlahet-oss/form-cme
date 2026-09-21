@@ -216,19 +216,25 @@ begin
     return null;
   end if;
 
-  select coalesce(jsonb_agg(row order by row.total desc), '[]'::jsonb)
+  -- Tong hop ket qua theo doi. Dung CTE de `order by` khong bi nham voi tu khoa ROW.
+  with agg as (
+    select
+      p.team_id,
+      sum(p.score)::integer as total,
+      count(*)::integer as players,
+      round(avg(p.score)::numeric, 1) as average
+    from public.flap_players p
+    where p.room_id = p_room_id
+    group by p.team_id
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'team_id', a.team_id,
+           'total',   a.total,
+           'players', a.players,
+           'average', a.average
+         ) order by a.total desc), '[]'::jsonb)
     into v_results
-    from (
-      select jsonb_build_object(
-               'team_id',  p.team_id,
-               'total',    sum(p.score),
-               'players',  count(*),
-               'average',  round(avg(p.score)::numeric, 1)
-             ) as row
-        from public.flap_players p
-       where p.room_id = p_room_id
-       group by p.team_id
-    ) t;
+    from agg a;
 
   -- Xếp theo chế độ tính điểm hiện tại của phòng.
   if v_room.score_mode = 'average' then
