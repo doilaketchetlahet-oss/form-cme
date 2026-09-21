@@ -4,11 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Eraser, Loader2, PenLine, Send, Sparkles, Undo2 } from "lucide-react";
 import { DrawingPad } from "@/components/wish/DrawingPad";
-import { submitWish, type SubmitWishPayload } from "@/lib/wish/realtime";
+import { fetchWishSnapshot, submitWish, type SubmitWishPayload } from "@/lib/wish/realtime";
 import {
   WISH_COLORS,
   WISH_SYMBOLS,
   WISH_THEMES,
+  type Wish,
   type WishEvent,
   type WishStroke,
 } from "@/lib/wish/config";
@@ -37,6 +38,7 @@ export function WishComposer({ code, event, edge }: Props) {
   const [phase, setPhase] = useState<"compose" | "flying" | "sent">("compose");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [pending, setPending] = useState(0);
+  const [gift, setGift] = useState<Wish | null>(null);
   const flushedRef = useRef(false);
 
   const canSend = content.trim().length > 0 || strokes.length > 0 || symbol.length > 0;
@@ -100,10 +102,22 @@ export function WishComposer({ code, event, edge }: Props) {
     };
   }, [flushQueue, readQueue]);
 
+  const loadGift = useCallback(
+    async (ownId: string) => {
+      const snap = await fetchWishSnapshot(code);
+      if (!snap) return;
+      const pool = snap.wishes.filter((wish) => wish.id !== ownId && wish.status === "approved");
+      if (!pool.length) return;
+      setGift(pool[Math.floor(Math.random() * pool.length)]!);
+    },
+    [code],
+  );
+
   const reset = () => {
     setContent("");
     setStrokes([]);
     setFeedback(null);
+    setGift(null);
     setPhase("compose");
   };
 
@@ -122,6 +136,7 @@ export function WishComposer({ code, event, edge }: Props) {
           ? { tone: "warn", text: "Đã gửi! Lời chúc đang chờ ban tổ chức duyệt." }
           : { tone: "ok", text: "Lời chúc của bạn đã bay lên màn hình lớn." },
       );
+      void loadGift(result.wish.id);
     } else if (result.error === "network") {
       writeQueue([...readQueue(), payload]);
       setFeedback({ tone: "warn", text: "Mất mạng — đã lưu lại, sẽ tự gửi khi có kết nối." });
@@ -180,6 +195,28 @@ export function WishComposer({ code, event, edge }: Props) {
             {feedback.tone === "ok" ? "Đã trao yêu thương!" : "Ghi nhận lời chúc"}
           </p>
           <p className="text-sm text-slate-600">{feedback.text}</p>
+
+          {gift && (
+            <div className="w-full rounded-2xl bg-slate-50 p-4 text-left ring-1 ring-slate-100">
+              <p className="mb-2 text-[11px] font-bold tracking-wider text-rose-500 uppercase">
+                Một lời chúc gửi đến bạn
+              </p>
+              <div className="flex items-start gap-3">
+                <span className="text-3xl">{gift.symbol}</span>
+                <div className="min-w-0">
+                  {gift.content ? (
+                    <p className="text-sm font-semibold text-slate-800">{gift.content}</p>
+                  ) : (
+                    <p className="text-sm text-slate-500">Ai đó vừa trao một yêu thương.</p>
+                  )}
+                  {gift.nickname ? (
+                    <p className="mt-0.5 text-[11px] text-slate-500">— {gift.nickname}</p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={reset}

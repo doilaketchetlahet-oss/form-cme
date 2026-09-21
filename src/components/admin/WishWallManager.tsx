@@ -195,6 +195,17 @@ export function WishWallManager() {
     [event],
   );
   const wallUrl = useMemo(() => (event ? buildPublicUrl(`/wish/${event.code}/wall`) : ""), [event]);
+  const edgeUrls = useMemo(
+    () =>
+      event
+        ? (["left", "center", "right"] as const).map((edge) => ({
+            edge,
+            label: { left: "Bên trái", center: "Chính giữa", right: "Bên phải" }[edge],
+            url: buildPublicUrl(`/wish/${event.code}?edge=${edge}`),
+          }))
+        : [],
+    [event],
+  );
 
   const filtered = useMemo(() => wishes.filter((wish) => wish.status === filter), [wishes, filter]);
 
@@ -440,8 +451,17 @@ export function WishWallManager() {
               <div className="glass flex flex-col items-center gap-4 rounded-3xl p-5">
                 <div className="flex flex-col items-center gap-2">
                   <span className="text-xs font-bold text-slate-600">Tablet gửi lời chúc</span>
-                  <QRCodeView value={composerUrl} size={168} />
-                  <code className="max-w-[180px] break-all text-center text-[10px] text-slate-500">{composerUrl}</code>
+                  <p className="max-w-[220px] text-center text-[11px] text-slate-500">
+                    Mỗi tablet quét một mã theo vị trí của nó — lời chúc sẽ bay vào màn LED từ đúng cạnh đó.
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    {edgeUrls.map((item) => (
+                      <div key={item.edge} className="flex flex-col items-center gap-1">
+                        <QRCodeView value={item.url} size={112} />
+                        <span className="text-[11px] font-semibold text-slate-600">{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
                   <a
                     href={composerUrl}
                     target="_blank"
@@ -453,7 +473,7 @@ export function WishWallManager() {
                 </div>
                 <div className="flex flex-col items-center gap-2 border-t border-slate-100 pt-4">
                   <span className="text-xs font-bold text-slate-600">Màn hình LED</span>
-                  <QRCodeView value={wallUrl} size={168} />
+                  <QRCodeView value={wallUrl} size={150} />
                   <a
                     href={wallUrl}
                     target="_blank"

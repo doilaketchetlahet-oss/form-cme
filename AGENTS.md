@@ -98,7 +98,12 @@ true score. Run `supabase/flap-race.sql` once.
   different sides of the LED).
 - `/wish/[code]/wall` - LED screen: wishes fly in from the edge, pass through
   the "shield", then drift and slowly crystallize into a collective shape
-  (heart/star/flower/text/image).
+  (heart/star/flower/text/image). A sound toggle (WebAudio whoosh/chime) and a
+  fullscreen button sit in the header; completion triggers a flash + fireworks.
+  The admin Setup tab has one QR per tablet edge (left/center/right) and the
+  Display tab has a "Gửi lời chúc thử" button (broadcast-only demo wish).
+- After sending, the tablet shows a random wish from someone else
+  ("Một lời chúc gửi đến bạn").
 - `/api/wish/[code]` - GET snapshot (public; `?scope=all` + admin bearer for
   the moderation queue), POST `create` (admin) / `submit` (public),
   PUT `settings|moderate|delete|clear|spotlight|absorb-all` (admin).

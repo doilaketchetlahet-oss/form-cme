@@ -246,11 +246,14 @@ function shapeToScreen(point: ShapePoint, w: number, h: number) {
   };
 }
 
-export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>(function WishWallCanvas(
-  { className },
-  ref,
-) {
+export type WishCue = "arrive" | "complete" | "milestone";
+
+export const WishWallCanvas = forwardRef<
+  WishWallHandle,
+  { className?: string; onCue?: (cue: WishCue) => void }
+>(function WishWallCanvas({ className, onCue }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const onCueRef = useRef<((cue: WishCue) => void) | null>(onCue);
 
   const itemsRef = useRef<Item[]>([]);
   const settledRef = useRef<Settled[]>([]);
@@ -262,10 +265,18 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
   const eventRef = useRef<WishEvent | null>(null);
   const shapeRef = useRef<ShapePoint[]>([]);
   const assignRef = useRef(0);
-  const messageRef = useRef<{ text: string; sub: string; until: number; color: string } | null>(null);
+  const messageRef = useRef<{
+    text: string;
+    sub: string;
+    until: number;
+    color: string;
+    startedAt: number;
+  } | null>(null);
   const spotlightRef = useRef<Spotlight | null>(null);
   const lastSpotRef = useRef(0);
   const completionRef = useRef(0);
+  const clearSettledAtRef = useRef(0);
+  const flashRef = useRef<{ startedAt: number; color: string; duration: number } | null>(null);
   const sizeRef = useRef({ w: 1, h: 1 });
   const imagesRef = useRef<{
     shield?: HTMLImageElement;
@@ -273,6 +284,10 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
     bg?: HTMLImageElement;
     urls: { shield: string | null; target: string | null; bg: string | null };
   }>({ urls: { shield: null, target: null, bg: null } });
+
+  useEffect(() => {
+    onCueRef.current = onCue;
+  }, [onCue]);
 
   const spawnSparks = useCallback((x: number, y: number, color: string, count = 18) => {
     for (let i = 0; i < count; i += 1) {
@@ -295,7 +310,8 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
   }, []);
 
   const showMessage = useCallback((text: string, sub: string, color: string, ms = 6000) => {
-    messageRef.current = { text, sub, until: Date.now() + ms, color };
+    const now = Date.now();
+    messageRef.current = { text, sub, until: now + ms, color, startedAt: now };
   }, []);
 
   const addWish = useCallback(
@@ -306,6 +322,7 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
 
       const count = knownRef.current.size;
       if (count === 10 || count === 50 || count === 100 || count === 200) {
+        onCueRef.current?.("milestone");
         showMessage(`${count} lời chúc`, count === 100 ? "một biển yêu thương" : "cả hội trường đang trao nhau", "#facc15", 5000);
       }
 
@@ -489,6 +506,7 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
             item.phase = "free";
             spawnRings(item.x, item.y, Math.min(w, h) * 0.32);
             spawnSparks(item.x, item.y, item.wish.color, 22);
+            onCueRef.current?.("arrive");
           }
         } else if (item.phase === "free") {
           item.x += item.vx * dt;
@@ -578,12 +596,21 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
 
       // Đủ số mảnh thì bùng sáng thành hình ghép tập thể.
       if (settledRef.current.length >= SHAPE_CAPACITY && now > completionRef.current) {
-        completionRef.current = now + 10_000;
+        completionRef.current = now + 12_000;
         const event2 = eventRef.current;
         const accent2 = event2 ? WISH_THEMES[event2.settings.theme].accent : "#facc15";
-        const first = shapeRef.current[0];
-        const point = first ? shapeToScreen(first, w, h) : { x: w * 0.5, y: h * 0.5 };
-        spawnSparks(point.x, point.y, accent2, 90);
+        flashRef.current = { startedAt: now, color: accent2, duration: 1300 };
+        onCueRef.current?.("complete");
+        // Pháo hoa rải khắp màn hình.
+        const palette = ["#facc15", "#fb7185", "#38bdf8", "#a855f7", "#22c55e", accent2];
+        for (let i = 0; i < 9; i += 1) {
+          spawnSparks(
+            w * (0.15 + Math.random() * 0.7),
+            h * (0.15 + Math.random() * 0.6),
+            palette[i % palette.length]!,
+            34,
+          );
+        }
         showMessage(
           event2 && event2.settings.shape === "text" && event2.settings.shapeText
             ? event2.settings.shapeText
@@ -592,7 +619,13 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
           accent2,
           7000,
         );
+        // Giữ hình ghép sáng thêm vài giây cho khán giả chiêm ngưỡng rồi mới tan.
+        clearSettledAtRef.current = now + 4500;
+      }
+
+      if (clearSettledAtRef.current && now > clearSettledAtRef.current) {
         settledRef.current = [];
+        clearSettledAtRef.current = 0;
       }
     };
 
@@ -801,21 +834,39 @@ export const WishWallCanvas = forwardRef<WishWallHandle, { className?: string }>
         ctx.restore();
       }
 
+      const flash = flashRef.current;
+      if (flash) {
+        const progress = (now - flash.startedAt) / flash.duration;
+        if (progress >= 1) {
+          flashRef.current = null;
+        } else {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, 1 - progress) * 0.6;
+          ctx.fillStyle = flash.color;
+          ctx.fillRect(0, 0, w, h);
+          ctx.restore();
+        }
+      }
+
       const message = messageRef.current;
       if (message && now < message.until) {
-        const remaining = Math.min(1, (message.until - now) / 700);
+        const appear = Math.min(1, (now - message.startedAt) / 650);
+        const scale = 0.7 + 0.3 * easeOutCubic(appear);
+        const fade = Math.min(1, Math.max(0, (message.until - now) / 800));
         ctx.save();
-        ctx.globalAlpha = remaining;
+        ctx.globalAlpha = Math.min(1, appear * 1.5) * fade;
+        ctx.translate(w / 2, h * 0.5);
+        ctx.scale(scale, scale);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = light ? "#0f172a" : "#f8fafc";
-        ctx.font = `900 ${Math.round(Math.min(w * 0.05, h * 0.1))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+        ctx.font = `900 ${Math.round(Math.min(w * 0.055, h * 0.11))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
         ctx.shadowColor = message.color;
-        ctx.shadowBlur = 24;
-        ctx.fillText(message.text, w / 2, h * 0.5 - 20);
-        ctx.font = `600 ${Math.round(Math.min(w * 0.02, h * 0.04))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-        ctx.shadowBlur = 8;
-        ctx.fillText(message.sub, w / 2, h * 0.5 + 30);
+        ctx.shadowBlur = 28;
+        ctx.fillText(message.text, 0, -18);
+        ctx.font = `600 ${Math.round(Math.min(w * 0.022, h * 0.045))}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+        ctx.shadowBlur = 10;
+        ctx.fillText(message.sub, 0, 34);
         ctx.restore();
       }
     };

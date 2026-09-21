@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2, Maximize, Wifi, WifiOff } from "lucide-react";
-import { WishWallCanvas, type WishWallHandle } from "@/components/wish/WishWallCanvas";
+import { Loader2, Maximize, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
+import { WishWallCanvas, type WishCue, type WishWallHandle } from "@/components/wish/WishWallCanvas";
 import { fetchWishSnapshot, subscribeWish } from "@/lib/wish/realtime";
 import type { WishEvent } from "@/lib/wish/config";
 
@@ -11,11 +11,13 @@ export default function WishWallPage() {
   const params = useParams<{ code: string }>();
   const code = (params?.code ?? "").toString().toUpperCase();
   const wallRef = useRef<WishWallHandle>(null);
+  const audioRef = useRef<AudioContext | null>(null);
 
   const [event, setEvent] = useState<WishEvent | null>(null);
   const [count, setCount] = useState(0);
   const [online, setOnline] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const [soundOn, setSoundOn] = useState(false);
   const settingsSignatureRef = useRef("");
 
   const applySnapshot = useCallback(
@@ -79,10 +81,31 @@ export default function WishWallPage() {
     };
   }, [code, applySnapshot]);
 
+  const handleCue = useCallback(
+    (cue: WishCue) => {
+      if (!soundOn) return;
+      const ctx = audioRef.current;
+      if (!ctx) return;
+      if (ctx.state === "suspended") void ctx.resume();
+      if (cue === "arrive") playWhoosh(ctx);
+      else playChime(ctx);
+    },
+    [soundOn],
+  );
+
+  const toggleSound = () => {
+    if (!soundOn) {
+      if (!audioRef.current) audioRef.current = createAudioContext();
+      void audioRef.current?.resume();
+      setSoundOn(true);
+    } else {
+      setSoundOn(false);
+    }
+  };
+
   const goFullscreen = () => {
-    const element = document.documentElement;
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void element.requestFullscreen?.();
+    else void document.documentElement.requestFullscreen?.();
   };
 
   if (!loaded) {
@@ -99,7 +122,7 @@ export default function WishWallPage() {
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-slate-950">
-      <WishWallCanvas ref={wallRef} className="absolute inset-0 h-full w-full" />
+      <WishWallCanvas ref={wallRef} onCue={handleCue} className="absolute inset-0 h-full w-full" />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-5 sm:p-7">
         <div>
@@ -117,6 +140,14 @@ export default function WishWallPage() {
           </span>
           <button
             type="button"
+            onClick={toggleSound}
+            className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
+            title={soundOn ? "Tắt âm thanh" : "Bật âm thanh"}
+          >
+            {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
+          <button
+            type="button"
             onClick={goFullscreen}
             className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
             title="Toàn màn hình"
@@ -127,4 +158,45 @@ export default function WishWallPage() {
       </div>
     </main>
   );
+}
+
+function createAudioContext(): AudioContext {
+  const Ctor =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  return new Ctor!();
+}
+
+/** Tiếng "whoosh" khi lời chúc xuyên qua khiên. */
+function playWhoosh(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(900, now);
+  osc.frequency.exponentialRampToValueAtTime(220, now + 0.5);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.22, now + 0.05);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.65);
+}
+
+/** Tiếng chuông pha lê khi hoàn thành hình ghép / mốc lời chúc. */
+function playChime(ctx: AudioContext) {
+  const now = ctx.currentTime;
+  [880, 1174.66, 1567.98].forEach((frequency, index) => {
+    const start = now + index * 0.09;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 1.2);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + 1.3);
+  });
 }
