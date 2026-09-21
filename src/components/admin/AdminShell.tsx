@@ -7,12 +7,12 @@ import {
   LayoutDashboard,
   ClipboardList,
   Layers,
-  Send,
   ShieldCheck,
   Settings,
   Mail,
   QrCode,
   Gamepad2,
+  Dices,
   LogOut,
   Menu,
   X,
@@ -33,6 +33,7 @@ const NAV_ITEMS = [
   // bỏ comment dòng dưới để hiện lại.
   // { href: "/admin/campaigns", label: "Chiến dịch email", icon: Send },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
+  { href: "/admin/tools/booth-draw", label: "Bốc thăm gian hàng", icon: Dices, groupStart: "Công cụ" },
   { href: "/games", label: "Thư viện game", icon: Gamepad2 },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];
@@ -176,32 +177,34 @@ function SidebarContent({
         <kbd className="rounded border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-400">⌘K</kbd>
       </button>
 
-      <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
+      <nav className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-1">
         {NAV_ITEMS.map((item) => {
           const active = isActive(item.href, item.exact);
           const Icon = item.icon;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all relative",
-                active ? "text-sky-800" : "text-slate-500 hover:text-slate-800 hover:bg-sky-50",
-              )}
-            >
-              {active && (
-                <motion.div
-                  layoutId="active-pill"
-                  className="absolute inset-0 rounded-xl"
-                  style={{ background: "linear-gradient(135deg, rgba(14,165,233,0.16), rgba(6,182,212,0.08))", border: "1px solid rgba(14,165,233,0.3)", boxShadow: "0 6px 18px rgba(14,165,233,0.18)" }}
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                />
-              )}
-              <Icon size={16} className="relative z-10 flex-shrink-0" />
-              <span className="relative z-10">{item.label}</span>
-              {active && <ChevronRight size={14} className="relative z-10 ml-auto text-sky-600" />}
-            </Link>
+            <div key={item.href}>
+              {item.groupStart && <div className="mb-1 mt-4 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">{item.groupStart}</div>}
+              <Link
+                href={item.href}
+                onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all relative",
+                  active ? "text-sky-800" : "text-slate-500 hover:text-slate-800 hover:bg-sky-50",
+                )}
+              >
+                {active && (
+                  <motion.div
+                    layoutId="active-pill"
+                    className="absolute inset-0 rounded-xl"
+                    style={{ background: "linear-gradient(135deg, rgba(14,165,233,0.16), rgba(6,182,212,0.08))", border: "1px solid rgba(14,165,233,0.3)", boxShadow: "0 6px 18px rgba(14,165,233,0.18)" }}
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  />
+                )}
+                <Icon size={16} className="relative z-10 flex-shrink-0" />
+                <span className="relative z-10">{item.label}</span>
+                {active && <ChevronRight size={14} className="relative z-10 ml-auto text-sky-600" />}
+              </Link>
+            </div>
           );
         })}
       </nav>
