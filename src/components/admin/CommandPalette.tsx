@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
-import { Activity, ClipboardList, Dices, Gamepad2, LayoutDashboard, Layers, Mail, Send, ShieldCheck, Settings } from "lucide-react";
+import { Activity, ClipboardList, Dices, Gamepad2, HeartHandshake, LayoutDashboard, Layers, Mail, Send, ShieldCheck, Settings } from "lucide-react";
 import { listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms";
 import { listEvents, type EventRecord } from "@/lib/events";
 
@@ -16,6 +16,7 @@ const PAGES = [
   { label: "Bốc thăm gian hàng", href: "/admin/tools/booth-draw", icon: Dices },
   { label: "Thư viện game", href: "/games", icon: Gamepad2 },
   { label: "Trò chơi hợp lực (Lắc điện thoại)", href: "/admin/tools/flap", icon: Activity },
+  { label: "Trao lời chúc, nhận yêu thương", href: "/admin/tools/wish-wall", icon: HeartHandshake },
   { label: "Cài đặt", href: "/admin/settings", icon: Settings },
 ];
 

@@ -14,6 +14,7 @@ import {
   Gamepad2,
   Dices,
   Activity,
+  HeartHandshake,
   LogOut,
   Menu,
   X,
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
   { href: "/admin/tools/booth-draw", label: "Bốc thăm gian hàng", icon: Dices, groupStart: "Công cụ" },
   { href: "/admin/tools/flap", label: "Trò chơi hợp lực", icon: Activity },
+  { href: "/admin/tools/wish-wall", label: "Trao lời chúc", icon: HeartHandshake },
   { href: "/games", label: "Thư viện game", icon: Gamepad2 },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];

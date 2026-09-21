@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Dices,
   Gamepad2,
+  HeartHandshake,
   Mail,
   QrCode,
   ScanFace,
@@ -82,6 +83,14 @@ const FEATURES = [
     text: "Khán giả lắc điện thoại, đại bàng của mỗi đội bay trên màn hình LED. Chơi bằng cả Android lẫn iPhone.",
     href: "/admin/tools/flap",
     cta: "Xem cách chơi",
+  },
+  {
+    icon: HeartHandshake,
+    emoji: "💌",
+    title: "Trao lời chúc, nhận yêu thương",
+    text: "Khách gõ hoặc vẽ lời chúc trên tablet; lời chúc bay lên màn LED, xuyên qua tấm khiên rồi ghép thành một hình tập thể.",
+    href: "/admin/tools/wish-wall",
+    cta: "Mở công cụ",
   },
   {
     icon: Mail,
@@ -177,6 +186,13 @@ export default function HomePage() {
                     <span>
                       <span className="block text-sm font-semibold text-slate-800">Trò chơi hợp lực</span>
                       <span className="block text-[11px] text-slate-500">Lắc điện thoại, đại bàng tung cánh</span>
+                    </span>
+                  </Link>
+                  <Link href="/admin/tools/wish-wall" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
+                    <span className="text-lg">💌</span>
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">Trao lời chúc</span>
+                      <span className="block text-[11px] text-slate-500">Lời chúc bay lên màn LED</span>
                     </span>
                   </Link>
                 </div>
@@ -395,6 +411,7 @@ export default function HomePage() {
               links={[
                 { label: "Bốc thăm gian hàng", href: "/booth-draw" },
                 { label: "Trò chơi hợp lực", href: "/admin/tools/flap" },
+                { label: "Trao lời chúc", href: "/admin/tools/wish-wall" },
                 { label: "Thư viện game", href: "/games" },
                 { label: "Template email", href: "/admin/templates" },
               ]}

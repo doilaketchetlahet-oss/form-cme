@@ -81,6 +81,35 @@ the ledger, Supabase Realtime Broadcast (`flap:<CODE>`) is the display channel,
 and the LED board re-syncs from the API every 2s so a reconnect never loses the
 true score. Run `supabase/flap-race.sql` once.
 
+## Wish wall (added)
+
+"Trao lời chúc, nhận yêu thương" — a two-screen experience:
+
+- `/admin/tools/wish-wall` - create the event, theme, item, moderation,
+  shield/collector images, QR for the tablet and the LED wall.
+- `/wish/[code]` - tablet/mobile: pick a symbol, type or draw a wish, send
+  (optional `?edge=left|right|center` so multiple tablets enter from
+  different sides of the LED).
+- `/wish/[code]/wall` - LED screen: wishes fly in from the edge, pass through
+  the "shield", then drift and slowly crystallize into a collective shape
+  (heart/star/flower/text/image).
+- `/api/wish/[code]` - GET snapshot (public; `?scope=all` + admin bearer for
+  the moderation queue), POST `create` (admin) / `submit` (public),
+  PUT `settings|moderate|delete|clear|spotlight|absorb-all` (admin).
+- `/api/wish/[code]/asset` - admin upload for shield/collector/background
+  images into the public `wish-assets` bucket.
+
+Architecture: phones POST to the API (referee: length caps, per-IP cooldown,
+moderation), Postgres is the ledger, Supabase Realtime Broadcast
+(`wish:<CODE>`) is the display channel, and the LED wall re-syncs from the API
+every 6s so a reconnect never loses a wish. The wall renders on Canvas 2D
+(no extra deps) and only tracks a bounded number of floating items; older
+wishes absorb into the target shape.
+
+Run `supabase/wish-wall.sql` once. The shield and collective shape are
+procedural for now; upload a designed image from the admin Setup tab to
+replace them.
+
 ## Data Model Note
 
 The app keeps the legacy `quizzes` table as a lightweight owner/container table
