@@ -175,17 +175,17 @@ begin
     greatest(0, coalesce(p_max_total, 100000) - v_score)
   );
 
-  update public.flap_players
-     set score        = least(score + v_delta, p_max_total),
+  update public.flap_players p
+     set score        = least(p.score + v_delta, p_max_total),
          rate_tokens  = greatest(0, v_tokens - v_delta),
          rate_refilled_at = now(),
          last_seen_at = now()
-   where id = p_player_id
-     and token_hash = p_token_hash
-     and active = true
-  returning score into v_new;
+   where p.id = p_player_id
+     and p.token_hash = p_token_hash
+     and p.active = true
+  returning p.score into v_new;
 
-  return query select v_new, v_delta;
+  return query select v_new as score, v_delta as accepted_delta;
 end;
 $$;
 
