@@ -26,6 +26,8 @@ import {
   LockKeyhole,
   Map as MapIcon,
   MapPin,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   RefreshCw,
@@ -953,11 +955,13 @@ function ZoneField({ label, value, min = 0, max, disabled, onChange, onCommit }:
 
 function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void> }) {
   const apiOptions = useBoothApiOptions();
+  const drawScreenRef = useRef<HTMLDivElement>(null);
   const [poolId, setPoolId] = useState("");
   const [companyId, setCompanyId] = useState("");
   const [rotation, setRotation] = useState(0);
   const [spinning, setSpinning] = useState(false);
-  const [winner, setWinner] = useState<BoothDrawRpcResult | null>(null);
+  const [winners, setWinners] = useState<BoothDrawRpcResult[]>([]);
+  const [fullscreen, setFullscreen] = useState(false);
   const activePoolId = poolId || current.pools[0]?.id || "";
   const pool = current.pools.find((item) => item.id === activePoolId);
   const assignedCompanies = useMemo(() => new Set(current.assignments.map((item) => item.company_id)), [current.assignments]);
@@ -968,13 +972,25 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
   const selectedCompanyId = companies.some((item) => item.id === companyId) ? companyId : companies[0]?.id ?? "";
   const wheelGradient = booths.length > 0 ? `conic-gradient(${booths.map((_, index) => `${index % 2 === 0 ? pool?.color ?? "#0ea5e9" : "#e0f2fe"} ${index / booths.length * 100}% ${(index + 1) / booths.length * 100}%`).join(",")})` : "#e2e8f0";
 
+  useEffect(() => {
+    const handleFullscreen = () => setFullscreen(document.fullscreenElement === drawScreenRef.current);
+    document.addEventListener("fullscreenchange", handleFullscreen);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreen);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    if (!drawScreenRef.current) return;
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await drawScreenRef.current.requestFullscreen();
+  };
+
   const spin = () => run(async () => {
     if (!selectedCompanyId || booths.length === 0) throw new Error("Pool chưa đủ công ty hoặc gian hàng còn lại.");
     setSpinning(true);
-    setWinner(null);
+    setWinners([]);
     let result: BoothDrawRpcResult;
     try {
-      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() }, apiOptions);
+      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult; results: BoothDrawRpcResult[] }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() }, apiOptions);
       result = response.result;
       if (!result) throw new Error("Không nhận được kết quả quay.");
       const selectedIndex = Math.max(0, booths.findIndex((item) => item.id === result.booth_id));
@@ -985,14 +1001,14 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         return value + 1800 + (target - normalized + 360) % 360;
       });
       await new Promise((resolve) => window.setTimeout(resolve, 3600));
-      setWinner(result);
+      setWinners(response.results?.length ? response.results : [result]);
     } finally {
       setSpinning(false);
     }
   });
 
   const closeWinner = async () => {
-    setWinner(null);
+    setWinners([]);
     setCompanyId("");
     await refresh();
   };
@@ -1005,7 +1021,7 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
   });
 
   return (
-    <>
+    <div ref={drawScreenRef} className={cn(fullscreen && "min-h-screen overflow-y-auto bg-slate-100 p-4 sm:p-6")}>
       <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
         <section className="glass h-fit rounded-2xl p-5">
           <h3 className="font-bold text-slate-900">Lượt quay tiếp theo</h3>
@@ -1013,6 +1029,7 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Pool tài trợ</span><select value={activePoolId} onChange={(event) => { setPoolId(event.target.value); setCompanyId(""); }} className={fieldClass}>{current.pools.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Công ty</span><select value={selectedCompanyId} onChange={(event) => setCompanyId(event.target.value)} className={fieldClass}><option value="">Chọn công ty…</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>
             <div className="grid grid-cols-2 gap-3"><Metric value={companies.length} label="Công ty chưa quay" /><Metric value={booths.length} label="Gian còn lại" /></div>
+            {companies.length === 2 && booths.length === 2 && <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-700">Đây là lượt quay áp chót. Sau khi có kết quả, hệ thống sẽ tự gán gian còn lại cho công ty cuối và hiển thị cả hai vị trí.</p>}
             {companies.length > booths.length && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-700">Pool {pool?.name} thiếu {companies.length - booths.length} gian hàng. Hãy bổ sung trước khi quay hết.</p>}
             <button onClick={() => void spin()} disabled={!canManage || busy || spinning || !selectedCompanyId || booths.length === 0 || current.session.status === "finalized"} className={cn(primaryButton, "w-full py-3")}><Dices size={18} /> {spinning ? "Đang quay…" : "Quay gian hàng"}</button>
             {current.session.status === "finalized" && <p className="text-center text-xs text-slate-500">Phiên đã chốt, không thể quay thêm.</p>}
@@ -1020,6 +1037,10 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         </section>
 
         <section className="glass rounded-2xl p-5 sm:p-8">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div><h3 className="font-bold text-slate-900">Vòng quay pool {pool?.name ?? ""}</h3><p className="mt-0.5 text-xs text-slate-500">Mở toàn màn hình khi trình chiếu tại hội trường.</p></div>
+            <button onClick={() => void toggleFullscreen()} className={secondaryButton}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {fullscreen ? "Thu nhỏ" : "Toàn màn hình"}</button>
+          </div>
           <div className="mx-auto flex max-w-2xl flex-col items-center">
             <div className="relative w-full max-w-[480px]">
               <div className="absolute -top-3 left-1/2 z-20 h-0 w-0 -translate-x-1/2 border-x-[16px] border-t-[28px] border-x-transparent border-t-red-500 drop-shadow" />
@@ -1046,24 +1067,36 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{poolStats.map((item) => <div key={item.id} className="rounded-xl border border-slate-100 bg-white p-3"><div className="mb-2 flex items-center justify-between"><span className="text-sm font-bold text-slate-700">{item.name}</span><span className="h-2.5 w-2.5 rounded-full" style={{ background: item.color }} /></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${item.totalCompanies ? item.done / item.totalCompanies * 100 : 0}%`, background: item.color }} /></div><p className="mt-2 text-xs text-slate-500">{item.done}/{item.totalCompanies} đã quay · {item.available} gian trống</p></div>)}</div>
       </section>
 
-      {winner && <WinnerOverlay current={current} winner={winner} onClose={() => void closeWinner()} />}
-    </>
+      {winners.length > 0 && <WinnerOverlay current={current} winners={winners} onClose={() => void closeWinner()} />}
+    </div>
   );
 }
 
-function WinnerOverlay({ current, winner, onClose }: { current: BoothDrawState; winner: BoothDrawRpcResult; onClose: () => void }) {
-  const zone = current.booths.find((item) => item.id === winner.booth_id);
+function WinnerOverlay({ current, winners, onClose }: { current: BoothDrawState; winners: BoothDrawRpcResult[]; onClose: () => void }) {
+  const isFinalPair = winners.length === 2;
   return (
-    <div className="fixed inset-0 z-[80] overflow-auto bg-slate-950/80 p-4 backdrop-blur-md">
-      <div className="mx-auto flex min-h-full max-w-6xl items-center justify-center">
+    <div className="fixed inset-0 z-[80] overflow-auto bg-slate-950/90 p-3 backdrop-blur-md sm:p-5">
+      <div className="mx-auto flex min-h-full max-w-7xl items-center justify-center">
         <div className="w-full overflow-hidden rounded-3xl bg-white shadow-2xl">
-          <div className="p-5 text-center text-white" style={{ background: `linear-gradient(135deg, ${winner.pool_color}, #0f172a)` }}><p className="text-sm font-semibold uppercase tracking-[0.25em]">Kết quả pool {winner.pool_name}</p><h2 className="mt-2 text-3xl font-black sm:text-5xl">Gian {winner.booth_code}</h2><p className="mt-2 text-lg font-semibold">{winner.company_name}</p></div>
+          <div className="p-5 text-center text-white sm:p-7" style={{ background: `linear-gradient(135deg, ${winners[0].pool_color}, #0f172a)` }}>
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] sm:text-sm">Kết quả pool {winners[0].pool_name}</p>
+            {isFinalPair ? (
+              <><h2 className="mt-2 text-2xl font-black sm:text-4xl">Hai vị trí cuối đã được xác định</h2><p className="mt-2 text-sm text-white/80">Gian cuối được tự động gán vì chỉ còn một lựa chọn duy nhất.</p></>
+            ) : (
+              <><h2 className="mt-2 text-3xl font-black sm:text-5xl">Gian {winners[0].booth_code}</h2><p className="mt-2 text-lg font-semibold">{winners[0].company_name}</p></>
+            )}
+          </div>
           <div className="p-4 sm:p-6">
+            {isFinalPair && <div className="mb-4 grid gap-3 sm:grid-cols-2">{winners.map((winner, index) => <div key={winner.result_id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4"><span className={cn("grid h-14 w-14 shrink-0 place-items-center rounded-xl text-lg font-black text-white shadow-md", index === 0 ? "bg-red-500" : "bg-violet-600")}>{winner.booth_code}</span><div className="min-w-0"><p className="truncate font-bold text-slate-900 sm:text-lg">{winner.company_name}</p><p className="mt-0.5 text-xs text-slate-500">{index === 0 ? "Kết quả vừa quay" : "Tự động nhận gian còn lại"}</p></div></div>)}</div>}
             <div className="relative aspect-video overflow-hidden rounded-2xl border border-slate-200 bg-slate-100" style={!current.mapUrl ? { backgroundImage: "linear-gradient(#cbd5e1 1px, transparent 1px), linear-gradient(90deg, #cbd5e1 1px, transparent 1px)", backgroundSize: "24px 24px" } : undefined}>
               {current.mapUrl && <MapImage src={current.mapUrl} />}
-              {zone && <div className="absolute z-10 grid animate-pulse place-items-center border-4 border-white bg-red-500 text-sm font-black text-white shadow-[0_0_0_8px_rgba(239,68,68,.35),0_0_40px_rgba(239,68,68,.9)] sm:text-xl" style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, transform: `rotate(${zone.rotation}deg)` }}>{winner.booth_code}</div>}
+              {winners.map((winner, index) => {
+                const zone = current.booths.find((item) => item.id === winner.booth_id);
+                if (!zone) return null;
+                return <div key={winner.result_id} className={cn("absolute z-10 grid animate-pulse place-items-center overflow-hidden border-4 border-white text-center text-[9px] font-black text-white sm:text-sm", index === 0 ? "bg-red-500 shadow-[0_0_0_8px_rgba(239,68,68,.35),0_0_40px_rgba(239,68,68,.9)]" : "bg-violet-600 shadow-[0_0_0_8px_rgba(124,58,237,.35),0_0_40px_rgba(124,58,237,.8)]")} style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, transform: `rotate(${zone.rotation}deg)` }} title={`${winner.company_name} · Gian ${winner.booth_code}`}><span className="truncate px-1">{winner.booth_code}<span className="hidden sm:inline"> · {winner.company_name}</span></span></div>;
+              })}
             </div>
-            <button onClick={onClose} className={cn(primaryButton, "mx-auto mt-5 min-w-40 py-3")}><Check size={18} /> OK, quay tiếp</button>
+            <button onClick={onClose} className={cn(primaryButton, "mx-auto mt-5 min-w-44 py-3")}><Check size={18} /> {isFinalPair ? "OK, hoàn tất pool" : "OK, quay tiếp"}</button>
           </div>
         </div>
       </div>

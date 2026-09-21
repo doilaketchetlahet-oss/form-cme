@@ -571,6 +571,11 @@ declare
   v_booth booth_zones%rowtype;
   v_pool booth_pools%rowtype;
   v_result booth_draw_results%rowtype;
+  v_auto_company booth_companies%rowtype;
+  v_auto_booth booth_zones%rowtype;
+  v_auto_result booth_draw_results%rowtype;
+  v_remaining_companies integer;
+  v_remaining_booths integer;
 begin
   select * into v_session
   from booth_draw_sessions
@@ -640,6 +645,79 @@ begin
   select * into v_pool from booth_pools where id = v_company.pool_id;
   return query select v_result.id, v_company.id, v_company.name, v_booth.id,
     v_booth.booth_code, v_pool.id, v_pool.name, v_pool.color;
+
+  -- When this draw leaves exactly one company and one booth in the pool,
+  -- assign that unavoidable final pairing in the same locked transaction.
+  select count(*) into v_remaining_companies
+  from booth_companies c
+  where c.session_id = p_session_id
+    and c.pool_id = v_company.pool_id
+    and c.active = true
+    and not exists (
+      select 1 from booth_assignments a
+      where a.session_id = p_session_id and a.company_id = c.id
+    );
+
+  select count(*) into v_remaining_booths
+  from booth_zones z
+  where z.session_id = p_session_id
+    and z.pool_id = v_company.pool_id
+    and z.active = true
+    and not exists (
+      select 1 from booth_assignments a
+      where a.session_id = p_session_id and a.booth_id = z.id
+    )
+    and not exists (
+      select 1 from booth_draw_results r
+      where r.session_id = p_session_id and r.booth_id = z.id
+    );
+
+  if v_remaining_companies = 1 and v_remaining_booths = 1 then
+    select c.* into v_auto_company
+    from booth_companies c
+    where c.session_id = p_session_id
+      and c.pool_id = v_company.pool_id
+      and c.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.company_id = c.id
+      )
+    limit 1
+    for update;
+
+    select z.* into v_auto_booth
+    from booth_zones z
+    where z.session_id = p_session_id
+      and z.pool_id = v_company.pool_id
+      and z.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.booth_id = z.id
+      )
+      and not exists (
+        select 1 from booth_draw_results r
+        where r.session_id = p_session_id and r.booth_id = z.id
+      )
+    limit 1
+    for update;
+
+    insert into booth_draw_results (
+      session_id, pool_id, company_id, booth_id, request_key, drawn_by
+    ) values (
+      p_session_id, v_auto_company.pool_id, v_auto_company.id,
+      v_auto_booth.id, gen_random_uuid(), p_actor
+    ) returning * into v_auto_result;
+
+    insert into booth_assignments (
+      session_id, pool_id, company_id, booth_id, original_result_id, source, updated_by
+    ) values (
+      p_session_id, v_auto_company.pool_id, v_auto_company.id,
+      v_auto_booth.id, v_auto_result.id, 'draw', p_actor
+    );
+
+    return query select v_auto_result.id, v_auto_company.id, v_auto_company.name,
+      v_auto_booth.id, v_auto_booth.booth_code, v_pool.id, v_pool.name, v_pool.color;
+  end if;
 end;
 $$;
 

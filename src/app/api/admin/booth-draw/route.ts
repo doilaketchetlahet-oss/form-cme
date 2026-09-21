@@ -546,7 +546,7 @@ export async function POST(request: Request) {
       p_actor: auth.email,
     });
     if (error) return jsonError(databaseError(error), 409);
-    return NextResponse.json({ ok: true, result: data?.[0] ?? null });
+    return NextResponse.json({ ok: true, result: data?.[0] ?? null, results: data ?? [] });
   }
 
   if (action === "swap") {
