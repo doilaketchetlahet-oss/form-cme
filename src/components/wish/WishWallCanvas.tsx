@@ -467,14 +467,18 @@ export const WishWallCanvas = forwardRef<
     (event: WishEvent) => {
       eventRef.current = event;
       shapeRef.current = buildShapePoints(event.settings.shape, SHAPE_CAPACITY);
-      capacityRef.current = SHAPE_CAPACITY;
+      capacityRef.current = Math.min(
+        shapeRef.current.length || SHAPE_CAPACITY,
+        event.settings.shapeCapacity,
+      );
 
       const applyTarget = (img: HTMLImageElement) => {
-        if (eventRef.current?.settings.shape !== "image") return;
+        const current = eventRef.current;
+        if (current?.settings.shape !== "image") return;
         const points = extractShapePoints(img);
         if (points.length) {
           shapeRef.current = points;
-          capacityRef.current = Math.min(points.length, 100);
+          capacityRef.current = Math.min(points.length, current.settings.shapeCapacity);
         }
       };
 
@@ -817,9 +821,9 @@ export const WishWallCanvas = forwardRef<
         ctx.drawImage(target, bx + fit.dx * size, by + fit.dy * size, fit.dw * size, fit.dh * size);
         ctx.restore();
 
-        // Điểm tụ theo hình dạng ảnh — hiện mờ để thấy vùng sẽ lấp đầy.
+        // Điểm tụ theo hình dạng ảnh — hiện rất mờ để thấy vùng sẽ lấp đầy.
         ctx.save();
-        ctx.globalAlpha = 0.35;
+        ctx.globalAlpha = 0.22;
         ctx.fillStyle = accent;
         for (const point of points) {
           const screen = shapeToScreen(point, w, h);
@@ -868,16 +872,22 @@ export const WishWallCanvas = forwardRef<
         ctx.restore();
       }
 
-      // Các mảnh đã kết tinh vào hình ghép.
+      // Các mảnh đã kết tinh vào hình ghép — hiện đúng biểu tượng của lời chúc.
+      const nodeSize = Math.max(15, Math.min(w, h) * 0.022);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
       for (const node of settledRef.current) {
         ctx.save();
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = 0.95;
         ctx.shadowColor = node.color;
         ctx.shadowBlur = 16;
         ctx.fillStyle = node.color;
         ctx.beginPath();
-        ctx.arc(node.x, node.y, 4.5, 0, Math.PI * 2);
+        ctx.arc(node.x, node.y, nodeSize * 0.48, 0, Math.PI * 2);
         ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.font = `${nodeSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+        ctx.fillText(node.symbol, node.x, node.y + 1);
         ctx.restore();
       }
 

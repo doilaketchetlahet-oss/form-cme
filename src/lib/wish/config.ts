@@ -94,6 +94,8 @@ export type WishSettings = {
   showNames: boolean;
   /** Số lời chúc trôi nổi cùng lúc trước khi lời cũ kết tinh vào hình ghép. */
   maxFloating: number;
+  /** Số lời chúc kết tinh để hoàn thành (bùng sáng) hình ghép tập thể. */
+  shapeCapacity: number;
 };
 
 export const DEFAULT_WISH_SETTINGS: WishSettings = {
@@ -110,6 +112,7 @@ export const DEFAULT_WISH_SETTINGS: WishSettings = {
   backgroundUrl: null,
   showNames: true,
   maxFloating: 22,
+  shapeCapacity: 48,
 };
 
 export type WishKind = "symbol" | "text" | "drawing";
@@ -217,6 +220,7 @@ export function normalizeWishSettings(input: unknown): WishSettings {
     backgroundUrl: cleanUrl(raw.backgroundUrl),
     showNames: raw.showNames !== false,
     maxFloating: clampInt(raw.maxFloating, 6, 60, DEFAULT_WISH_SETTINGS.maxFloating),
+    shapeCapacity: clampInt(raw.shapeCapacity, 12, 200, DEFAULT_WISH_SETTINGS.shapeCapacity),
   };
 }
 

@@ -408,6 +408,10 @@ export function WishWallManager() {
                     <span className="mb-1 block text-[11px] text-slate-500">Số lời chúc trôi</span>
                     <input type="number" min={6} max={60} value={draft.maxFloating} onChange={(e) => patch({ maxFloating: Number(e.target.value) })} className="admin-field w-full rounded-lg px-2 py-1.5 text-xs" />
                   </label>
+                  <label>
+                    <span className="mb-1 block text-[11px] text-slate-500">Số chấm để hoàn thành</span>
+                    <input type="number" min={12} max={200} value={draft.shapeCapacity} onChange={(e) => patch({ shapeCapacity: Number(e.target.value) })} className="admin-field w-full rounded-lg px-2 py-1.5 text-xs" />
+                  </label>
                 </div>
 
                 <div className="space-y-2">
