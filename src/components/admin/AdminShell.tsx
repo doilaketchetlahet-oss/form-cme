@@ -13,6 +13,7 @@ import {
   QrCode,
   Gamepad2,
   Dices,
+  Activity,
   LogOut,
   Menu,
   X,
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   // { href: "/admin/campaigns", label: "Chiến dịch email", icon: Send },
   { href: "/admin/permissions", label: "Phân quyền", icon: ShieldCheck },
   { href: "/admin/tools/booth-draw", label: "Bốc thăm gian hàng", icon: Dices, groupStart: "Công cụ" },
+  { href: "/admin/tools/flap", label: "Trò chơi hợp lực", icon: Activity },
   { href: "/games", label: "Thư viện game", icon: Gamepad2 },
   { href: "/admin/settings", label: "Cài đặt", icon: Settings },
 ];

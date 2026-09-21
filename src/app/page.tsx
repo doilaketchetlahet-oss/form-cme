@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
+  Activity,
   BarChart3,
+  ChevronDown,
   ClipboardList,
   Dices,
   Gamepad2,
@@ -72,6 +74,14 @@ const FEATURES = [
     text: "18 game tương tác cho hội thảo: Quiz, Lucky Wheel, Trúc Xanh, Chém Hoa Quả…",
     href: "/games",
     cta: "Chơi thử",
+  },
+  {
+    icon: Activity,
+    emoji: "🦅",
+    title: "Trò chơi hợp lực",
+    text: "Khán giả lắc điện thoại, đại bàng của mỗi đội bay trên màn hình LED. Chơi bằng cả Android lẫn iPhone.",
+    href: "/admin/tools/flap",
+    cta: "Xem cách chơi",
   },
   {
     icon: Mail,
@@ -150,7 +160,27 @@ export default function HomePage() {
               <a href="#features" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Tính năng</a>
               <a href="#how" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Quy trình</a>
               <a href="#games" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Thư viện game</a>
-              <Link href="/booth-draw" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Bốc thăm gian hàng</Link>
+              <div className="group relative">
+                <button className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">
+                  Công cụ <ChevronDown size={14} className="transition-transform group-hover:rotate-180" />
+                </button>
+                <div className="invisible absolute left-0 top-full z-50 w-64 translate-y-1 rounded-2xl border border-sky-100 bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:translate-y-0 group-hover:opacity-100">
+                  <Link href="/booth-draw" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
+                    <span className="text-lg">🎲</span>
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">Bốc thăm gian hàng</span>
+                      <span className="block text-[11px] text-slate-500">Chia gian hàng cho nhà tài trợ</span>
+                    </span>
+                  </Link>
+                  <Link href="/admin/tools/flap" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
+                    <span className="text-lg">🦅</span>
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">Trò chơi hợp lực</span>
+                      <span className="block text-[11px] text-slate-500">Lắc điện thoại, đại bàng tung cánh</span>
+                    </span>
+                  </Link>
+                </div>
+              </div>
               <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Đăng nhập</Link>
             </nav>
 
@@ -363,10 +393,10 @@ export default function HomePage() {
             <FooterColumn
               title="Công cụ"
               links={[
-                { label: "Form CME", href: "/admin/forms" },
-                { label: "QR check-in", href: "/admin/forms" },
+                { label: "Bốc thăm gian hàng", href: "/booth-draw" },
+                { label: "Trò chơi hợp lực", href: "/admin/tools/flap" },
+                { label: "Thư viện game", href: "/games" },
                 { label: "Template email", href: "/admin/templates" },
-                { label: "Báo cáo", href: "/admin/forms" },
               ]}
             />
             <FooterColumn
