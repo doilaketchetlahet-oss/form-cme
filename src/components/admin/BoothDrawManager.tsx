@@ -19,9 +19,11 @@ import {
   CircleHelp,
   Copy,
   Dices,
+  ExternalLink,
   History,
   ImagePlus,
   LayoutGrid,
+  KeyRound,
   Loader2,
   LockKeyhole,
   Map as MapIcon,
@@ -159,6 +161,7 @@ function BoothDrawWorkspace({
   const [newEventId, setNewEventId] = useState("");
   const [newSessionName, setNewSessionName] = useState("Bốc thăm gian hàng");
   const [newPoolText, setNewPoolText] = useState("");
+  const [recoverPasscode, setRecoverPasscode] = useState("");
 
   const refresh = useCallback(async (id?: string) => {
     setLoading(true);
@@ -215,6 +218,17 @@ function BoothDrawWorkspace({
     setTab("setup");
     await refresh(result.id);
   }, `Đã tạo phiên với ${lines(newPoolText).length} pool.`);
+
+  const recoverSession = () => run(async () => {
+    const result = await mutateBoothDraw<{ id: string }>({ action: "find_public_session" }, { publicMode: true, passcode: recoverPasscode });
+    onPasscodeChange?.(recoverPasscode);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(`booth-passcode:${result.id}`, recoverPasscode);
+      window.history.replaceState(null, "", `/booth-draw?session=${encodeURIComponent(result.id)}`);
+    }
+    setTab("setup");
+    await refresh(result.id);
+  }, "Đã mở lại dự án. Bạn có thể tiếp tục xem và chỉnh sửa.");
 
   const openSession = (id: string) => {
     setTab("setup");
@@ -306,13 +320,16 @@ function BoothDrawWorkspace({
           sessionName={newSessionName}
           poolText={newPoolText}
           passcode={passcode}
+          recoverPasscode={recoverPasscode}
           publicMode={publicMode}
           busy={busy}
           onEventId={setNewEventId}
           onSessionName={setNewSessionName}
           onPoolText={setNewPoolText}
           onPasscode={onPasscodeChange}
+          onRecoverPasscode={setRecoverPasscode}
           onCreate={() => void createSession()}
+          onRecover={() => void recoverSession()}
           onOpen={openSession}
         />
       ) : (
@@ -431,13 +448,16 @@ function SessionHome({
   sessionName,
   poolText,
   passcode,
+  recoverPasscode,
   publicMode,
   busy,
   onEventId,
   onSessionName,
   onPoolText,
   onPasscode,
+  onRecoverPasscode,
   onCreate,
+  onRecover,
   onOpen,
 }: {
   data: BoothDrawResponse | null;
@@ -446,17 +466,35 @@ function SessionHome({
   sessionName: string;
   poolText: string;
   passcode: string;
+  recoverPasscode: string;
   publicMode: boolean;
   busy: boolean;
   onEventId: (value: string) => void;
   onSessionName: (value: string) => void;
   onPoolText: (value: string) => void;
   onPasscode?: (value: string) => void;
+  onRecoverPasscode: (value: string) => void;
   onCreate: () => void;
+  onRecover: () => void;
   onOpen: (id: string) => void;
 }) {
   return (
-    <div className={cn("grid gap-6", publicMode ? "mx-auto max-w-xl" : "xl:grid-cols-[380px_1fr]")}>
+    <div className={cn("grid gap-6", publicMode ? "mx-auto max-w-5xl lg:grid-cols-[0.85fr_1.15fr]" : "xl:grid-cols-[380px_1fr]")}>
+      {publicMode && <section className="glass h-fit rounded-2xl border-sky-200 p-5 lg:sticky lg:top-24">
+        <div className="grid h-11 w-11 place-items-center rounded-xl bg-sky-50 text-sky-600"><KeyRound size={21} /></div>
+        <h2 className="mt-4 text-lg font-bold text-slate-900">Mở lại dự án</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-500">Nhập passcode đã dùng khi tạo. Hệ thống sẽ tìm đúng dự án còn hiệu lực và mở toàn bộ dữ liệu bạn đã thiết lập.</p>
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-xs font-semibold text-slate-500">Passcode dự án</span>
+          <input type="password" value={recoverPasscode} onChange={(event) => onRecoverPasscode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && recoverPasscode.trim().length >= 6) onRecover(); }} className={fieldClass} placeholder="Nhập passcode để mở lại" minLength={6} maxLength={64} autoComplete="current-password" />
+        </label>
+        <button onClick={onRecover} disabled={busy || recoverPasscode.trim().length < 6} className={cn(primaryButton, "mt-3 w-full")}>
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Mở dự án của tôi
+        </button>
+        <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+          <strong>Mục đích của passcode:</strong> vừa là mã tìm lại dự án, vừa xác nhận quyền thêm, sửa hoặc xoá dữ liệu. Người có link xem sơ đồ không thể chỉnh sửa nếu không biết passcode.
+        </div>
+      </section>}
       <section className="glass h-fit rounded-2xl p-5">
         <h2 className="flex items-center gap-2 text-base font-bold text-slate-900"><Plus size={17} className="text-sky-500" /> Tạo phiên bốc thăm</h2>
         <p className="mt-1 text-sm text-slate-500">{publicMode ? "Tạo miễn phí, không cần tài khoản. Phiên và dữ liệu sẽ tự xoá sau 7 ngày." : "Mỗi phiên thuộc một sự kiện. Bạn tự đặt tên và số lượng pool theo cơ cấu tài trợ thực tế."}</p>
@@ -483,7 +521,7 @@ function SessionHome({
           {publicMode && <label className="block">
             <span className="mb-1.5 block text-xs font-semibold text-slate-500">Passcode chỉnh sửa <span className="text-red-500">*</span></span>
             <input type="password" value={passcode} onChange={(event) => onPasscode?.(event.target.value)} className={fieldClass} placeholder="Ít nhất 6 ký tự" minLength={6} maxLength={64} autoComplete="new-password" />
-            <span className="mt-1 block text-[11px] text-slate-400">Hãy lưu lại passcode. Hệ thống chỉ lưu bản băm và không thể khôi phục passcode.</span>
+            <span className="mt-1 block text-[11px] text-slate-400">Passcode phải riêng biệt. Sau này chỉ cần nhập lại mã này để tìm, xem và tiếp tục chỉnh sửa dự án trong thời hạn 7 ngày.</span>
           </label>}
           {!publicMode && data?.events.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-700">Chưa có sự kiện. Hãy tạo sự kiện tại mục “Sự kiện” trước.</p>}
           <button onClick={onCreate} disabled={!canManage || busy || (!publicMode && !eventId) || (publicMode && passcode.trim().length < 6) || lines(poolText).length === 0} className={cn(primaryButton, "w-full")}>
@@ -1039,7 +1077,10 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         <section className="glass rounded-2xl p-5 sm:p-8">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div><h3 className="font-bold text-slate-900">Vòng quay pool {pool?.name ?? ""}</h3><p className="mt-0.5 text-xs text-slate-500">Mở toàn màn hình khi trình chiếu tại hội trường.</p></div>
-            <button onClick={() => void toggleFullscreen()} className={secondaryButton}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {fullscreen ? "Thu nhỏ" : "Toàn màn hình"}</button>
+            <div className="flex flex-wrap justify-end gap-2">
+              {current.session.share_token && current.session.share_enabled !== false ? <a href={`/booth-map/${encodeURIComponent(current.session.share_token)}`} target="_blank" rel="noreferrer" className={secondaryButton}><MapIcon size={16} /> Sơ đồ tổng thể</a> : <button disabled className={secondaryButton}><MapIcon size={16} /> Sơ đồ tổng thể</button>}
+              <button onClick={() => void toggleFullscreen()} className={secondaryButton}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {fullscreen ? "Thu nhỏ" : "Toàn màn hình"}</button>
+            </div>
           </div>
           <div className="mx-auto flex max-w-2xl flex-col items-center">
             <div className="relative w-full max-w-[480px]">
@@ -1096,7 +1137,10 @@ function WinnerOverlay({ current, winners, onClose }: { current: BoothDrawState;
                 return <div key={winner.result_id} className={cn("absolute z-10 grid animate-pulse place-items-center overflow-hidden border-4 border-white text-center text-[9px] font-black text-white sm:text-sm", index === 0 ? "bg-red-500 shadow-[0_0_0_8px_rgba(239,68,68,.35),0_0_40px_rgba(239,68,68,.9)]" : "bg-violet-600 shadow-[0_0_0_8px_rgba(124,58,237,.35),0_0_40px_rgba(124,58,237,.8)]")} style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, transform: `rotate(${zone.rotation}deg)` }} title={`${winner.company_name} · Gian ${winner.booth_code}`}><span className="truncate px-1">{winner.booth_code}<span className="hidden sm:inline"> · {winner.company_name}</span></span></div>;
               })}
             </div>
-            <button onClick={onClose} className={cn(primaryButton, "mx-auto mt-5 min-w-44 py-3")}><Check size={18} /> {isFinalPair ? "OK, hoàn tất pool" : "OK, quay tiếp"}</button>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+              {current.session.share_token && current.session.share_enabled !== false && <a href={`/booth-map/${encodeURIComponent(current.session.share_token)}`} target="_blank" rel="noreferrer" className={cn(secondaryButton, "min-w-48 py-3")}><ExternalLink size={17} /> Xem sơ đồ tổng thể</a>}
+              <button onClick={onClose} className={cn(primaryButton, "min-w-44 py-3")}><Check size={18} /> {isFinalPair ? "OK, hoàn tất pool" : "OK, quay tiếp"}</button>
+            </div>
           </div>
         </div>
       </div>

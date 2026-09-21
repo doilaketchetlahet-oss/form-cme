@@ -1,10 +1,11 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export type PublicBoothSessionRow = {
   id: string;
   access_mode: "admin" | "public";
   passcode_hash: string | null;
+  passcode_lookup: string | null;
   expires_at: string | null;
 };
 
@@ -44,6 +45,12 @@ export function hashBoothPasscode(passcode: string) {
   return `scrypt$${salt.toString("base64url")}$${hash.toString("base64url")}`;
 }
 
+export function boothPasscodeLookup(passcode: string) {
+  const serverSecret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serverSecret) throw new Error("Thiếu cấu hình Supabase server.");
+  return createHmac("sha256", serverSecret).update(passcode).digest("hex");
+}
+
 export function verifyBoothPasscode(passcode: string, stored: string | null) {
   if (!stored) return false;
   const [algorithm, saltText, hashText] = stored.split("$");
@@ -72,7 +79,7 @@ export async function authorizePublicBoothWrite(
 
   const { data, error } = await service
     .from("booth_draw_sessions")
-    .select("id, access_mode, passcode_hash, expires_at")
+    .select("id, access_mode, passcode_hash, passcode_lookup, expires_at")
     .eq("id", sessionId)
     .maybeSingle();
   if (error) return { error: error.message, status: 500 };
@@ -87,5 +94,12 @@ export async function authorizePublicBoothWrite(
     return { error: "Passcode không đúng.", status: 403 };
   }
   attempts.delete(failureKey);
+  if (!session.passcode_lookup) {
+    await service
+      .from("booth_draw_sessions")
+      .update({ passcode_lookup: boothPasscodeLookup(passcode) })
+      .eq("id", session.id)
+      .is("passcode_lookup", null);
+  }
   return { session };
 }

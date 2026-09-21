@@ -4,6 +4,7 @@
 alter table booth_draw_sessions alter column event_id drop not null;
 alter table booth_draw_sessions add column if not exists access_mode text not null default 'admin';
 alter table booth_draw_sessions add column if not exists passcode_hash text;
+alter table booth_draw_sessions add column if not exists passcode_lookup text;
 alter table booth_draw_sessions add column if not exists expires_at timestamptz;
 alter table booth_draw_sessions add column if not exists starts_at timestamptz;
 alter table booth_draw_sessions add column if not exists ends_at timestamptz;
@@ -42,6 +43,8 @@ $$;
 create index if not exists idx_booth_sessions_expiry on booth_draw_sessions(expires_at)
   where access_mode = 'public';
 create unique index if not exists idx_booth_sessions_share_token on booth_draw_sessions(share_token);
+create unique index if not exists idx_booth_sessions_passcode_lookup on booth_draw_sessions(passcode_lookup)
+  where passcode_lookup is not null;
 
 create or replace function apply_booth_style_to_pool(
   p_session_id uuid,

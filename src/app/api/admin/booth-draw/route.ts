@@ -3,9 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { authorizeAdminApi } from "@/lib/server/admin-api";
 import {
   authorizePublicBoothWrite,
+  boothPasscodeLookup,
   checkPublicBoothRateLimit,
   createBoothServiceClient,
   hashBoothPasscode,
+  verifyBoothPasscode,
 } from "@/lib/server/booth-public-access";
 
 export const runtime = "nodejs";
@@ -50,7 +52,7 @@ function databaseError(error: { code?: string; message?: string } | null | undef
   if (message.includes("BOOTH_NOT_FOUND")) return "Không tìm thấy gian hàng trong phiên này.";
   if (message.includes("INVALID_SIZE")) return "Kích thước gian hàng không hợp lệ.";
   if (message.includes("violates foreign key constraint")) return "Dữ liệu đã được sử dụng và không thể xóa.";
-  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("share_token") || message.includes("starts_at")) {
+  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("passcode_lookup") || message.includes("share_token") || message.includes("starts_at")) {
     return "Chưa cập nhật chức năng phiên công khai. Hãy chạy supabase/booth-draw-public.sql.";
   }
   return message;
@@ -215,6 +217,21 @@ async function createPublicSession(request: Request, payload: Record<string, unk
   const name = cleanText(payload.name) || "Bốc thăm gian hàng";
   const passcode = cleanText(payload.passcode, 64);
   if (passcode.length < 6) return jsonError("Passcode cần có ít nhất 6 ký tự.");
+  const passcodeLookup = boothPasscodeLookup(passcode);
+
+  const { data: existingSession, error: existingError } = await service
+    .from("booth_draw_sessions")
+    .select("id, expires_at, map_path")
+    .eq("passcode_lookup", passcodeLookup)
+    .maybeSingle();
+  if (existingError) return jsonError(databaseError(existingError), 500);
+  if (existingSession) {
+    if (existingSession.expires_at && new Date(existingSession.expires_at).getTime() > Date.now()) {
+      return jsonError("Passcode này đang được dùng cho một dự án khác. Hãy chọn passcode khác hoặc dùng nó để mở lại dự án.", 409);
+    }
+    if (existingSession.map_path) await service.storage.from("booth-maps").remove([existingSession.map_path]);
+    await service.from("booth_draw_sessions").delete().eq("id", existingSession.id);
+  }
 
   const seenPoolNames = new Set<string>();
   const customPoolNames = Array.isArray(payload.poolNames)
@@ -235,6 +252,7 @@ async function createPublicSession(request: Request, payload: Record<string, unk
       name,
       access_mode: "public",
       passcode_hash: hashBoothPasscode(passcode),
+      passcode_lookup: passcodeLookup,
       expires_at: expiresAt,
       created_by: "public",
     })
@@ -258,12 +276,62 @@ async function createPublicSession(request: Request, payload: Record<string, unk
   return NextResponse.json({ ok: true, id: session.id, expiresAt });
 }
 
+async function findPublicSession(request: Request, payload: Record<string, unknown>) {
+  if (!checkPublicBoothRateLimit(request, "recover-session", 8, 15 * 60 * 1000)) {
+    return jsonError("Bạn đã thử quá nhiều lần. Vui lòng đợi 15 phút.", 429);
+  }
+  const passcode = cleanText(payload.passcode, 64);
+  if (passcode.length < 6) return jsonError("Nhập passcode có ít nhất 6 ký tự.");
+  const service = createBoothServiceClient();
+  if (!service) return jsonError("Thiếu cấu hình Supabase server.", 500);
+
+  const lookup = boothPasscodeLookup(passcode);
+  const now = new Date().toISOString();
+  const { data: direct, error: directError } = await service
+    .from("booth_draw_sessions")
+    .select("id, passcode_hash, passcode_lookup, expires_at")
+    .eq("access_mode", "public")
+    .eq("passcode_lookup", lookup)
+    .gt("expires_at", now)
+    .maybeSingle();
+  if (directError) return jsonError(databaseError(directError), 500);
+
+  let match = direct;
+  if (match && !verifyBoothPasscode(passcode, match.passcode_hash)) match = null;
+
+  // Older public sessions predate the deterministic lookup. Scan only recent,
+  // still-active rows once, verify the strong scrypt hash, then upgrade the row.
+  if (!match) {
+    const { data: candidates, error } = await service
+      .from("booth_draw_sessions")
+      .select("id, passcode_hash, passcode_lookup, expires_at")
+      .eq("access_mode", "public")
+      .gt("expires_at", now)
+      .order("updated_at", { ascending: false })
+      .limit(50);
+    if (error) return jsonError(databaseError(error), 500);
+    const matches = (candidates ?? []).filter((candidate) => verifyBoothPasscode(passcode, candidate.passcode_hash));
+    if (matches.length > 1) {
+      return jsonError("Có nhiều dự án cũ dùng cùng passcode. Hãy mở bằng link quản lý ban đầu rồi đổi sang passcode riêng.", 409);
+    }
+    match = matches[0] ?? null;
+  }
+
+  if (!match) return jsonError("Không tìm thấy dự án còn hiệu lực với passcode này.", 404);
+  if (match.passcode_lookup !== lookup) {
+    const { error } = await service.from("booth_draw_sessions").update({ passcode_lookup: lookup }).eq("id", match.id);
+    if (error) return jsonError("Passcode này đang trùng với một dự án khác. Hãy mở bằng link quản lý ban đầu.", 409);
+  }
+  return NextResponse.json({ ok: true, id: match.id, expiresAt: match.expires_at });
+}
+
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null) as Record<string, unknown> | null;
   const action = cleanText(payload?.action, 40);
   if (!payload || !action) return jsonError("Dữ liệu không hợp lệ.");
 
   if (action === "create_public_session") return createPublicSession(request, payload);
+  if (action === "find_public_session") return findPublicSession(request, payload);
 
   const adminAuth = await authorizeAdminApi(request, true);
   let auth: { email: string; service: SupabaseClient };

@@ -12,6 +12,7 @@ create table if not exists booth_draw_sessions (
   access_mode text not null default 'admin'
     check (access_mode in ('admin', 'public')),
   passcode_hash text,
+  passcode_lookup text,
   expires_at timestamptz,
   starts_at timestamptz,
   ends_at timestamptz,
@@ -116,6 +117,8 @@ create index if not exists idx_booth_sessions_event on booth_draw_sessions(event
 create index if not exists idx_booth_sessions_expiry on booth_draw_sessions(expires_at)
   where access_mode = 'public';
 create unique index if not exists idx_booth_sessions_share_token on booth_draw_sessions(share_token);
+create unique index if not exists idx_booth_sessions_passcode_lookup on booth_draw_sessions(passcode_lookup)
+  where passcode_lookup is not null;
 create index if not exists idx_booth_pools_session on booth_pools(session_id, sort_order);
 create index if not exists idx_booth_companies_pool on booth_companies(pool_id, draw_order);
 create index if not exists idx_booth_zones_pool on booth_zones(pool_id, booth_code);
