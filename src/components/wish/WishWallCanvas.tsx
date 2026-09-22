@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { WISH_THEMES, type Wish, type WishEdge, type WishEvent } from "@/lib/wish/config";
-import { buildShapePoints, type ShapePoint } from "@/lib/wish/shapes";
+import { buildShapePoints, spreadShapePoints, type ShapePoint } from "@/lib/wish/shapes";
 
 export type WishWallHandle = {
   addWish: (wish: Wish, edge?: WishEdge) => void;
@@ -40,10 +40,9 @@ type Item = {
 };
 
 type Settled = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  id: string;
+  point: ShapePoint;
+  layout: CardLayout;
   angle: number;
   sprite: HTMLCanvasElement;
 };
@@ -228,9 +227,28 @@ function drawWishCard(
   }
 }
 
-/** Tỉ lệ thu nhỏ của mảnh đã kết tinh so với thẻ gốc. */
-function settledScale(w: number, h: number) {
-  return Math.min(0.5, Math.max(0.22, (Math.min(w, h) * 0.11) / BASE_CARD_W));
+/** Tỉ lệ thu nhỏ vừa một ô trong hình ghép, tránh các thẻ đè lên nhau. */
+function settledScale(
+  screenW: number,
+  screenH: number,
+  capacity: number,
+  shapeScale: number,
+  layout: CardLayout,
+) {
+  const shapeSize = Math.min(screenW, screenH) * shapeScale;
+  const cell = shapeSize / Math.sqrt(Math.max(12, capacity));
+  const spriteW = layout.w + SPRITE_PAD * 2;
+  const spriteH = layout.h + SPRITE_PAD * 2;
+  return Math.min(0.42, Math.max(0.1, Math.min((cell * 0.86) / spriteW, (cell * 0.86) / spriteH)));
+}
+
+/** Co thẻ trôi theo diện tích thực tế để số lượng admin chọn không bị chồng thành cụm. */
+function floatingScale(item: Pick<Item, "w" | "h">, w: number, h: number, count: number) {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count) * (w / Math.max(h, 1)))));
+  const rows = Math.max(1, Math.ceil(Math.max(1, count) / columns));
+  const cellW = (w * 0.86) / columns;
+  const cellH = (h * 0.66) / rows;
+  return Math.min(1, Math.max(0.38, Math.min(cellW / (item.w * 1.14), cellH / (item.h * 1.14))));
 }
 
 const SPRITE_PAD = 34;
@@ -267,11 +285,9 @@ function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
 
-const SHAPE_BOX = 0.84;
-
 /** Ánh xạ điểm hình ghép (0..1) vào giữa màn hình theo một ô vuông vừa phải. */
-function shapeToScreen(point: ShapePoint, w: number, h: number) {
-  const size = Math.min(w, h) * SHAPE_BOX;
+function shapeToScreen(point: ShapePoint, w: number, h: number, scale = 0.82) {
+  const size = Math.min(w, h) * scale;
   return {
     x: (w - size) / 2 + point.x * size,
     y: (h - size) / 2 + point.y * size,
@@ -320,6 +336,7 @@ export const WishWallCanvas = forwardRef<
   const capacityRef = useRef(SHAPE_CAPACITY);
   const completionRef = useRef(0);
   const clearSettledAtRef = useRef(0);
+  const lastSettlementAtRef = useRef(0);
   const flashRef = useRef<{ startedAt: number; color: string; duration: number } | null>(null);
   const sizeRef = useRef({ w: 1, h: 1 });
   const imagesRef = useRef<{
@@ -413,22 +430,98 @@ export const WishWallCanvas = forwardRef<
 
   const beginAbsorb = useCallback((item: Item) => {
     const points = shapeRef.current;
-    const { w, h } = sizeRef.current;
     item.phase = "absorbing";
     if (!points.length) {
-      item.target = { x: w * 0.5, y: h * 0.5 };
+      item.target = { x: 0.5, y: 0.5 };
       return;
     }
     const point = points[assignRef.current % points.length] ?? points[0]!;
-    item.target = shapeToScreen(point, w, h);
+    item.target = point;
     assignRef.current += 1;
+  }, []);
+
+  const settleWish = useCallback((wish: Wish, point: ShapePoint) => {
+    const event = eventRef.current;
+    const light = event?.settings.theme === "light";
+    const key = `${wish.id}:${light ? 1 : 0}`;
+    let sprite = spriteRef.current.get(key);
+    if (!sprite) {
+      const rendered = renderCardSprite(wish, BASE_CARD_W, light);
+      if (rendered) {
+        spriteRef.current.set(key, rendered);
+        sprite = rendered;
+      }
+    }
+    if (!sprite) return;
+    const layout = measureCard(wish, BASE_CARD_W);
+    settledRef.current.push({
+      id: wish.id,
+      point,
+      layout,
+      angle: (Math.random() - 0.5) * 0.18,
+      sprite,
+    });
   }, []);
 
   const syncWishes = useCallback(
     (wishes: Wish[]) => {
+      const approved = wishes.filter((wish) => wish.status === "approved");
+      if (knownRef.current.size === 0 && approved.length > 0) {
+        for (const wish of approved) {
+          knownRef.current.add(wish.id);
+          wishMapRef.current.set(wish.id, wish);
+        }
+
+        // Khôi phục màn LED không cho hàng trăm thẻ bay chồng lên nhau.
+        const event = eventRef.current;
+        const floatingCount = Math.min(event?.settings.maxFloating ?? 22, approved.length);
+        const floatingStart = approved.length - floatingCount;
+        const settledStart = Math.max(0, floatingStart - capacityRef.current);
+        const points = shapeRef.current;
+        for (let i = settledStart; i < floatingStart; i += 1) {
+          const wish = approved[i]!;
+          const point = points[assignRef.current % Math.max(1, points.length)] ?? { x: 0.5, y: 0.5 };
+          settleWish(wish, point);
+          assignRef.current += 1;
+        }
+
+        const { w, h } = sizeRef.current;
+        for (let i = floatingStart; i < approved.length; i += 1) {
+          const wish = approved[i]!;
+          const layout = measureCard(wish, BASE_CARD_W);
+          const column = i - floatingStart;
+          const columns = Math.max(1, Math.ceil(Math.sqrt(floatingCount * (w / Math.max(h, 1)))));
+          const rows = Math.max(1, Math.ceil(floatingCount / columns));
+          const col = column % columns;
+          const row = Math.floor(column / columns);
+          itemsRef.current.push({
+            id: wish.id,
+            wish,
+            w: layout.w,
+            h: layout.h,
+            x: w * ((col + 1) / (columns + 1)),
+            y: h * (0.2 + ((row + 0.5) / rows) * 0.62),
+            vx: (Math.random() - 0.5) * 12,
+            vy: (Math.random() - 0.5) * 8,
+            rot: (Math.random() - 0.5) * 0.16,
+            vr: (Math.random() - 0.5) * 0.12,
+            scale: floatingScale(layout, w, h, floatingCount),
+            alpha: 1,
+            phase: "free",
+            born: Date.now() - Math.random() * LIFETIME_MS * 0.65,
+            from: { x: 0, y: 0 },
+            to: { x: 0, y: 0 },
+            t: 0,
+            tDur: 1,
+            bob: Math.random() * Math.PI * 2,
+            target: null,
+          });
+        }
+        return;
+      }
       for (const wish of wishes) addWish(wish);
     },
-    [addWish],
+    [addWish, settleWish],
   );
 
   const removeWish = useCallback((wishId: string) => {
@@ -436,13 +529,14 @@ export const WishWallCanvas = forwardRef<
     wishMapRef.current.delete(wishId);
     itemDestRef.current.delete(wishId);
     itemsRef.current = itemsRef.current.filter((item) => item.id !== wishId);
+    settledRef.current = settledRef.current.filter((item) => item.id !== wishId);
   }, []);
 
   /**
    * Đọc hình dạng ảnh do admin tải lên để biến chính ảnh thành vùng tụ:
    * lấy các pixel đậm (ảnh nền trắng) hoặc không trong suốt (ảnh PNG) làm điểm hội tụ.
    */
-  const extractShapePoints = useCallback((img: HTMLImageElement): ShapePoint[] => {
+  const extractShapePoints = useCallback((img: HTMLImageElement, event: WishEvent): ShapePoint[] => {
     const maxSide = 96;
     const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
     const iw = Math.max(1, Math.round(img.width * scale));
@@ -475,7 +569,11 @@ export const WishWallCanvas = forwardRef<
         const i = (y * iw + x) * 4;
         const alpha = data[i + 3] ?? 255;
         const lum = 0.299 * (data[i] ?? 0) + 0.587 * (data[i + 1] ?? 0) + 0.114 * (data[i + 2] ?? 0);
-        const on = hasAlpha ? alpha > 128 : lum < 200;
+        const on = hasAlpha
+          ? alpha > 40
+          : event.settings.shapeImageInvert
+            ? lum > event.settings.shapeImageThreshold
+            : lum < event.settings.shapeImageThreshold;
         if (on) {
           ink.push({
             x: fit.dx + ((x + 0.5) / iw) * fit.dw,
@@ -485,31 +583,84 @@ export const WishWallCanvas = forwardRef<
       }
     }
 
-    if (!ink.length) return [];
-    const target = 160;
-    if (ink.length <= target) return ink;
-    const step = ink.length / target;
-    const out: ShapePoint[] = [];
-    for (let i = 0; i < target; i += 1) out.push(ink[Math.floor(i * step)]!);
-    return out;
+    return spreadShapePoints(ink, event.settings.shapeCapacity);
+  }, []);
+
+  const extractTextPoints = useCallback((text: string, count: number): ShapePoint[] => {
+    if (!text.trim()) return buildShapePoints("text", count);
+    const canvas = document.createElement("canvas");
+    canvas.width = 1000;
+    canvas.height = 320;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return buildShapePoints("text", count);
+    let fontSize = 220;
+    ctx.font = `900 ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    const measured = ctx.measureText(text).width;
+    if (measured > 900) fontSize *= 900 / measured;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `900 ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const fit = fitRect(canvas.width, canvas.height);
+    const candidates: ShapePoint[] = [];
+    for (let y = 0; y < canvas.height; y += 4) {
+      for (let x = 0; x < canvas.width; x += 4) {
+        if ((data[(y * canvas.width + x) * 4 + 3] ?? 0) > 80) {
+          candidates.push({
+            x: fit.dx + ((x + 0.5) / canvas.width) * fit.dw,
+            y: fit.dy + ((y + 0.5) / canvas.height) * fit.dh,
+          });
+        }
+      }
+    }
+    return spreadShapePoints(candidates, count);
   }, []);
 
   const setEvent = useCallback(
     (event: WishEvent) => {
+      const previous = eventRef.current;
       eventRef.current = event;
-      shapeRef.current = buildShapePoints(event.settings.shape, SHAPE_CAPACITY);
-      capacityRef.current = Math.min(
-        shapeRef.current.length || SHAPE_CAPACITY,
-        event.settings.shapeCapacity,
-      );
+      const capacity = event.settings.shapeCapacity;
+      shapeRef.current =
+        event.settings.shape === "text"
+          ? extractTextPoints(event.settings.shapeText, capacity)
+          : buildShapePoints(event.settings.shape, capacity);
+      capacityRef.current = Math.min(shapeRef.current.length || capacity, capacity);
+      if (settledRef.current.length > capacityRef.current) {
+        settledRef.current = settledRef.current.slice(-capacityRef.current);
+      }
+
+      const reassignShape = () => {
+        const points = shapeRef.current;
+        if (!points.length) return;
+        let cursor = 0;
+        for (const node of settledRef.current) {
+          node.point = points[cursor % points.length]!;
+          cursor += 1;
+        }
+        for (const item of itemsRef.current) {
+          if (item.phase === "absorbing") {
+            item.target = points[cursor % points.length]!;
+            cursor += 1;
+          }
+        }
+        assignRef.current = cursor;
+      };
+      reassignShape();
+
+      if (previous?.settings.theme !== event.settings.theme) spriteRef.current.clear();
 
       const applyTarget = (img: HTMLImageElement) => {
         const current = eventRef.current;
         if (current?.settings.shape !== "image") return;
-        const points = extractShapePoints(img);
+        const points = extractShapePoints(img, current);
         if (points.length) {
           shapeRef.current = points;
           capacityRef.current = Math.min(points.length, current.settings.shapeCapacity);
+          reassignShape();
         }
       };
 
@@ -519,16 +670,27 @@ export const WishWallCanvas = forwardRef<
         bg: event.settings.backgroundUrl,
       };
       const load = (url: string | null, key: "shield" | "target" | "bg") => {
-        if (!url || imagesRef.current.urls[key] === url) {
+        if (!url) {
+          imagesRef.current[key] = undefined;
+          imagesRef.current.urls[key] = null;
+          return;
+        }
+        if (imagesRef.current.urls[key] === url) {
           if (key === "target" && imagesRef.current.target) applyTarget(imagesRef.current.target);
           return;
         }
+        imagesRef.current[key] = undefined;
         const img = new Image();
         img.crossOrigin = "anonymous";
         img.src = url;
         img.onload = () => {
+          if (imagesRef.current.urls[key] !== url) return;
           imagesRef.current[key] = img;
           if (key === "target") applyTarget(img);
+        };
+        img.onerror = () => {
+          if (imagesRef.current.urls[key] !== url) return;
+          imagesRef.current[key] = undefined;
         };
         imagesRef.current.urls[key] = url;
       };
@@ -536,7 +698,7 @@ export const WishWallCanvas = forwardRef<
       load(next.target, "target");
       load(next.bg, "bg");
     },
-    [extractShapePoints],
+    [extractShapePoints, extractTextPoints],
   );
 
   const spotlight = useCallback(
@@ -565,6 +727,9 @@ export const WishWallCanvas = forwardRef<
     itemDestRef.current.clear();
     spriteRef.current.clear();
     assignRef.current = 0;
+    completionRef.current = 0;
+    clearSettledAtRef.current = 0;
+    lastSettlementAtRef.current = 0;
     spotlightRef.current = null;
     messageRef.current = null;
   }, []);
@@ -615,7 +780,8 @@ export const WishWallCanvas = forwardRef<
           const e = easeOutCubic(k);
           item.x = item.from.x + (item.to.x - item.from.x) * e;
           item.y = item.from.y + (item.to.y - item.from.y) * e;
-          item.scale = 0.35 + 0.65 * e;
+          const freeScale = floatingScale(item, w, h, maxFloating);
+          item.scale = 0.3 + Math.max(0, freeScale - 0.3) * e;
           item.alpha = Math.min(1, k * 1.4);
           if (k >= 1) {
             const dest = itemDestRef.current.get(item.id) ?? { x: w * 0.5, y: h * 0.5 };
@@ -631,14 +797,18 @@ export const WishWallCanvas = forwardRef<
             onCueRef.current?.("arrive");
           }
         } else if (item.phase === "free") {
+          const desiredScale = floatingScale(item, w, h, maxFloating);
+          item.scale += (desiredScale - item.scale) * Math.min(1, dt * 3);
           item.x += item.vx * dt;
           item.y += item.vy * dt;
           item.rot += item.vr * dt;
           const drag = Math.pow(0.5, dt);
           item.vx *= drag;
           item.vy *= drag;
-          const marginX = item.w * 0.45;
-          const marginY = item.h * 0.45;
+          const marginX = item.w * item.scale * 0.52;
+          const marginY = item.h * item.scale * 0.52;
+          const safeTop = Math.max(marginY, h * 0.16);
+          const safeBottom = Math.min(h - marginY, h * 0.92);
           if (item.x < marginX) {
             item.x = marginX;
             item.vx = Math.abs(item.vx) + 6;
@@ -646,11 +816,11 @@ export const WishWallCanvas = forwardRef<
             item.x = w - marginX;
             item.vx = -Math.abs(item.vx) - 6;
           }
-          if (item.y < marginY) {
-            item.y = marginY;
+          if (item.y < safeTop) {
+            item.y = safeTop;
             item.vy = Math.abs(item.vy) + 6;
-          } else if (item.y > h - marginY) {
-            item.y = h - marginY;
+          } else if (item.y > safeBottom) {
+            item.y = safeBottom;
             item.vy = -Math.abs(item.vy) - 6;
           }
           if (now - item.born > LIFETIME_MS || floating > maxFloating) {
@@ -658,9 +828,22 @@ export const WishWallCanvas = forwardRef<
             floating -= 1;
           }
         } else {
-          const target = item.target ?? { x: w * 0.5, y: h * 0.5 };
+          const targetPoint = item.target ?? { x: 0.5, y: 0.5 };
+          const target = shapeToScreen(
+            targetPoint,
+            w,
+            h,
+            (event?.settings.shapeScale ?? 82) / 100,
+          );
           const k = Math.min(1, dt * 4);
-          const targetScale = settledScale(w, h);
+          const layout = measureCard(item.wish, BASE_CARD_W);
+          const targetScale = settledScale(
+            w,
+            h,
+            capacityRef.current,
+            (event?.settings.shapeScale ?? 82) / 100,
+            layout,
+          );
           item.x += (target.x - item.x) * k;
           item.y += (target.y - item.y) * k;
           item.scale += (targetScale - item.scale) * Math.min(1, dt * 2);
@@ -668,29 +851,38 @@ export const WishWallCanvas = forwardRef<
           item.rot *= Math.pow(0.4, dt);
           const dist = Math.hypot(target.x - item.x, target.y - item.y);
           if (dist < 6 || item.alpha <= 0.05) {
-            // Mảnh kết tinh = chính thẻ lời chúc thu nhỏ, không phải icon.
-            const light = eventRef.current?.settings.theme === "light";
-            const key = `${item.id}:${light ? 1 : 0}`;
-            let sprite = spriteRef.current.get(key);
-            if (!sprite) {
-              const rendered = renderCardSprite(item.wish, BASE_CARD_W, light);
-              if (rendered) {
-                spriteRef.current.set(key, rendered);
-                sprite = rendered;
-              }
-            }
-            if (sprite) {
-              const layout = measureCard(item.wish, BASE_CARD_W);
-              settledRef.current.push({
-                x: target.x,
-                y: target.y,
-                w: (layout.w + SPRITE_PAD * 2) * targetScale,
-                h: (layout.h + SPRITE_PAD * 2) * targetScale,
-                angle: (Math.random() - 0.5) * 0.25,
-                sprite,
-              });
-            }
+            settleWish(item.wish, targetPoint);
+            lastSettlementAtRef.current = now;
             item.alpha = -1;
+          }
+        }
+      }
+
+      // Tách nhẹ các thẻ trôi va vào nhau; pairwise chỉ chạy trên tối đa 60 thẻ.
+      const freeItems = itemsRef.current.filter((item) => item.phase === "free");
+      for (let i = 0; i < freeItems.length; i += 1) {
+        const a = freeItems[i]!;
+        for (let j = i + 1; j < freeItems.length; j += 1) {
+          const b = freeItems[j]!;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const overlapX = (a.w * a.scale + b.w * b.scale) * 0.52 - Math.abs(dx);
+          const overlapY = (a.h * a.scale + b.h * b.scale) * 0.52 - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          if (overlapX < overlapY) {
+            const push = overlapX * Math.min(0.2, dt * 5);
+            const direction = dx === 0 ? (i % 2 ? -1 : 1) : Math.sign(dx);
+            a.x -= push * direction;
+            b.x += push * direction;
+            a.vx -= direction * 5;
+            b.vx += direction * 5;
+          } else {
+            const push = overlapY * Math.min(0.2, dt * 5);
+            const direction = dy === 0 ? (i % 2 ? -1 : 1) : Math.sign(dy);
+            a.y -= push * direction;
+            b.y += push * direction;
+            a.vy -= direction * 5;
+            b.vy += direction * 5;
           }
         }
       }
@@ -734,7 +926,11 @@ export const WishWallCanvas = forwardRef<
       }
 
       // Đủ số mảnh thì bùng sáng thành hình ghép tập thể.
-      if (settledRef.current.length >= capacityRef.current && now > completionRef.current) {
+      if (
+        settledRef.current.length >= capacityRef.current &&
+        now - lastSettlementAtRef.current < 1200 &&
+        now > completionRef.current
+      ) {
         completionRef.current = now + 12_000;
         const event2 = eventRef.current;
         const accent2 = event2 ? WISH_THEMES[event2.settings.theme].accent : "#facc15";
@@ -764,6 +960,7 @@ export const WishWallCanvas = forwardRef<
 
       if (clearSettledAtRef.current && now > clearSettledAtRef.current) {
         settledRef.current = [];
+        assignRef.current = 0;
         clearSettledAtRef.current = 0;
       }
     };
@@ -842,7 +1039,7 @@ export const WishWallCanvas = forwardRef<
       const bg = imagesRef.current.bg;
       if (bg) {
         ctx.save();
-        ctx.globalAlpha = 0.4;
+        ctx.globalAlpha = (event?.settings.backgroundOpacity ?? 40) / 100;
         const scale = Math.max(w / bg.width, h / bg.height);
         ctx.drawImage(bg, (w - bg.width * scale) / 2, (h - bg.height * scale) / 2, bg.width * scale, bg.height * scale);
         ctx.restore();
@@ -854,16 +1051,25 @@ export const WishWallCanvas = forwardRef<
         const x = edge === "left" ? w * 0.11 : edge === "right" ? w * 0.89 : w * 0.5;
         const y = edge === "center" ? h * 0.13 : h * 0.5;
         const pulse = 0.5 + 0.2 * Math.sin(now / 700);
-        drawShield(x, y, Math.min(w, h) * 0.14, accent, pulse, now);
+        drawShield(
+          x,
+          y,
+          Math.min(w, h) * 0.14 * (event.settings.shieldScale / 100),
+          accent,
+          pulse,
+          now,
+        );
       }
 
       // Hình ghép tập thể: nền mờ + ảnh admin tải lên.
       const points = shapeRef.current;
       const target = imagesRef.current.target;
+      const shapeScale = (event?.settings.shapeScale ?? 82) / 100;
+      const guideOpacity = (event?.settings.shapeGuideOpacity ?? 20) / 100;
       if (event?.settings.shape === "image" && target) {
         ctx.save();
-        ctx.globalAlpha = 0.4;
-        const size = Math.min(w, h) * SHAPE_BOX;
+        ctx.globalAlpha = guideOpacity;
+        const size = Math.min(w, h) * shapeScale;
         const bx = (w - size) / 2;
         const by = (h - size) / 2;
         const fit = fitRect(target.width, target.height);
@@ -872,10 +1078,10 @@ export const WishWallCanvas = forwardRef<
 
         // Điểm tụ theo hình dạng ảnh — hiện rất mờ để thấy vùng sẽ lấp đầy.
         ctx.save();
-        ctx.globalAlpha = 0.22;
+        ctx.globalAlpha = Math.min(0.28, guideOpacity + 0.04);
         ctx.fillStyle = accent;
         for (const point of points) {
-          const screen = shapeToScreen(point, w, h);
+          const screen = shapeToScreen(point, w, h, shapeScale);
           ctx.beginPath();
           ctx.arc(screen.x, screen.y, 2, 0, Math.PI * 2);
           ctx.fill();
@@ -883,37 +1089,28 @@ export const WishWallCanvas = forwardRef<
         ctx.restore();
       } else if (event && event.settings.shape === "text" && event.settings.shapeText) {
         ctx.save();
-        ctx.globalAlpha = 0.14;
+        ctx.globalAlpha = guideOpacity;
         ctx.fillStyle = light ? "#0f172a" : "#f8fafc";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const size = Math.min(w * 0.12, h * 0.22);
-        ctx.font = `900 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+        const boxSize = Math.min(w, h) * shapeScale;
+        let fontSize = boxSize * 0.24;
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+        const measured = ctx.measureText(event.settings.shapeText).width;
+        if (measured > boxSize * 0.9) fontSize *= (boxSize * 0.9) / measured;
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, "Segoe UI", sans-serif`;
         ctx.fillText(event.settings.shapeText, w / 2, h / 2);
         ctx.restore();
       } else if (points.length) {
-        // Viền hình ghép tập thể — luôn nhìn thấy để khách biết đang cùng dệt hình gì.
+        // Các neo gợi ý hình ghép; không nối thứ tự vì neo đã được rải đều trong mặt hình.
         ctx.save();
-        ctx.globalAlpha = 0.3;
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 3;
+        ctx.globalAlpha = guideOpacity;
         ctx.shadowColor = accent;
-        ctx.shadowBlur = 22;
-        ctx.beginPath();
-        points.forEach((point, index) => {
-          const screen = shapeToScreen(point, w, h);
-          if (index === 0) ctx.moveTo(screen.x, screen.y);
-          else ctx.lineTo(screen.x, screen.y);
-        });
-        ctx.closePath();
-        ctx.stroke();
-
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = 0.45;
+        ctx.shadowBlur = 14;
         ctx.fillStyle = accent;
-        const radius = Math.min(w, h) * 0.005 + 1.6;
+        const radius = Math.min(w, h) * 0.003 + 1.2;
         for (const point of points) {
-          const screen = shapeToScreen(point, w, h);
+          const screen = shapeToScreen(point, w, h, shapeScale);
           ctx.beginPath();
           ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
           ctx.fill();
@@ -923,11 +1120,21 @@ export const WishWallCanvas = forwardRef<
 
       // Các mảnh đã kết tinh = những lời chúc thu nhỏ xếp thành hình ghép.
       for (const node of settledRef.current) {
+        const screen = shapeToScreen(node.point, w, h, shapeScale);
+        const scale = settledScale(
+          w,
+          h,
+          capacityRef.current,
+          shapeScale,
+          node.layout,
+        );
+        const nodeW = (node.layout.w + SPRITE_PAD * 2) * scale;
+        const nodeH = (node.layout.h + SPRITE_PAD * 2) * scale;
         ctx.save();
         ctx.globalAlpha = 0.96;
-        ctx.translate(node.x, node.y);
+        ctx.translate(screen.x, screen.y);
         ctx.rotate(node.angle);
-        ctx.drawImage(node.sprite, -node.w / 2, -node.h / 2, node.w, node.h);
+        ctx.drawImage(node.sprite, -nodeW / 2, -nodeH / 2, nodeW, nodeH);
         ctx.restore();
       }
 
@@ -1051,7 +1258,7 @@ export const WishWallCanvas = forwardRef<
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [beginAbsorb, showMessage, spawnRings, spawnSparks]);
+  }, [beginAbsorb, settleWish, showMessage, spawnRings, spawnSparks]);
 
   return <canvas ref={canvasRef} className={className} />;
 });

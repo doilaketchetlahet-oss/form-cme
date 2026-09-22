@@ -2,100 +2,131 @@ import type { WishShape } from "./config";
 
 export type ShapePoint = { x: number; y: number };
 
-/** Rút `count` điểm trải đều trên một danh sách điểm dày đặc. */
-function sample(dense: ShapePoint[], count: number): ShapePoint[] {
-  if (dense.length === 0) return [];
-  const out: ShapePoint[] = [];
-  for (let i = 0; i < count; i += 1) {
-    out.push(dense[Math.floor((i / count) * dense.length)]!);
-  }
-  return out;
+const GRID_SIZE = 76;
+
+function distanceSquared(a: ShapePoint, b: ShapePoint) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
 }
 
-function heartDense(): ShapePoint[] {
-  const points: ShapePoint[] = [];
-  for (let i = 0; i < 600; i += 1) {
-    const t = (i / 600) * Math.PI * 2;
-    const x = 16 * Math.sin(t) ** 3;
-    const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
-    // Vùng chứa thực tế: x ∈ [-16, 16], y ∈ [-17, 13].
-    points.push({ x: (x + 16) / 32, y: 1 - (y + 17) / 30 });
+/**
+ * Chọn điểm theo kiểu farthest-point sampling. Quan trọng nhất là mọi tiền tố
+ * của danh sách cũng phủ đều hình: 10 lời chúc đầu không bị dồn vào một góc.
+ */
+export function spreadShapePoints(candidates: ShapePoint[], count: number): ShapePoint[] {
+  const wanted = Math.max(1, Math.min(Math.round(count), candidates.length));
+  if (!candidates.length) return [];
+  if (wanted === 1) return [candidates[Math.floor(candidates.length / 2)]!];
+
+  const selected: ShapePoint[] = [];
+  const minDistances = new Float64Array(candidates.length);
+  minDistances.fill(Number.POSITIVE_INFINITY);
+
+  // Bắt đầu gần tâm, sau đó luôn chọn điểm xa nhất khỏi các điểm đã có.
+  let nextIndex = 0;
+  let centerDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const d = distanceSquared(candidates[i]!, { x: 0.5, y: 0.5 });
+    if (d < centerDistance) {
+      centerDistance = d;
+      nextIndex = i;
+    }
   }
-  return points;
+
+  for (let n = 0; n < wanted; n += 1) {
+    const chosen = candidates[nextIndex]!;
+    selected.push(chosen);
+    let farthest = -1;
+    let farthestDistance = -1;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const d = distanceSquared(candidates[i]!, chosen);
+      if (d < minDistances[i]!) minDistances[i] = d;
+      if (minDistances[i]! > farthestDistance) {
+        farthestDistance = minDistances[i]!;
+        farthest = i;
+      }
+    }
+    nextIndex = Math.max(0, farthest);
+  }
+
+  return selected;
 }
 
-function starDense(): ShapePoint[] {
-  const points: ShapePoint[] = [];
-  const spikes = 5;
-  const outer = 0.5;
-  const inner = 0.21;
+function insidePolygon(point: ShapePoint, polygon: ShapePoint[]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i]!;
+    const b = polygon[j]!;
+    if (
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y || 1e-9) + a.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function starVertices(): ShapePoint[] {
   const vertices: ShapePoint[] = [];
-  for (let i = 0; i < spikes * 2; i += 1) {
-    const radius = i % 2 === 0 ? outer : inner;
-    const angle = (Math.PI / spikes) * i - Math.PI / 2;
+  for (let i = 0; i < 10; i += 1) {
+    const radius = i % 2 === 0 ? 0.48 : 0.22;
+    const angle = (Math.PI / 5) * i - Math.PI / 2;
     vertices.push({ x: 0.5 + radius * Math.cos(angle), y: 0.5 + radius * Math.sin(angle) });
   }
-  for (let i = 0; i < vertices.length; i += 1) {
-    const a = vertices[i]!;
-    const b = vertices[(i + 1) % vertices.length]!;
-    for (let s = 0; s < 24; s += 1) {
-      const t = s / 24;
-      points.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  return vertices;
+}
+
+function isInside(shape: Exclude<WishShape, "text" | "image">, point: ShapePoint) {
+  const nx = (point.x - 0.5) / 0.48;
+  const ny = (0.5 - point.y) / 0.46;
+  if (shape === "heart") {
+    const x = nx * 1.12;
+    const y = ny * 1.12 + 0.12;
+    const q = x * x + y * y - 1;
+    return q * q * q - x * x * y * y * y <= 0;
+  }
+  if (shape === "star") return insidePolygon(point, starVertices());
+
+  const theta = Math.atan2(ny, nx);
+  const radius = Math.hypot(nx, ny);
+  const boundary = 0.62 + 0.25 * Math.cos(5 * theta);
+  return radius <= boundary || radius < 0.26;
+}
+
+function filledCandidates(shape: Exclude<WishShape, "text" | "image">): ShapePoint[] {
+  const points: ShapePoint[] = [];
+  for (let row = 0; row < GRID_SIZE; row += 1) {
+    for (let col = 0; col < GRID_SIZE; col += 1) {
+      const point = {
+        x: 0.04 + (col / (GRID_SIZE - 1)) * 0.92,
+        y: 0.04 + (row / (GRID_SIZE - 1)) * 0.92,
+      };
+      if (isInside(shape, point)) points.push(point);
     }
   }
   return points;
 }
 
-function flowerDense(): ShapePoint[] {
+function fallbackCandidates(): ShapePoint[] {
   const points: ShapePoint[] = [];
-  for (let i = 0; i < 600; i += 1) {
-    const theta = (i / 600) * Math.PI * 2;
-    const r = Math.cos(5 * theta);
-    points.push({ x: 0.5 + 0.42 * r * Math.cos(theta), y: 0.5 + 0.42 * r * Math.sin(theta) });
-  }
-  return points;
-}
-
-function ringDense(): ShapePoint[] {
-  const points: ShapePoint[] = [];
-  for (let i = 0; i < 300; i += 1) {
-    const theta = (i / 300) * Math.PI * 2;
-    points.push({ x: 0.5 + 0.34 * Math.cos(theta), y: 0.5 + 0.3 * Math.sin(theta) });
-  }
-  return points;
-}
-
-/** Dải chữ: lấp theo hàng ngang để các lời chúc ghép thành một khối chữ. */
-function textDense(): ShapePoint[] {
-  const points: ShapePoint[] = [];
-  const rows = 4;
-  const cols = 22;
-  for (let r = 0; r < rows; r += 1) {
-    for (let c = 0; c < cols; c += 1) {
-      points.push({
-        x: 0.12 + (c / (cols - 1)) * 0.76,
-        y: 0.32 + (r / (rows - 1)) * 0.36,
-      });
+  for (let row = 0; row < 24; row += 1) {
+    for (let col = 0; col < 24; col += 1) {
+      points.push({ x: 0.12 + (col / 23) * 0.76, y: 0.2 + (row / 23) * 0.6 });
     }
   }
   return points;
 }
 
 /**
- * Điểm hội tụ của hình ghép tập thể (toạ độ chuẩn hoá 0..1).
- * Hình dạng có thể thay bằng ảnh admin tải lên sau (shape = "image").
+ * Tạo các neo lấp đầy hình thay vì chỉ đi dọc đường viền. Thứ tự neo
+ * được phân tán đều nên hình vẫn cân đối khi chưa đủ số lời chúc.
  */
 export function buildShapePoints(shape: WishShape, count: number): ShapePoint[] {
-  const dense =
-    shape === "heart"
-      ? heartDense()
-      : shape === "star"
-        ? starDense()
-        : shape === "flower"
-          ? flowerDense()
-          : shape === "text"
-            ? textDense()
-            : ringDense();
-  // Nhân đôi để vòng theo viền liền mạch, rồi trải đều.
-  return sample([...dense, ...dense], Math.max(1, count));
+  const candidates =
+    shape === "heart" || shape === "star" || shape === "flower"
+      ? filledCandidates(shape)
+      : fallbackCandidates();
+  return spreadShapePoints(candidates, count);
 }

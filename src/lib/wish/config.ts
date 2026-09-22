@@ -96,6 +96,18 @@ export type WishSettings = {
   maxFloating: number;
   /** Số lời chúc kết tinh để hoàn thành (bùng sáng) hình ghép tập thể. */
   shapeCapacity: number;
+  /** Kích thước hình ghép so với cạnh ngắn màn LED (40..96%). */
+  shapeScale: number;
+  /** Độ mờ của ảnh/hình gợi ý phía sau các mảnh ghép (0..80%). */
+  shapeGuideOpacity: number;
+  /** Ngưỡng tách nền cho ảnh hình ghép không có kênh alpha. */
+  shapeImageThreshold: number;
+  /** Đảo vùng sáng/tối khi tách hình từ JPG hoặc PNG nền đặc. */
+  shapeImageInvert: boolean;
+  /** Kích thước khiên so với mặc định (50..180%). */
+  shieldScale: number;
+  /** Độ hiển thị của ảnh nền LED (0..100%). */
+  backgroundOpacity: number;
 };
 
 export const DEFAULT_WISH_SETTINGS: WishSettings = {
@@ -113,6 +125,12 @@ export const DEFAULT_WISH_SETTINGS: WishSettings = {
   showNames: true,
   maxFloating: 22,
   shapeCapacity: 48,
+  shapeScale: 82,
+  shapeGuideOpacity: 20,
+  shapeImageThreshold: 210,
+  shapeImageInvert: false,
+  shieldScale: 100,
+  backgroundOpacity: 40,
 };
 
 export type WishKind = "symbol" | "text" | "drawing";
@@ -221,6 +239,27 @@ export function normalizeWishSettings(input: unknown): WishSettings {
     showNames: raw.showNames !== false,
     maxFloating: clampInt(raw.maxFloating, 6, 60, DEFAULT_WISH_SETTINGS.maxFloating),
     shapeCapacity: clampInt(raw.shapeCapacity, 12, 200, DEFAULT_WISH_SETTINGS.shapeCapacity),
+    shapeScale: clampInt(raw.shapeScale, 40, 96, DEFAULT_WISH_SETTINGS.shapeScale),
+    shapeGuideOpacity: clampInt(
+      raw.shapeGuideOpacity,
+      0,
+      80,
+      DEFAULT_WISH_SETTINGS.shapeGuideOpacity,
+    ),
+    shapeImageThreshold: clampInt(
+      raw.shapeImageThreshold,
+      20,
+      245,
+      DEFAULT_WISH_SETTINGS.shapeImageThreshold,
+    ),
+    shapeImageInvert: raw.shapeImageInvert === true,
+    shieldScale: clampInt(raw.shieldScale, 50, 180, DEFAULT_WISH_SETTINGS.shieldScale),
+    backgroundOpacity: clampInt(
+      raw.backgroundOpacity,
+      0,
+      100,
+      DEFAULT_WISH_SETTINGS.backgroundOpacity,
+    ),
   };
 }
 

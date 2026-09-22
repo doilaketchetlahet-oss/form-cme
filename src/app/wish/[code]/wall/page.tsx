@@ -108,54 +108,54 @@ export default function WishWallPage() {
     else void document.documentElement.requestFullscreen?.();
   };
 
-  if (!loaded) {
-    return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-center text-slate-200">
-        {online ? <Loader2 className="animate-spin text-sky-400" size={28} /> : <WifiOff size={28} />}
-        <p className="text-sm font-semibold">{online ? "Đang kết nối màn hình…" : "Đang kết nối lại…"}</p>
-        <p className="text-xs text-slate-500">
-          Nếu đứng mãi ở đây, kiểm tra mã chương trình <strong>{code}</strong>.
-        </p>
-      </main>
-    );
-  }
-
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-slate-950">
       <WishWallCanvas ref={wallRef} onCue={handleCue} className="absolute inset-0 h-full w-full" />
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-5 sm:p-7">
-        <div>
-          <h1 className="font-display text-xl font-black text-white/90 drop-shadow sm:text-3xl">
-            {event?.title ?? "Trao lời chúc, nhận yêu thương"}
-          </h1>
-          {event?.subtitle ? (
-            <p className="mt-1 text-xs font-medium text-white/60 sm:text-sm">{event.subtitle}</p>
-          ) : null}
+      {!loaded && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-center text-slate-200">
+          {online ? <Loader2 className="animate-spin text-sky-400" size={28} /> : <WifiOff size={28} />}
+          <p className="text-sm font-semibold">{online ? "Đang kết nối màn hình…" : "Đang kết nối lại…"}</p>
+          <p className="text-xs text-slate-500">
+            Nếu đứng mãi ở đây, kiểm tra mã chương trình <strong>{code}</strong>.
+          </p>
         </div>
-        <div className="flex items-center gap-3 text-white/70">
-          <span className="text-sm font-bold tabular-nums">{count} lời chúc</span>
-          <span className={`flex items-center gap-1.5 text-xs font-semibold ${online ? "text-emerald-400" : "text-red-400"}`}>
-            {online ? <Wifi size={14} /> : <WifiOff size={14} />}
-          </span>
-          <button
-            type="button"
-            onClick={toggleSound}
-            className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
-            title={soundOn ? "Tắt âm thanh" : "Bật âm thanh"}
-          >
-            {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          </button>
-          <button
-            type="button"
-            onClick={goFullscreen}
-            className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
-            title="Toàn màn hình"
-          >
-            <Maximize size={16} />
-          </button>
+      )}
+
+      {loaded && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-5 sm:p-7">
+          <div>
+            <h1 className="font-display text-xl font-black text-white/90 drop-shadow sm:text-3xl">
+              {event?.title ?? "Trao lời chúc, nhận yêu thương"}
+            </h1>
+            {event?.subtitle ? (
+              <p className="mt-1 text-xs font-medium text-white/60 sm:text-sm">{event.subtitle}</p>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-3 text-white/70">
+            <span className="text-sm font-bold tabular-nums">{count} lời chúc</span>
+            <span className={`flex items-center gap-1.5 text-xs font-semibold ${online ? "text-emerald-400" : "text-red-400"}`}>
+              {online ? <Wifi size={14} /> : <WifiOff size={14} />}
+            </span>
+            <button
+              type="button"
+              onClick={toggleSound}
+              className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
+              title={soundOn ? "Tắt âm thanh" : "Bật âm thanh"}
+            >
+              {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            </button>
+            <button
+              type="button"
+              onClick={goFullscreen}
+              className="pointer-events-auto rounded-xl bg-white/10 p-2 transition-colors hover:bg-white/20"
+              title="Toàn màn hình"
+            >
+              <Maximize size={16} />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }

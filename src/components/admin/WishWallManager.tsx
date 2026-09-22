@@ -61,7 +61,7 @@ export function WishWallManager() {
   }, []);
 
   const load = useCallback(
-    async (eventCode: string) => {
+    async (eventCode: string, syncEditor = true) => {
       const res = await fetch(`/api/wish/${encodeURIComponent(eventCode)}?scope=all`, {
         cache: "no-store",
         headers: await authHeaders(false),
@@ -71,11 +71,13 @@ export function WishWallManager() {
       setEvent(snap.event);
       setWishes(snap.wishes);
       setCounts(snap.counts);
-      setDraft(snap.event.settings);
-      setTitle(snap.event.title);
-      setSubtitle(snap.event.subtitle);
-      setModeration(snap.event.moderation);
-      setStatus(snap.event.status);
+      if (syncEditor) {
+        setDraft(snap.event.settings);
+        setTitle(snap.event.title);
+        setSubtitle(snap.event.subtitle);
+        setModeration(snap.event.moderation);
+        setStatus(snap.event.status);
+      }
       return snap;
     },
     [authHeaders],
@@ -87,11 +89,14 @@ export function WishWallManager() {
     queueMicrotask(() => void load(saved));
   }, [load]);
 
+  const activeCode = event?.code;
+
   useEffect(() => {
-    if (!event) return;
-    const timer = setInterval(() => void load(event.code), 5000);
+    if (!activeCode) return;
+    // Chỉ làm mới danh sách/bao nhiêu lời chúc; không ghi đè form cấu hình admin đang nhập.
+    const timer = setInterval(() => void load(activeCode, false), 5000);
     return () => clearInterval(timer);
-  }, [event, load]);
+  }, [activeCode, load]);
 
   const createEvent = useCallback(async () => {
     setBusy(true);
@@ -409,9 +414,67 @@ export function WishWallManager() {
                     <input type="number" min={6} max={60} value={draft.maxFloating} onChange={(e) => patch({ maxFloating: Number(e.target.value) })} className="admin-field w-full rounded-lg px-2 py-1.5 text-xs" />
                   </label>
                   <label>
-                    <span className="mb-1 block text-[11px] text-slate-500">Số chấm để hoàn thành</span>
+                    <span className="mb-1 block text-[11px] text-slate-500">Số mảnh để hoàn thành</span>
                     <input type="number" min={12} max={200} value={draft.shapeCapacity} onChange={(e) => patch({ shapeCapacity: Number(e.target.value) })} className="admin-field w-full rounded-lg px-2 py-1.5 text-xs" />
                   </label>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white/70 p-4">
+                  <p className="mb-3 text-xs font-bold tracking-wider text-slate-600 uppercase">Điều chỉnh hiển thị LED</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <RangeSetting
+                      label="Kích thước hình ghép"
+                      value={draft.shapeScale}
+                      min={40}
+                      max={96}
+                      suffix="%"
+                      onChange={(value) => patch({ shapeScale: value })}
+                    />
+                    <RangeSetting
+                      label="Độ mờ hình gợi ý"
+                      value={draft.shapeGuideOpacity}
+                      min={0}
+                      max={80}
+                      suffix="%"
+                      onChange={(value) => patch({ shapeGuideOpacity: value })}
+                    />
+                    <RangeSetting
+                      label="Kích thước khiên"
+                      value={draft.shieldScale}
+                      min={50}
+                      max={180}
+                      suffix="%"
+                      onChange={(value) => patch({ shieldScale: value })}
+                    />
+                    <RangeSetting
+                      label="Độ hiện ảnh nền"
+                      value={draft.backgroundOpacity}
+                      min={0}
+                      max={100}
+                      suffix="%"
+                      onChange={(value) => patch({ backgroundOpacity: value })}
+                    />
+                    {draft.shape === "image" && (
+                      <>
+                        <RangeSetting
+                          label="Ngưỡng tách nền ảnh"
+                          value={draft.shapeImageThreshold}
+                          min={20}
+                          max={245}
+                          onChange={(value) => patch({ shapeImageThreshold: value })}
+                        />
+                        <label className="flex items-center gap-2 self-end rounded-xl bg-slate-50 px-3 py-2.5">
+                          <input
+                            type="checkbox"
+                            checked={draft.shapeImageInvert}
+                            onChange={(e) => patch({ shapeImageInvert: e.target.checked })}
+                            className="h-4 w-4"
+                          />
+                          <span className="text-xs font-semibold text-slate-700">Đảo vùng sáng / tối</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -575,7 +638,10 @@ export function WishWallManager() {
                 <Stat label="Tổng lời chúc" value={counts.total} />
                 <Stat label="Đang hiển thị" value={counts.approved} />
                 <Stat label="Chờ duyệt" value={counts.pending} />
-                <Stat label="Hình ghép" value={`${Math.min(48, counts.approved)}/48`} />
+                <Stat
+                  label="Hình ghép"
+                  value={`${Math.min(draft.shapeCapacity, counts.approved)}/${draft.shapeCapacity}`}
+                />
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -707,6 +773,39 @@ function ActionButton({
     <button onClick={onClick} className={`flex items-center gap-1 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-semibold ${tones[tone]}`}>
       {children}
     </button>
+  );
+}
+
+function RangeSetting({
+  label,
+  value,
+  min,
+  max,
+  suffix = "",
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label>
+      <span className="mb-1 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-600">
+        <span>{label}</span>
+        <span className="tabular-nums text-slate-900">{value}{suffix}</span>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-rose-500"
+      />
+    </label>
   );
 }
 
