@@ -99,7 +99,7 @@ function poolCode(name: string, index: number, used: Set<string>) {
 export async function GET(request: Request) {
   const sessionId = new URL(request.url).searchParams.get("sessionId")?.trim();
   const auth = await authorizeAdminApi(request);
-  if ("error" in auth) return loadPublicBoothDraw(sessionId);
+  if ("error" in auth) return loadPublicBoothDraw(request, sessionId);
 
   const [eventsResult, sessionsResult] = await Promise.all([
     auth.service.from("events").select("id, name, event_date").order("event_date", { ascending: false, nullsFirst: false }),
@@ -126,7 +126,13 @@ export async function GET(request: Request) {
 
   const [pools, companies, booths, assignments, results, exchanges] = await Promise.all([
     auth.service.from("booth_pools").select("*").eq("session_id", sessionId).order("sort_order"),
-    auth.service.from("booth_companies").select("*").eq("session_id", sessionId).order("draw_order"),
+    auth.service
+      .from("booth_companies")
+      .select(auth.role === "viewer"
+        ? "id, session_id, pool_id, name, draw_order, active"
+        : "id, session_id, pool_id, name, preferred_booth_id, draw_order, active")
+      .eq("session_id", sessionId)
+      .order("draw_order"),
     auth.service.from("booth_zones").select("*").eq("session_id", sessionId).order("booth_code"),
     auth.service.from("booth_assignments").select("*").eq("session_id", sessionId),
     auth.service.from("booth_draw_results").select("*").eq("session_id", sessionId).order("drawn_at"),
@@ -157,7 +163,7 @@ export async function GET(request: Request) {
   });
 }
 
-async function loadPublicBoothDraw(sessionId?: string) {
+async function loadPublicBoothDraw(request: Request, sessionId?: string) {
   if (!sessionId) {
     return NextResponse.json({ ok: true, events: [], sessions: [], role: "viewer", publicMode: true });
   }
@@ -174,9 +180,23 @@ async function loadPublicBoothDraw(sessionId?: string) {
     return jsonError("Phiên miễn phí đã hết hạn và đang chờ xoá.", 410);
   }
 
+  const passcode = cleanText(request.headers.get("x-booth-passcode"), 64);
+  let managementAuthorized = false;
+  if (passcode) {
+    const publicAccess = await authorizePublicBoothWrite(request, service, sessionId, passcode);
+    if ("error" in publicAccess) return jsonError(publicAccess.error, publicAccess.status);
+    managementAuthorized = true;
+  }
+
   const [pools, companies, booths, assignments, results, exchanges] = await Promise.all([
     service.from("booth_pools").select("*").eq("session_id", sessionId).order("sort_order"),
-    service.from("booth_companies").select("*").eq("session_id", sessionId).order("draw_order"),
+    service
+      .from("booth_companies")
+      .select(managementAuthorized
+        ? "id, session_id, pool_id, name, preferred_booth_id, draw_order, active"
+        : "id, session_id, pool_id, name, draw_order, active")
+      .eq("session_id", sessionId)
+      .order("draw_order"),
     service.from("booth_zones").select("*").eq("session_id", sessionId).order("booth_code"),
     service.from("booth_assignments").select("*").eq("session_id", sessionId),
     service.from("booth_draw_results").select("*").eq("session_id", sessionId).order("drawn_at"),
@@ -196,6 +216,7 @@ async function loadPublicBoothDraw(sessionId?: string) {
     sessions: [session],
     role: "viewer",
     publicMode: true,
+    managementAuthorized,
     current: {
       session,
       mapUrl,

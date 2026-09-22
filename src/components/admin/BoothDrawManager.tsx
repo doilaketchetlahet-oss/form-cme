@@ -129,7 +129,7 @@ export function PublicBoothDrawManager({ initialSessionId = "" }: { initialSessi
   return (
     <BoothApiContext.Provider value={apiOptions}>
       <BoothDrawWorkspace
-        canManageForms={passcode.trim().length >= 6}
+        canManageForms={false}
         publicMode
         initialSessionId={initialSessionId}
         passcode={passcode}
@@ -165,6 +165,11 @@ function BoothDrawWorkspace({
   const [newPoolText, setNewPoolText] = useState("");
   const [recoverPasscode, setRecoverPasscode] = useState("");
   const pendingMapSaves = useRef<Set<Promise<void>>>(new Set());
+  const apiOptionsRef = useRef(apiOptions);
+
+  useEffect(() => {
+    apiOptionsRef.current = apiOptions;
+  }, [apiOptions]);
 
   const trackMapSave = useCallback((operation: Promise<void>) => {
     pendingMapSaves.current.add(operation);
@@ -177,18 +182,23 @@ function BoothDrawWorkspace({
     }
   }, []);
 
-  const refresh = useCallback(async (id?: string) => {
+  const refresh = useCallback(async (id?: string, passcodeOverride?: string) => {
     setLoading(true);
     try {
-      const next = await loadBoothDraw(id, { publicMode: apiOptions.publicMode });
+      const options = apiOptionsRef.current;
+      const next = await loadBoothDraw(id, {
+        publicMode: options.publicMode,
+        passcode: passcodeOverride ?? options.passcode,
+      });
       setPayload(next);
+      setNotice(null);
       if (id) setSessionId(id);
     } catch (error) {
       setNotice({ type: "error", text: errorText(error) });
     } finally {
       setLoading(false);
     }
-  }, [apiOptions.publicMode]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -202,6 +212,25 @@ function BoothDrawWorkspace({
 
   const current = payload?.current;
   const selectedSession = payload?.sessions.find((session) => session.id === sessionId);
+  const canManageCurrent = publicMode ? payload?.managementAuthorized === true : canManageForms;
+
+  const updatePublicPasscode = (value: string) => {
+    onPasscodeChange?.(value);
+    if (sessionId && typeof window !== "undefined") {
+      window.sessionStorage.setItem(`booth-passcode:${sessionId}`, value);
+    }
+    setPayload((existing) => {
+      if (!existing?.current || !existing.managementAuthorized) return existing;
+      return {
+        ...existing,
+        managementAuthorized: false,
+        current: {
+          ...existing.current,
+          companies: existing.current.companies.map((company) => ({ ...company, preferred_booth_id: null })),
+        },
+      };
+    });
+  };
 
   const run = async (operation: () => Promise<void>, success?: string) => {
     if (busy) return;
@@ -230,7 +259,7 @@ function BoothDrawWorkspace({
       window.history.replaceState(null, "", `/booth-draw?session=${encodeURIComponent(result.id)}`);
     }
     setTab("setup");
-    await refresh(result.id);
+    await refresh(result.id, publicMode ? passcode : undefined);
   }, `Đã tạo phiên với ${lines(newPoolText).length} pool.`);
 
   const recoverSession = () => run(async () => {
@@ -241,7 +270,7 @@ function BoothDrawWorkspace({
       window.history.replaceState(null, "", `/booth-draw?session=${encodeURIComponent(result.id)}`);
     }
     setTab("setup");
-    await refresh(result.id);
+    await refresh(result.id, recoverPasscode);
   }, "Đã mở lại dự án. Bạn có thể tiếp tục xem và chỉnh sửa.");
 
   const openSession = (id: string) => {
@@ -277,7 +306,7 @@ function BoothDrawWorkspace({
   };
 
   const deleteSession = async () => {
-    if (!selectedSession || !canManageForms) return;
+    if (!selectedSession || !canManageCurrent) return;
     const accepted = await confirm({
       title: `Xóa phiên “${selectedSession.name}”?`,
       description: "Toàn bộ pool, công ty, kết quả quay, sơ đồ và lịch sử trao đổi của phiên này sẽ bị xóa.",
@@ -369,7 +398,7 @@ function BoothDrawWorkspace({
                 <button onClick={() => void copyShareLink()} disabled={!current.session.share_token || current.session.share_enabled === false} className={secondaryButton} title={current.session.share_enabled === false ? "Bật chia sẻ trong tab Thiết lập" : "Link chỉ xem, không cần đăng nhập"}>
                   <Copy size={15} /> Link xem sơ đồ
                 </button>
-                {canManageForms && <>
+                {canManageCurrent && <>
                   {current.session.status === "finalized" ? (
                     <button onClick={() => void updateStatus("exchange")} disabled={busy} className={secondaryButton}>
                       <RotateCw size={15} /> Mở lại
@@ -386,21 +415,26 @@ function BoothDrawWorkspace({
               </div>
             </div>
             {publicMode && (
-              <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[1fr_auto_auto] sm:items-end">
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold text-slate-500">Passcode chỉnh sửa</span>
                   <input
                     type="password"
                     value={passcode}
-                    onChange={(event) => {
-                      onPasscodeChange?.(event.target.value);
-                      if (sessionId && typeof window !== "undefined") window.sessionStorage.setItem(`booth-passcode:${sessionId}`, event.target.value);
-                    }}
+                    onChange={(event) => updatePublicPasscode(event.target.value)}
                     className={fieldClass}
                     placeholder="Nhập passcode của phiên"
                     autoComplete="current-password"
                   />
                 </label>
+                <button
+                  onClick={() => void refresh(sessionId, passcode)}
+                  disabled={loading || passcode.trim().length < 6 || canManageCurrent}
+                  className={primaryButton}
+                >
+                  {canManageCurrent ? <Check size={16} /> : <KeyRound size={16} />}
+                  {canManageCurrent ? "Đã mở khóa" : "Mở khóa quản lý"}
+                </button>
                 <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
                   Hết hạn {current.session.expires_at ? dateTime(current.session.expires_at) : "sau 7 ngày"}
                 </div>
@@ -429,16 +463,16 @@ function BoothDrawWorkspace({
           </div>
 
           {tab === "setup" && (
-            <SetupTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} />
+            <SetupTab current={current} canManage={canManageCurrent} busy={busy} run={run} refresh={() => refresh(sessionId)} />
           )}
           {tab === "map" && (
-            <MapTab current={current} canManage={canManageForms} busy={busy} setNotice={setNotice} onRefresh={() => refresh(sessionId)} onTrackSave={trackMapSave} />
+            <MapTab current={current} canManage={canManageCurrent} busy={busy} setNotice={setNotice} onRefresh={() => refresh(sessionId)} onTrackSave={trackMapSave} />
           )}
           {tab === "draw" && (
-            <DrawTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} waitForMapSaves={waitForMapSaves} />
+            <DrawTab current={current} canManage={canManageCurrent} busy={busy} run={run} refresh={() => refresh(sessionId)} waitForMapSaves={waitForMapSaves} />
           )}
           {tab === "exchange" && (
-            <ExchangeTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} />
+            <ExchangeTab current={current} canManage={canManageCurrent} busy={busy} run={run} refresh={() => refresh(sessionId)} />
           )}
           {tab === "history" && <HistoryTab current={current} />}
         </>
@@ -778,7 +812,7 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
         })}
       </div>
 
-      <section className="glass overflow-hidden rounded-2xl border-violet-200">
+      {canManage && <section className="glass overflow-hidden rounded-2xl border-violet-200">
         <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50 to-fuchsia-50 px-5 py-4">
           <h3 className="flex items-center gap-2 font-bold text-slate-900"><Crosshair size={17} className="text-violet-600" /> Gán trước vị trí (cơ cấu)</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500">Giữ một gian cụ thể cho công ty nhưng vẫn thực hiện hiệu ứng vòng quay. Gian đã giữ sẽ không thể rơi vào công ty khác.</p>
@@ -812,7 +846,7 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
             {current.companies.every((company) => !company.preferred_booth_id) && <p className="rounded-xl bg-slate-50 px-4 py-5 text-center text-sm text-slate-400 sm:col-span-2 xl:col-span-3">Chưa có công ty nào được gán trước vị trí.</p>}
           </div>
         </div>
-      </section>
+      </section>}
 
       {canManage && current.session.status !== "finalized" && editingPoolId && (
         <section className="glass rounded-2xl border-sky-200 p-5">

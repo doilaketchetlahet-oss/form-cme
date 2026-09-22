@@ -40,7 +40,7 @@ export type BoothCompany = {
   session_id: string;
   pool_id: string;
   name: string;
-  preferred_booth_id: string | null;
+  preferred_booth_id?: string | null;
   draw_order: number;
   active: boolean;
 };
@@ -126,6 +126,7 @@ export type BoothDrawResponse = {
   sessions: BoothSession[];
   role: "owner" | "admin" | "viewer";
   publicMode?: boolean;
+  managementAuthorized?: boolean;
   current?: BoothDrawState;
 };
 
@@ -161,8 +162,10 @@ async function readJson<T>(response: Response): Promise<T> {
 export async function loadBoothDraw(sessionId?: string, options: BoothApiOptions = {}): Promise<BoothDrawResponse> {
   const token = options.publicMode ? null : await accessToken();
   const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  if (options.publicMode && options.passcode) headers["x-booth-passcode"] = options.passcode;
   const response = await fetch(`/api/admin/booth-draw${query}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    headers,
     cache: "no-store",
   });
   return readJson<BoothDrawResponse>(response);
