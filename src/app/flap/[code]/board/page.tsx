@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Crown, Loader2, Wifi, WifiOff } from "lucide-react";
 import { fetchRoomSnapshot, subscribeRoom, type FlapRoomSnapshot } from "@/lib/flap/realtime";
 import type { TeamStanding } from "@/lib/flap/race";
+import { detectMilestones, SPARK_DIRECTIONS, type MilestoneEvent } from "@/lib/flap/hype";
 
 /** Đường đua đại bàng: mỗi đội một làn, vị trí theo tiến độ 0..1. */
 export default function FlapBoardPage() {
@@ -58,6 +59,59 @@ export default function FlapBoardPage() {
 
   const standings = useMemo(() => snapshot?.standings ?? [], [snapshot]);
   const leader = standings[0];
+
+  // ---- Mốc tiến độ: banner hối thúc + pháo hoa ------------------------------
+  const progressRef = useRef<Map<string, number>>(new Map());
+  const [activeHype, setActiveHype] = useState<MilestoneEvent | null>(null);
+  const [sparks, setSparks] = useState<MilestoneEvent[]>([]);
+  const seedRef = useRef(0);
+
+  useEffect(() => {
+    if (snapshot?.room.status !== "running") {
+      // Vòng mới/lượt mới: quên tiến độ cũ để không bắn lại hiệu ứng đã qua.
+      if (snapshot?.room.status === "lobby" || snapshot?.room.status === "finished") {
+        progressRef.current = new Map();
+      }
+      return;
+    }
+
+    const prev = progressRef.current;
+    const next = new Map<string, number>();
+    const names = new Map<string, { name: string; color: string }>();
+    for (const team of standings) {
+      next.set(team.team_id, team.progress);
+      names.set(team.team_id, { name: team.name, color: team.color });
+    }
+
+    // Lần cập nhật đầu tiên sau khi bắt đầu: ghi nhận mốc, chưa bắn hiệu ứng.
+    if (prev.size === 0) {
+      progressRef.current = next;
+      return;
+    }
+
+    seedRef.current += 1;
+    const events = detectMilestones(prev, next, names, seedRef.current);
+    progressRef.current = next;
+    if (events.length === 0) return;
+
+    setActiveHype(events[0]);
+    setSparks(events);
+  }, [snapshot?.room.status, standings]);
+
+  // Banner tự ẩn và dọn pháo hoa sau khi bắn xong.
+  const hypeId = activeHype?.id;
+  useEffect(() => {
+    if (!hypeId) return;
+    const hide = setTimeout(() => setActiveHype(null), 4200);
+    return () => clearTimeout(hide);
+  }, [hypeId]);
+
+  const sparkIds = sparks.map((s) => s.id).join("|");
+  useEffect(() => {
+    if (!sparkIds) return;
+    const clear = setTimeout(() => setSparks([]), 1400);
+    return () => clearTimeout(clear);
+  }, [sparkIds]);
 
   const remaining = useMemo(() => {
     const room = snapshot?.room;
@@ -123,6 +177,49 @@ export default function FlapBoardPage() {
         </div>
       )}
 
+      {/* Banner hối thúc khi vừa qua mốc */}
+      <AnimatePresence>
+        {activeHype && room.status === "running" && (
+          <motion.div
+            key={activeHype.id}
+            initial={{ opacity: 0, y: -18, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -12, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 240, damping: 22 }}
+            className="pointer-events-none mx-auto mt-4 w-full max-w-3xl"
+          >
+            <div
+              className="flex items-center justify-center gap-3 rounded-2xl px-5 py-3 text-center shadow-lg ring-1"
+              style={{
+                background: activeHype.finished
+                  ? "linear-gradient(135deg, #fef3c7, #fde68a)"
+                  : activeHype.leading
+                    ? "linear-gradient(135deg, #e0f2fe, #cffafe)"
+                    : "#ffffff",
+                borderColor: activeHype.teamColor,
+                boxShadow: `0 10px 30px ${activeHype.teamColor}33`,
+                ...(activeHype.finished ? {} : { border: `1px solid ${activeHype.teamColor}` }),
+              }}
+            >
+              <span
+                className="h-3 w-3 shrink-0 animate-pulse rounded-full"
+                style={{ background: activeHype.teamColor }}
+              />
+              <p
+                className={`font-display text-lg font-black sm:text-2xl ${
+                  activeHype.finished ? "text-amber-800" : "text-slate-900"
+                }`}
+              >
+                {activeHype.text}
+              </p>
+              <span className="shrink-0 rounded-full bg-slate-900/5 px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                {activeHype.checkpoint}%
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Đường đua */}
       <div className="mt-6 flex flex-1 flex-col justify-center gap-4">
         {standings.map((team, index) => (
@@ -133,6 +230,7 @@ export default function FlapBoardPage() {
             isLeader={leader?.team_id === team.team_id && room.status !== "lobby"}
             scoreMode={room.score_mode}
             showAverage
+            spark={sparks.find((s) => s.teamId === team.team_id) ?? null}
           />
         ))}
         {standings.length === 0 && (
@@ -169,12 +267,14 @@ function Lane({
   isLeader,
   scoreMode,
   showAverage,
+  spark,
 }: {
   team: TeamStanding;
   index: number;
   isLeader: boolean;
   scoreMode: "total" | "average";
   showAverage: boolean;
+  spark: MilestoneEvent | null;
 }) {
   const percent = Math.round(team.progress * 100);
 
@@ -215,6 +315,11 @@ function Lane({
           {/* Hoạt ảnh đại bàng. Nếu trình duyệt không phát được WebM thì
               component tự chuyển sang emoji. */}
           <EagleSprite />
+
+          {/* Pháo hoa nhỏ khi đội vừa qua mốc */}
+          <AnimatePresence>
+            {spark && <Sparkle key={spark.id} color={team.color} big={spark.finished} />}
+          </AnimatePresence>
         </motion.div>
       </div>
 
@@ -259,5 +364,48 @@ function EagleSprite() {
       className="h-full w-full object-contain drop-shadow-md"
       aria-label="Đại bàng"
     />
+  );
+}
+
+/**
+ * Pháo hoa nhỏ tại vị trí con đại bàng khi đội vừa qua mốc.
+ *
+ * Dùng CSS transform + opacity (được GPU tăng tốc) thay vì canvas hay thư viện
+ * ngoài, để màn LED chạy nhẹ. Mỗi tia chỉ là một phần tử, tổng cộng 9 tia.
+ */
+function Sparkle({ color, big }: { color: string; big: boolean }) {
+  const count = big ? SPARK_DIRECTIONS.length : 7;
+  const rays = SPARK_DIRECTIONS.slice(0, count);
+  const scale = big ? 1.35 : 1;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      {/* Vòng sáng lan ra */}
+      <motion.span
+        className="absolute rounded-full"
+        style={{ border: `2px solid ${color}` }}
+        initial={{ width: 14, height: 14, opacity: 0.9 }}
+        animate={{ width: 64 * scale, height: 64 * scale, opacity: 0 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.7, ease: "easeOut" }}
+      />
+      {/* Các tia bắn tỏa */}
+      {rays.map((ray, i) => {
+        const rad = (ray.angle * Math.PI) / 180;
+        const dx = Math.cos(rad) * ray.distance * scale;
+        const dy = Math.sin(rad) * ray.distance * scale;
+        return (
+          <motion.span
+            key={i}
+            className="absolute h-2 w-2 rounded-full"
+            style={{ background: i % 3 === 0 ? "#fbbf24" : color }}
+            initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+            animate={{ x: dx, y: dy, opacity: 0, scale: 0.2 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.75, delay: ray.delay / 1000, ease: "easeOut" }}
+          />
+        );
+      })}
+    </div>
   );
 }
