@@ -162,6 +162,18 @@ function BoothDrawWorkspace({
   const [newSessionName, setNewSessionName] = useState("Bốc thăm gian hàng");
   const [newPoolText, setNewPoolText] = useState("");
   const [recoverPasscode, setRecoverPasscode] = useState("");
+  const pendingMapSaves = useRef<Set<Promise<void>>>(new Set());
+
+  const trackMapSave = useCallback((operation: Promise<void>) => {
+    pendingMapSaves.current.add(operation);
+    void operation.finally(() => pendingMapSaves.current.delete(operation));
+  }, []);
+
+  const waitForMapSaves = useCallback(async () => {
+    while (pendingMapSaves.current.size > 0) {
+      await Promise.allSettled([...pendingMapSaves.current]);
+    }
+  }, []);
 
   const refresh = useCallback(async (id?: string) => {
     setLoading(true);
@@ -418,10 +430,10 @@ function BoothDrawWorkspace({
             <SetupTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} />
           )}
           {tab === "map" && (
-            <MapTab current={current} canManage={canManageForms} busy={busy} setNotice={setNotice} onRefresh={() => refresh(sessionId)} />
+            <MapTab current={current} canManage={canManageForms} busy={busy} setNotice={setNotice} onRefresh={() => refresh(sessionId)} onTrackSave={trackMapSave} />
           )}
           {tab === "draw" && (
-            <DrawTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} />
+            <DrawTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} waitForMapSaves={waitForMapSaves} />
           )}
           {tab === "exchange" && (
             <ExchangeTab current={current} canManage={canManageForms} busy={busy} run={run} refresh={() => refresh(sessionId)} />
@@ -816,13 +828,14 @@ function ListRow({ color, main, detail, onDelete }: { color: string; main: strin
   return <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white/70 px-3 py-2.5"><span className="h-7 w-1 rounded-full" style={{ background: color }} /><span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-700">{main}</span><span className="text-xs text-slate-400">{detail}</span>{onDelete && <button onClick={onDelete} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}</div>;
 }
 
-function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; setNotice: (notice: Notice) => void; onRefresh: () => Promise<void> }) {
+function MapTab({ current, canManage, busy, setNotice, onRefresh, onTrackSave }: { current: BoothDrawState; canManage: boolean; busy: boolean; setNotice: (notice: Notice) => void; onRefresh: () => Promise<void>; onTrackSave: (operation: Promise<void>) => void }) {
   const apiOptions = useBoothApiOptions();
   const confirm = useConfirm();
   const [selectedId, setSelectedId] = useState(current.booths[0]?.id ?? "");
   const [localBooths, setLocalBooths] = useState(current.booths);
   const [uploading, setUploading] = useState(false);
   const drag = useRef<{ id: string; pointerId: number; startX: number; startY: number; x: number; y: number; nextX: number; nextY: number } | null>(null);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const selected = localBooths.find((booth) => booth.id === selectedId) ?? localBooths[0];
   const poolById = useMemo(() => new Map(current.pools.map((pool) => [pool.id, pool])), [current.pools]);
   const assignedByBooth = useMemo(() => new Map(current.assignments.map((item) => [item.booth_id, item])), [current.assignments]);
@@ -832,15 +845,26 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh }: { current: B
     setLocalBooths((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
   };
 
-  const saveZone = async (zone: BoothZone) => {
-    try {
-      await mutateBoothDraw({ action: "update_booth", sessionId: current.session.id, boothId: zone.id, x: zone.x, y: zone.y, width: zone.width, height: zone.height, rotation: zone.rotation }, apiOptions);
-      setNotice({ type: "success", text: `Đã lưu vị trí gian ${zone.booth_code}.` });
-    } catch (error) {
-      setNotice({ type: "error", text: errorText(error) });
-      setLocalBooths(current.booths);
-      await onRefresh();
-    }
+  const saveZone = (zone: BoothZone) => {
+    // Preserve edit order when a user moves or resizes several times quickly;
+    // otherwise an older, slower request can overwrite the newest position.
+    const operation = saveQueue.current.then(async () => {
+      try {
+        await mutateBoothDraw({ action: "update_booth", sessionId: current.session.id, boothId: zone.id, x: zone.x, y: zone.y, width: zone.width, height: zone.height, rotation: zone.rotation }, apiOptions);
+        setNotice({ type: "success", text: `Đã lưu vị trí gian ${zone.booth_code}.` });
+        // Keep the workspace-level snapshot in sync. The draw result overlay uses
+        // that snapshot after MapTab unmounts, so leaving it stale can highlight
+        // the booth at its previous position even though the database is correct.
+        await onRefresh();
+      } catch (error) {
+        setNotice({ type: "error", text: errorText(error) });
+        setLocalBooths(current.booths);
+        await onRefresh();
+      }
+    });
+    saveQueue.current = operation;
+    onTrackSave(operation);
+    return operation;
   };
 
   const pointerDown = (event: ReactPointerEvent<HTMLButtonElement>, zone: BoothZone) => {
@@ -991,7 +1015,7 @@ function ZoneField({ label, value, min = 0, max, disabled, onChange, onCommit }:
   return <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span><div className="grid grid-cols-[1fr_82px] items-center gap-3"><input type="range" value={value} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} className="w-full accent-sky-500" /><input type="number" value={Number(value).toFixed(1)} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => update(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit(); } }} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs font-semibold text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-50" /></div></label>;
 }
 
-function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void> }) {
+function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void>; waitForMapSaves: () => Promise<void> }) {
   const apiOptions = useBoothApiOptions();
   const drawScreenRef = useRef<HTMLDivElement>(null);
   const [poolId, setPoolId] = useState("");
@@ -999,6 +1023,7 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
   const [rotation, setRotation] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [winners, setWinners] = useState<BoothDrawRpcResult[]>([]);
+  const [winnerMap, setWinnerMap] = useState<Pick<BoothDrawState, "booths" | "mapUrl"> | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const activePoolId = poolId || current.pools[0]?.id || "";
   const pool = current.pools.find((item) => item.id === activePoolId);
@@ -1026,8 +1051,10 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
     if (!selectedCompanyId || booths.length === 0) throw new Error("Pool chưa đủ công ty hoặc gian hàng còn lại.");
     setSpinning(true);
     setWinners([]);
+    setWinnerMap(null);
     let result: BoothDrawRpcResult;
     try {
+      await waitForMapSaves();
       const response = await mutateBoothDraw<{ result: BoothDrawRpcResult; results: BoothDrawRpcResult[] }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() }, apiOptions);
       result = response.result;
       if (!result) throw new Error("Không nhận được kết quả quay.");
@@ -1039,6 +1066,15 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         return value + 1800 + (target - normalized + 360) % 360;
       });
       await new Promise((resolve) => window.setTimeout(resolve, 3600));
+      // Always render the result against coordinates read after the draw. This
+      // also covers a position save that was still in flight when the user
+      // switched from the map tab to the wheel.
+      try {
+        const latest = await loadBoothDraw(current.session.id, { publicMode: apiOptions.publicMode });
+        setWinnerMap(latest.current ? { booths: latest.current.booths, mapUrl: latest.current.mapUrl } : { booths: current.booths, mapUrl: current.mapUrl });
+      } catch {
+        setWinnerMap({ booths: current.booths, mapUrl: current.mapUrl });
+      }
       setWinners(response.results?.length ? response.results : [result]);
     } finally {
       setSpinning(false);
@@ -1047,6 +1083,7 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
 
   const closeWinner = async () => {
     setWinners([]);
+    setWinnerMap(null);
     setCompanyId("");
     await refresh();
   };
@@ -1108,13 +1145,15 @@ function DrawTab({ current, canManage, busy, run, refresh }: { current: BoothDra
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{poolStats.map((item) => <div key={item.id} className="rounded-xl border border-slate-100 bg-white p-3"><div className="mb-2 flex items-center justify-between"><span className="text-sm font-bold text-slate-700">{item.name}</span><span className="h-2.5 w-2.5 rounded-full" style={{ background: item.color }} /></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${item.totalCompanies ? item.done / item.totalCompanies * 100 : 0}%`, background: item.color }} /></div><p className="mt-2 text-xs text-slate-500">{item.done}/{item.totalCompanies} đã quay · {item.available} gian trống</p></div>)}</div>
       </section>
 
-      {winners.length > 0 && <WinnerOverlay current={current} winners={winners} onClose={() => void closeWinner()} />}
+      {winners.length > 0 && <WinnerOverlay current={current} mapSnapshot={winnerMap} winners={winners} onClose={() => void closeWinner()} />}
     </div>
   );
 }
 
-function WinnerOverlay({ current, winners, onClose }: { current: BoothDrawState; winners: BoothDrawRpcResult[]; onClose: () => void }) {
+function WinnerOverlay({ current, mapSnapshot, winners, onClose }: { current: BoothDrawState; mapSnapshot: Pick<BoothDrawState, "booths" | "mapUrl"> | null; winners: BoothDrawRpcResult[]; onClose: () => void }) {
   const isFinalPair = winners.length === 2;
+  const resultBooths = mapSnapshot?.booths ?? current.booths;
+  const resultMapUrl = mapSnapshot?.mapUrl ?? current.mapUrl;
   return (
     <div className="fixed inset-0 z-[80] overflow-auto bg-slate-950/90 p-3 backdrop-blur-md sm:p-5">
       <div className="mx-auto flex min-h-full max-w-7xl items-center justify-center">
@@ -1129,10 +1168,10 @@ function WinnerOverlay({ current, winners, onClose }: { current: BoothDrawState;
           </div>
           <div className="p-4 sm:p-6">
             {isFinalPair && <div className="mb-4 grid gap-3 sm:grid-cols-2">{winners.map((winner, index) => <div key={winner.result_id} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4"><span className={cn("grid h-14 w-14 shrink-0 place-items-center rounded-xl text-lg font-black text-white shadow-md", index === 0 ? "bg-red-500" : "bg-violet-600")}>{winner.booth_code}</span><div className="min-w-0"><p className="truncate font-bold text-slate-900 sm:text-lg">{winner.company_name}</p><p className="mt-0.5 text-xs text-slate-500">{index === 0 ? "Kết quả vừa quay" : "Tự động nhận gian còn lại"}</p></div></div>)}</div>}
-            <div className="relative aspect-video overflow-hidden rounded-2xl border border-slate-200 bg-slate-100" style={!current.mapUrl ? { backgroundImage: "linear-gradient(#cbd5e1 1px, transparent 1px), linear-gradient(90deg, #cbd5e1 1px, transparent 1px)", backgroundSize: "24px 24px" } : undefined}>
-              {current.mapUrl && <MapImage src={current.mapUrl} />}
+            <div className="relative aspect-video overflow-hidden rounded-2xl border border-slate-200 bg-slate-100" style={!resultMapUrl ? { backgroundImage: "linear-gradient(#cbd5e1 1px, transparent 1px), linear-gradient(90deg, #cbd5e1 1px, transparent 1px)", backgroundSize: "24px 24px" } : undefined}>
+              {resultMapUrl && <MapImage src={resultMapUrl} />}
               {winners.map((winner, index) => {
-                const zone = current.booths.find((item) => item.id === winner.booth_id);
+                const zone = resultBooths.find((item) => item.id === winner.booth_id);
                 if (!zone) return null;
                 return <div key={winner.result_id} className={cn("absolute z-10 grid animate-pulse place-items-center overflow-hidden border-4 border-white text-center text-[9px] font-black text-white sm:text-sm", index === 0 ? "bg-red-500 shadow-[0_0_0_8px_rgba(239,68,68,.35),0_0_40px_rgba(239,68,68,.9)]" : "bg-violet-600 shadow-[0_0_0_8px_rgba(124,58,237,.35),0_0_40px_rgba(124,58,237,.8)]")} style={{ left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.width}%`, height: `${zone.height}%`, transform: `rotate(${zone.rotation}deg)` }} title={`${winner.company_name} · Gian ${winner.booth_code}`}><span className="truncate px-1">{winner.booth_code}<span className="hidden sm:inline"> · {winner.company_name}</span></span></div>;
               })}
