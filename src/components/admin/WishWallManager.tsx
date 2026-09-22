@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Check,
+  CircleHelp,
   Eye,
   HeartHandshake,
   Image as ImageIcon,
@@ -424,6 +425,7 @@ export function WishWallManager() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <RangeSetting
                       label="Kích thước hình ghép"
+                      hint="Diện tích trái tim, ngôi sao, chữ hoặc ảnh custom trên màn LED. Khoảng 75–85% thường cân đối nhất."
                       value={draft.shapeScale}
                       min={40}
                       max={96}
@@ -432,6 +434,7 @@ export function WishWallManager() {
                     />
                     <RangeSetting
                       label="Độ mờ hình gợi ý"
+                      hint="Độ rõ của hình mẫu nằm sau các lời chúc. 0% là ẩn hoàn toàn; 15–30% giúp nhận ra hình mà không lấn át nội dung."
                       value={draft.shapeGuideOpacity}
                       min={0}
                       max={80}
@@ -440,6 +443,7 @@ export function WishWallManager() {
                     />
                     <RangeSetting
                       label="Kích thước khiên"
+                      hint="Phóng to hoặc thu nhỏ cổng/khiên ánh sáng nơi lời chúc bay vào. 100% là kích thước mặc định."
                       value={draft.shieldScale}
                       min={50}
                       max={180}
@@ -448,6 +452,7 @@ export function WishWallManager() {
                     />
                     <RangeSetting
                       label="Độ hiện ảnh nền"
+                      hint="Độ rõ của ảnh nền LED đã tải lên. 0% chỉ dùng nền theme; 30–55% thường giữ lời chúc dễ đọc."
                       value={draft.backgroundOpacity}
                       min={0}
                       max={100}
@@ -458,20 +463,24 @@ export function WishWallManager() {
                       <>
                         <RangeSetting
                           label="Ngưỡng tách nền ảnh"
+                          hint="Dùng cho JPG/PNG có nền đặc để chọn pixel nào thuộc vùng ghép. Logo tối trên nền trắng thường hợp với mức 210. PNG trong suốt thường không cần chỉnh."
                           value={draft.shapeImageThreshold}
                           min={20}
                           max={245}
                           onChange={(value) => patch({ shapeImageThreshold: value })}
                         />
-                        <label className="flex items-center gap-2 self-end rounded-xl bg-slate-50 px-3 py-2.5">
-                          <input
-                            type="checkbox"
-                            checked={draft.shapeImageInvert}
-                            onChange={(e) => patch({ shapeImageInvert: e.target.checked })}
-                            className="h-4 w-4"
-                          />
-                          <span className="text-xs font-semibold text-slate-700">Đảo vùng sáng / tối</span>
-                        </label>
+                        <div className="flex items-center justify-between gap-2 self-end rounded-xl bg-slate-50 px-3 py-2.5">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={draft.shapeImageInvert}
+                              onChange={(e) => patch({ shapeImageInvert: e.target.checked })}
+                              className="h-4 w-4"
+                            />
+                            <span className="text-xs font-semibold text-slate-700">Đảo vùng sáng / tối</span>
+                          </label>
+                          <FieldHint text="Tắt để lấy logo/vùng tối trên nền sáng. Bật để lấy logo/vùng sáng trên nền tối." />
+                        </div>
                       </>
                     )}
                   </div>
@@ -778,6 +787,7 @@ function ActionButton({
 
 function RangeSetting({
   label,
+  hint,
   value,
   min,
   max,
@@ -785,19 +795,25 @@ function RangeSetting({
   onChange,
 }: {
   label: string;
+  hint: string;
   value: number;
   min: number;
   max: number;
   suffix?: string;
   onChange: (value: number) => void;
 }) {
+  const inputId = useId();
   return (
-    <label>
+    <div>
       <span className="mb-1 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-600">
-        <span>{label}</span>
+        <span className="flex items-center gap-1.5">
+          <label htmlFor={inputId}>{label}</label>
+          <FieldHint text={hint} />
+        </span>
         <span className="tabular-nums text-slate-900">{value}{suffix}</span>
       </span>
       <input
+        id={inputId}
         type="range"
         min={min}
         max={max}
@@ -805,7 +821,27 @@ function RangeSetting({
         onChange={(event) => onChange(Number(event.target.value))}
         className="w-full accent-rose-500"
       />
-    </label>
+    </div>
+  );
+}
+
+function FieldHint({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={text}
+        className="rounded-full text-slate-400 transition-colors hover:text-sky-600 focus:text-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      >
+        <CircleHelp size={14} />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible absolute top-full left-1/2 z-50 mt-2 w-64 -translate-x-1/2 translate-y-1 rounded-xl bg-slate-900 px-3 py-2.5 text-left text-[11px] leading-relaxed font-medium text-white opacity-0 shadow-xl transition-all group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
   );
 }
 
