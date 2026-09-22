@@ -5,7 +5,14 @@ import { useParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { WishComposer } from "@/components/wish/WishComposer";
 import { fetchWishSnapshot } from "@/lib/wish/realtime";
-import { WISH_THEMES, type WishEvent } from "@/lib/wish/config";
+import { WISH_THEMES, type WishEdge, type WishEvent } from "@/lib/wish/config";
+
+function readRequestedEdge(): WishEdge | null {
+  const value = new URLSearchParams(window.location.search).get("edge");
+  return value === "left" || value === "right" || value === "center" || value === "bottom"
+    ? value
+    : null;
+}
 
 export default function WishComposerPage() {
   const params = useParams<{ code: string }>();
@@ -13,7 +20,7 @@ export default function WishComposerPage() {
 
   const [event, setEvent] = useState<WishEvent | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [edge, setEdge] = useState<"left" | "right" | "center" | "bottom">("center");
+  const [edge, setEdge] = useState<WishEdge>("center");
 
   useEffect(() => {
     if (!code) return;
@@ -24,18 +31,11 @@ export default function WishComposerPage() {
         return;
       }
       setEvent(snap.event);
-      setEdge(snap.event.settings.edge);
+      // Hướng trong QR/URL phải ưu tiên hơn hướng mặc định của chương trình.
+      setEdge(readRequestedEdge() ?? snap.event.settings.edge);
       setState("ready");
     })();
   }, [code]);
-
-  // Mỗi tablet có thể được gán một cạnh riêng qua query `edge`.
-  useEffect(() => {
-    const value = new URLSearchParams(window.location.search).get("edge");
-    if (value === "left" || value === "right" || value === "center" || value === "bottom") {
-      queueMicrotask(() => setEdge(value));
-    }
-  }, []);
 
   const theme = event ? WISH_THEMES[event.settings.theme] : WISH_THEMES.aurora;
   const background = useMemo(
