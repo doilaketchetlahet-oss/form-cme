@@ -54,7 +54,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     to?: string;
     email_subject?: string | null;
     email_body?: string | null;
+    email_provider?: string | null;
   } | null;
+
+  const hasProviderOverride = payload !== null
+    && Object.prototype.hasOwnProperty.call(payload, "email_provider");
+  if (
+    hasProviderOverride
+    && payload?.email_provider !== null
+    && payload?.email_provider !== ""
+    && payload?.email_provider !== "resend"
+    && payload?.email_provider !== "smtp"
+  ) {
+    return NextResponse.json({ ok: false, error: "Kênh gửi email không hợp lệ." }, { status: 400 });
+  }
 
   const to = payload?.to?.trim().toLowerCase() || email;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
@@ -105,13 +118,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Chưa có nội dung thư để gửi thử." }, { status: 400 });
   }
 
+  const providerOverride = hasProviderOverride
+    ? payload?.email_provider || null
+    : (survey as { email_provider?: string | null }).email_provider ?? null;
+
   const result = await sendEmail({
     to,
     subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
     html,
     text: "",
     ...(attachments.length > 0 ? { attachments } : {}),
-  }, (survey as { email_provider?: string | null }).email_provider ?? null);
+  }, providerOverride);
 
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: "Gửi thử thất bại.", detail: result.error }, { status: 500 });

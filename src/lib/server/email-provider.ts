@@ -35,19 +35,18 @@ export function resolveProvider(override?: string | null): EmailProviderName {
 export function defaultFrom(provider: EmailProviderName = "resend"): string {
   if (provider === "smtp") {
     return process.env.SMTP_FROM
-      || process.env.RESEND_FROM
+      || process.env.SMTP_USER
       || "Form CME <no-reply@localhost>";
   }
   return process.env.RESEND_FROM
-    || process.env.SMTP_FROM
     || "Form CME <no-reply@localhost>";
 }
 
 export function defaultReplyTo(provider: EmailProviderName = "resend"): string {
   if (provider === "smtp") {
-    return process.env.SMTP_REPLY_TO || process.env.SMTP_USER || process.env.RESEND_REPLY_TO || "";
+    return process.env.SMTP_REPLY_TO || process.env.SMTP_USER || "";
   }
-  return process.env.RESEND_REPLY_TO || process.env.SMTP_REPLY_TO || "";
+  return process.env.RESEND_REPLY_TO || "";
 }
 
 async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
@@ -100,19 +99,37 @@ async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
 
 async function sendViaSmtp(email: OutgoingEmail): Promise<SendResult> {
   const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || "465");
+  const rawPort = process.env.SMTP_PORT?.trim() || "465";
+  const port = Number(rawPort);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   if (!host || !user || !pass) {
     return { ok: false, messageId: null, provider: "smtp", error: "SMTP_HOST / SMTP_USER / SMTP_PASS missing" };
   }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, messageId: null, provider: "smtp", error: `SMTP_PORT invalid: ${rawPort}` };
+  }
 
-  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE !== "false" : port === 465;
+  const rawSecure = process.env.SMTP_SECURE?.trim().toLowerCase();
+  let secure = port === 465;
+  if (rawSecure) {
+    if (["true", "1", "yes", "on"].includes(rawSecure)) secure = true;
+    else if (["false", "0", "no", "off"].includes(rawSecure)) secure = false;
+    else {
+      return { ok: false, messageId: null, provider: "smtp", error: `SMTP_SECURE invalid: ${rawSecure}` };
+    }
+  }
+
   const transporter = nodemailer.createTransport({
     host,
     port,
     secure,
     auth: { user, pass },
+    // Keep failures inside the API route's 30-second execution window so the
+    // admin receives a useful SMTP error instead of a generic function timeout.
+    connectionTimeout: 8_000,
+    greetingTimeout: 8_000,
+    socketTimeout: 12_000,
   });
 
   const info = await transporter.sendMail({

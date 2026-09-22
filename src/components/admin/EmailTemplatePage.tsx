@@ -174,14 +174,20 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       const response = await fetch(`/api/admin/forms/${formId}/email/test`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ to: userEmail, email_subject: subject.trim() || null, email_body: body.trim() || null }),
+        body: JSON.stringify({
+          to: userEmail,
+          email_subject: subject.trim() || null,
+          email_body: body.trim() || null,
+          email_provider: provider || null,
+        }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
         setMessage({ type: "error", text: result.detail ? `${result.error ?? "Gửi thử thất bại."} — ${result.detail}` : (result.error ?? "Gửi thử thất bại.") });
         return;
       }
-      setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to}.` });
+      const providerLabel = result.provider === "smtp" ? "SMTP" : "Resend";
+      setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to} qua ${providerLabel}.` });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Gửi thử thất bại." });
     } finally {
