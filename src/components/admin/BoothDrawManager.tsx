@@ -16,8 +16,10 @@ import {
   Building2,
   CalendarDays,
   Check,
+  ChevronDown,
   CircleHelp,
   Copy,
+  Crosshair,
   Dices,
   ExternalLink,
   History,
@@ -607,11 +609,24 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
   const [venue, setVenue] = useState(current.session.venue ?? "");
   const [publicNote, setPublicNote] = useState(current.session.public_note ?? "");
   const [shareEnabled, setShareEnabled] = useState(current.session.share_enabled !== false);
+  const [shareInfoOpen, setShareInfoOpen] = useState(false);
+  const [preferencePoolId, setPreferencePoolId] = useState("");
+  const [preferenceCompanyId, setPreferenceCompanyId] = useState("");
+  const [preferenceBoothId, setPreferenceBoothId] = useState("");
   const defaultPoolId = current.pools[0]?.id ?? "";
   const selectedCompanyPool = companyPoolId || defaultPoolId;
   const selectedBoothPool = boothPoolId || defaultPoolId;
   const assignedCompanyIds = useMemo(() => new Set(current.assignments.map((item) => item.company_id)), [current.assignments]);
   const assignedBoothIds = useMemo(() => new Set(current.assignments.map((item) => item.booth_id)), [current.assignments]);
+  const boothById = useMemo(() => new Map(current.booths.map((item) => [item.id, item])), [current.booths]);
+  const companyById = useMemo(() => new Map(current.companies.map((item) => [item.id, item])), [current.companies]);
+  const activePreferencePoolId = preferencePoolId || defaultPoolId;
+  const preferenceCompanies = current.companies.filter((company) => company.pool_id === activePreferencePoolId && !assignedCompanyIds.has(company.id));
+  const selectedPreferenceCompanyId = preferenceCompanies.some((company) => company.id === preferenceCompanyId) ? preferenceCompanyId : preferenceCompanies[0]?.id ?? "";
+  const selectedPreferenceCompany = preferenceCompanies.find((company) => company.id === selectedPreferenceCompanyId);
+  const reservedByOtherCompanies = new Set(current.companies.filter((company) => company.id !== selectedPreferenceCompanyId && company.preferred_booth_id).map((company) => company.preferred_booth_id));
+  const preferenceBooths = current.booths.filter((booth) => booth.pool_id === activePreferencePoolId && !assignedBoothIds.has(booth.id) && !reservedByOtherCompanies.has(booth.id));
+  const selectedPreferenceBoothId = preferenceBoothId || selectedPreferenceCompany?.preferred_booth_id || "";
 
   const addCompanies = () => run(async () => {
     await mutateBoothDraw({ action: "bulk_add_companies", sessionId: current.session.id, poolId: selectedCompanyPool, names: lines(companyText) }, apiOptions);
@@ -644,6 +659,17 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
     }, apiOptions);
     await refresh();
   }, "Đã lưu thông tin trang chia sẻ.");
+
+  const saveBoothPreference = (boothId: string) => run(async () => {
+    await mutateBoothDraw({
+      action: "set_company_booth_preference",
+      sessionId: current.session.id,
+      companyId: selectedPreferenceCompanyId,
+      boothId,
+    }, apiOptions);
+    setPreferenceBoothId("");
+    await refresh();
+  }, boothId ? "Đã giữ vị trí này cho công ty. Vòng quay sẽ dừng tại đúng gian đã chọn." : "Đã bỏ gán trước vị trí.");
 
   const beginEditPool = (pool: BoothPool) => {
     setEditingPoolId(pool.id);
@@ -679,18 +705,23 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
   return (
     <div className="space-y-6">
       <section className="glass overflow-hidden rounded-2xl">
-        <div className="border-b border-slate-100 bg-gradient-to-r from-sky-50 to-cyan-50 px-5 py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <button type="button" onClick={() => setShareInfoOpen((value) => !value)} className={cn("flex w-full items-center justify-between gap-4 bg-gradient-to-r from-sky-50 to-cyan-50 px-5 py-4 text-left transition hover:from-sky-100 hover:to-cyan-50", shareInfoOpen && "border-b border-slate-100")}>
+          <div>
+            <h3 className="flex items-center gap-2 font-bold text-slate-900"><MapIcon size={17} className="text-sky-500" /> Thông tin hội thảo & trang chia sẻ</h3>
+            <p className="mt-1 text-xs text-slate-500">{current.session.venue || current.session.starts_at ? [current.session.venue, current.session.starts_at ? dateTime(current.session.starts_at) : ""].filter(Boolean).join(" · ") : "Tên, thời gian, địa điểm và ghi chú dành cho khách."}</p>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-2 text-xs font-semibold text-sky-700">{shareInfoOpen ? "Thu gọn" : "Mở chỉnh sửa"}<ChevronDown size={18} className={cn("transition-transform", shareInfoOpen && "rotate-180")} /></span>
+        </button>
+        {shareInfoOpen && <div className="grid gap-4 p-5 lg:grid-cols-2">
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 lg:col-span-2">
             <div>
-              <h3 className="flex items-center gap-2 font-bold text-slate-900"><MapIcon size={17} className="text-sky-500" /> Thông tin trang chia sẻ</h3>
-              <p className="mt-1 text-xs text-slate-500">Tên, thời gian và địa điểm này sẽ hiển thị trên link xem sơ đồ dành cho khách.</p>
+              <p className="text-sm font-semibold text-slate-700">Cho phép xem qua link</p>
+              <p className="mt-0.5 text-xs text-slate-500">Khách chỉ được xem sơ đồ, không thể chỉnh sửa.</p>
             </div>
             <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
-              <input type="checkbox" checked={shareEnabled} onChange={(event) => setShareEnabled(event.target.checked)} disabled={!canManage} className="h-4 w-4 accent-sky-500" /> Cho phép xem qua link
+              <input type="checkbox" checked={shareEnabled} onChange={(event) => setShareEnabled(event.target.checked)} disabled={!canManage} className="h-4 w-4 accent-sky-500" /> {shareEnabled ? "Đang bật" : "Đang tắt"}
             </label>
           </div>
-        </div>
-        <div className="grid gap-4 p-5 lg:grid-cols-2">
           <label className="block lg:col-span-2">
             <span className="mb-1.5 block text-xs font-semibold text-slate-500">Tên sự kiện / phiên hiển thị</span>
             <input value={shareName} onChange={(event) => setShareName(event.target.value)} disabled={!canManage} className={fieldClass} placeholder="Triển lãm Y khoa 2026" />
@@ -715,7 +746,7 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
             <p className="text-xs text-slate-500">Link xem không chứa passcode và chỉ cho phép tra cứu, không thể chỉnh sửa.</p>
             <button onClick={() => void saveShareInfo()} disabled={busy || !shareName.trim()} className={primaryButton}><Check size={16} /> Lưu thông tin</button>
           </div>}
-        </div>
+        </div>}
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -746,6 +777,42 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
           );
         })}
       </div>
+
+      <section className="glass overflow-hidden rounded-2xl border-violet-200">
+        <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50 to-fuchsia-50 px-5 py-4">
+          <h3 className="flex items-center gap-2 font-bold text-slate-900"><Crosshair size={17} className="text-violet-600" /> Gán trước vị trí (cơ cấu)</h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">Giữ một gian cụ thể cho công ty nhưng vẫn thực hiện hiệu ứng vòng quay. Gian đã giữ sẽ không thể rơi vào công ty khác.</p>
+        </div>
+        <div className="p-5">
+          {canManage && current.session.status !== "finalized" && <div className="grid gap-3 lg:grid-cols-[180px_minmax(220px,1fr)_minmax(180px,1fr)_auto]">
+            <select value={activePreferencePoolId} onChange={(event) => { setPreferencePoolId(event.target.value); setPreferenceCompanyId(""); setPreferenceBoothId(""); }} className={fieldClass}>
+              {current.pools.map((pool) => <option key={pool.id} value={pool.id}>Pool {pool.name}</option>)}
+            </select>
+            <select value={selectedPreferenceCompanyId} onChange={(event) => { const company = current.companies.find((item) => item.id === event.target.value); setPreferenceCompanyId(event.target.value); setPreferenceBoothId(company?.preferred_booth_id ?? ""); }} className={fieldClass} disabled={preferenceCompanies.length === 0}>
+              {preferenceCompanies.length === 0 ? <option value="">Không còn công ty chưa quay</option> : preferenceCompanies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+            </select>
+            <select value={selectedPreferenceBoothId} onChange={(event) => setPreferenceBoothId(event.target.value)} className={fieldClass} disabled={!selectedPreferenceCompanyId || preferenceBooths.length === 0}>
+              <option value="">Chọn gian muốn gán…</option>
+              {preferenceBooths.map((booth) => <option key={booth.id} value={booth.id}>Gian {booth.booth_code}</option>)}
+            </select>
+            <button onClick={() => void saveBoothPreference(selectedPreferenceBoothId)} disabled={busy || !selectedPreferenceCompanyId || !selectedPreferenceBoothId} className={cn(primaryButton, "bg-violet-600 hover:bg-violet-700")}><Crosshair size={16} /> Gán vị trí</button>
+          </div>}
+
+          {selectedPreferenceCompany?.preferred_booth_id && canManage && current.session.status !== "finalized" && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5 text-xs text-violet-700">
+            <span><strong>{selectedPreferenceCompany.name}</strong> đang được giữ gian <strong>{boothById.get(selectedPreferenceCompany.preferred_booth_id)?.booth_code ?? "—"}</strong>.</span>
+            <button onClick={() => void saveBoothPreference("")} disabled={busy} className="font-bold text-red-600 hover:text-red-700">Bỏ gán trước</button>
+          </div>}
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {current.companies.filter((company) => company.preferred_booth_id).map((company) => {
+              const booth = boothById.get(company.preferred_booth_id!);
+              const pool = current.pools.find((item) => item.id === company.pool_id);
+              return <div key={company.id} className="flex items-center gap-3 rounded-xl border border-violet-100 bg-white px-3 py-2.5"><span className="grid h-9 min-w-9 place-items-center rounded-lg px-2 text-xs font-black text-white" style={{ background: pool?.color ?? "#7c3aed" }}>{booth?.booth_code ?? "—"}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{company.name}</p><p className="text-[11px] text-violet-600">Đã gán trước · Pool {pool?.name}</p></div></div>;
+            })}
+            {current.companies.every((company) => !company.preferred_booth_id) && <p className="rounded-xl bg-slate-50 px-4 py-5 text-center text-sm text-slate-400 sm:col-span-2 xl:col-span-3">Chưa có công ty nào được gán trước vị trí.</p>}
+          </div>
+        </div>
+      </section>
 
       {canManage && current.session.status !== "finalized" && editingPoolId && (
         <section className="glass rounded-2xl border-sky-200 p-5">
@@ -780,14 +847,14 @@ function SetupTab({ current, canManage, busy, run, refresh }: { current: BoothDr
           {current.pools.map((pool) => {
             const rows = current.companies.filter((item) => item.pool_id === pool.id);
             if (rows.length === 0) return null;
-            return <ListGroup key={pool.id} pool={pool}>{rows.map((company) => <ListRow key={company.id} color={pool.color} main={company.name} detail={assignedCompanyIds.has(company.id) ? "Đã quay" : "Chưa quay"} onDelete={canManage && !assignedCompanyIds.has(company.id) && current.session.status !== "finalized" ? () => void remove("company", company.id, company.name) : undefined} />)}</ListGroup>;
+            return <ListGroup key={pool.id} pool={pool}>{rows.map((company) => <ListRow key={company.id} color={pool.color} main={company.name} detail={assignedCompanyIds.has(company.id) ? "Đã quay" : company.preferred_booth_id ? `Đã gán: ${boothById.get(company.preferred_booth_id)?.booth_code ?? "—"}` : "Chưa quay"} onDelete={canManage && !assignedCompanyIds.has(company.id) && current.session.status !== "finalized" ? () => void remove("company", company.id, company.name) : undefined} />)}</ListGroup>;
           })}
         </DataList>
         <DataList title="Gian hàng" icon={LayoutGrid} empty="Chưa có gian hàng.">
           {current.pools.map((pool) => {
             const rows = current.booths.filter((item) => item.pool_id === pool.id);
             if (rows.length === 0) return null;
-            return <ListGroup key={pool.id} pool={pool}>{rows.map((booth) => <ListRow key={booth.id} color={pool.color} main={booth.booth_code} detail={assignedBoothIds.has(booth.id) ? "Đã cấp" : "Còn trống"} onDelete={canManage && !assignedBoothIds.has(booth.id) && current.session.status !== "finalized" ? () => void remove("booth", booth.id, booth.booth_code) : undefined} />)}</ListGroup>;
+            return <ListGroup key={pool.id} pool={pool}>{rows.map((booth) => { const reservedCompany = current.companies.find((company) => company.preferred_booth_id === booth.id); return <ListRow key={booth.id} color={pool.color} main={booth.booth_code} detail={assignedBoothIds.has(booth.id) ? "Đã cấp" : reservedCompany ? `Giữ cho ${companyById.get(reservedCompany.id)?.name}` : "Còn trống"} onDelete={canManage && !assignedBoothIds.has(booth.id) && current.session.status !== "finalized" ? () => void remove("booth", booth.id, booth.booth_code) : undefined} />; })}</ListGroup>;
           })}
         </DataList>
       </div>

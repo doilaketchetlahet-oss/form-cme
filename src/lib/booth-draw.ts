@@ -40,6 +40,7 @@ export type BoothCompany = {
   session_id: string;
   pool_id: string;
   name: string;
+  preferred_booth_id: string | null;
   draw_order: number;
   active: boolean;
 };

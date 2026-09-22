@@ -41,8 +41,9 @@ function databaseError(error: { code?: string; message?: string } | null | undef
   }
   const message = error?.message ?? "Thao tác database thất bại.";
   if (message.includes("booth_companies_session_id_name_key")) return "Công ty này đã có trong phiên.";
+  if (message.includes("idx_booth_companies_preferred_booth")) return "Gian hàng này đã được gán trước cho công ty khác.";
   if (message.includes("booth_zones_session_id_booth_code_key")) return "Số gian hàng này đã tồn tại.";
-  if (message.includes("NO_AVAILABLE_BOOTHS")) return "Pool này không còn gian hàng trống.";
+  if (message.includes("NO_AVAILABLE_BOOTHS")) return "Pool này không còn gian hàng trống chưa được giữ chỗ.";
   if (message.includes("SESSION_FINALIZED")) return "Phiên đã khóa kết quả.";
   if (message.includes("POOL_MISMATCH")) return "Chỉ được đổi hoặc chuyển gian trong cùng pool.";
   if (message.includes("SAME_COMPANY")) return "Hãy chọn hai công ty khác nhau.";
@@ -52,7 +53,7 @@ function databaseError(error: { code?: string; message?: string } | null | undef
   if (message.includes("BOOTH_NOT_FOUND")) return "Không tìm thấy gian hàng trong phiên này.";
   if (message.includes("INVALID_SIZE")) return "Kích thước gian hàng không hợp lệ.";
   if (message.includes("violates foreign key constraint")) return "Dữ liệu đã được sử dụng và không thể xóa.";
-  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("passcode_lookup") || message.includes("share_token") || message.includes("starts_at")) {
+  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("passcode_lookup") || message.includes("share_token") || message.includes("starts_at") || message.includes("preferred_booth_id")) {
     return "Chưa cập nhật chức năng phiên công khai. Hãy chạy supabase/booth-draw-public.sql.";
   }
   return message;
@@ -530,6 +531,59 @@ export async function POST(request: Request) {
     const companyId = cleanText(payload.companyId, 80);
     const { error } = await auth.service.from("booth_companies").delete().eq("id", companyId).eq("session_id", sessionId);
     if (error) return jsonError(databaseError(error), 500);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "set_company_booth_preference") {
+    const companyId = cleanText(payload.companyId, 80);
+    const boothId = cleanText(payload.boothId, 80);
+    if (!companyId) return jsonError("Chọn công ty cần gán trước vị trí.");
+
+    const { data: company, error: companyError } = await auth.service
+      .from("booth_companies")
+      .select("id, pool_id")
+      .eq("id", companyId)
+      .eq("session_id", sessionId)
+      .maybeSingle();
+    if (companyError) return jsonError(databaseError(companyError), 500);
+    if (!company) return jsonError("Không tìm thấy công ty trong phiên này.", 404);
+
+    const { data: existingAssignment } = await auth.service
+      .from("booth_assignments")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (existingAssignment) return jsonError("Công ty đã quay nên không thể gán trước kết quả.", 409);
+
+    if (!boothId) {
+      const { error } = await auth.service.from("booth_companies").update({ preferred_booth_id: null }).eq("id", companyId).eq("session_id", sessionId);
+      if (error) return jsonError(databaseError(error), 500);
+      return NextResponse.json({ ok: true });
+    }
+
+    const { data: booth, error: boothError } = await auth.service
+      .from("booth_zones")
+      .select("id, pool_id, active")
+      .eq("id", boothId)
+      .eq("session_id", sessionId)
+      .maybeSingle();
+    if (boothError) return jsonError(databaseError(boothError), 500);
+    if (!booth || !booth.active) return jsonError("Không tìm thấy gian hàng đang hoạt động.", 404);
+    if (booth.pool_id !== company.pool_id) return jsonError("Chỉ được gán công ty vào gian hàng cùng pool.", 409);
+
+    const [{ data: boothAssignment }, { data: boothResult }] = await Promise.all([
+      auth.service.from("booth_assignments").select("id").eq("session_id", sessionId).eq("booth_id", boothId).maybeSingle(),
+      auth.service.from("booth_draw_results").select("id").eq("session_id", sessionId).eq("booth_id", boothId).maybeSingle(),
+    ]);
+    if (boothAssignment || boothResult) return jsonError("Gian hàng này đã có kết quả quay.", 409);
+
+    const { error } = await auth.service
+      .from("booth_companies")
+      .update({ preferred_booth_id: boothId })
+      .eq("id", companyId)
+      .eq("session_id", sessionId);
+    if (error) return jsonError(databaseError(error), error.code === "23505" ? 409 : 500);
     return NextResponse.json({ ok: true });
   }
 

@@ -1,5 +1,24 @@
--- Automatically allocate the unavoidable final booth in a pool.
--- Run once on projects that already have the booth draw tables.
+-- Draw enhancements for existing booth projects:
+-- 1) automatically allocate the unavoidable final booth in a pool;
+-- 2) reserve a configured booth for a company while keeping the wheel flow.
+
+alter table booth_companies add column if not exists preferred_booth_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'booth_companies_preferred_booth_id_fkey'
+  ) then
+    alter table booth_companies
+      add constraint booth_companies_preferred_booth_id_fkey
+      foreign key (preferred_booth_id) references booth_zones(id) on delete set null;
+  end if;
+end;
+$$;
+
+create unique index if not exists idx_booth_companies_preferred_booth
+  on booth_companies(session_id, preferred_booth_id)
+  where preferred_booth_id is not null;
 
 create or replace function draw_booth_for_company(
   p_session_id uuid,
@@ -63,22 +82,53 @@ begin
     return;
   end if;
 
-  select z.* into v_booth
-  from booth_zones z
-  where z.session_id = p_session_id
-    and z.pool_id = v_company.pool_id
-    and z.active = true
-    and not exists (
-      select 1 from booth_assignments a
-      where a.session_id = p_session_id and a.booth_id = z.id
-    )
-    and not exists (
-      select 1 from booth_draw_results r
-      where r.session_id = p_session_id and r.booth_id = z.id
-    )
-  order by gen_random_uuid()
-  limit 1
-  for update skip locked;
+  if v_company.preferred_booth_id is not null then
+    select z.* into v_booth
+    from booth_zones z
+    where z.id = v_company.preferred_booth_id
+      and z.session_id = p_session_id
+      and z.pool_id = v_company.pool_id
+      and z.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.booth_id = z.id
+      )
+      and not exists (
+        select 1 from booth_draw_results r
+        where r.session_id = p_session_id and r.booth_id = z.id
+      )
+    for update;
+  else
+    select z.* into v_booth
+    from booth_zones z
+    where z.session_id = p_session_id
+      and z.pool_id = v_company.pool_id
+      and z.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.booth_id = z.id
+      )
+      and not exists (
+        select 1 from booth_draw_results r
+        where r.session_id = p_session_id and r.booth_id = z.id
+      )
+      and not exists (
+        select 1
+        from booth_companies reserved
+        where reserved.session_id = p_session_id
+          and reserved.pool_id = v_company.pool_id
+          and reserved.preferred_booth_id = z.id
+          and reserved.active = true
+          and not exists (
+            select 1 from booth_assignments assigned
+            where assigned.session_id = p_session_id
+              and assigned.company_id = reserved.id
+          )
+      )
+    order by gen_random_uuid()
+    limit 1
+    for update skip locked;
+  end if;
 
   if not found then raise exception 'NO_AVAILABLE_BOOTHS'; end if;
 

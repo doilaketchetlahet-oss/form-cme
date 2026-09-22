@@ -44,6 +44,7 @@ create table if not exists booth_companies (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references booth_draw_sessions(id) on delete cascade,
   pool_id uuid not null references booth_pools(id) on delete cascade,
+  preferred_booth_id uuid,
   name text not null,
   draw_order integer not null default 0,
   active boolean not null default true,
@@ -65,6 +66,18 @@ create table if not exists booth_zones (
   created_at timestamptz not null default now(),
   unique (session_id, booth_code)
 );
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'booth_companies_preferred_booth_id_fkey'
+  ) then
+    alter table booth_companies
+      add constraint booth_companies_preferred_booth_id_fkey
+      foreign key (preferred_booth_id) references booth_zones(id) on delete set null;
+  end if;
+end;
+$$;
 
 -- Immutable draw history. Current positions live in booth_assignments so swaps
 -- never overwrite what was originally drawn.
@@ -121,6 +134,9 @@ create unique index if not exists idx_booth_sessions_passcode_lookup on booth_dr
   where passcode_lookup is not null;
 create index if not exists idx_booth_pools_session on booth_pools(session_id, sort_order);
 create index if not exists idx_booth_companies_pool on booth_companies(pool_id, draw_order);
+create unique index if not exists idx_booth_companies_preferred_booth
+  on booth_companies(session_id, preferred_booth_id)
+  where preferred_booth_id is not null;
 create index if not exists idx_booth_zones_pool on booth_zones(pool_id, booth_code);
 create index if not exists idx_booth_draw_results_session on booth_draw_results(session_id, drawn_at);
 create index if not exists idx_booth_exchange_logs_session on booth_exchange_logs(session_id, created_at desc);
@@ -197,22 +213,53 @@ begin
     return;
   end if;
 
-  select z.* into v_booth
-  from booth_zones z
-  where z.session_id = p_session_id
-    and z.pool_id = v_company.pool_id
-    and z.active = true
-    and not exists (
-      select 1 from booth_assignments a
-      where a.session_id = p_session_id and a.booth_id = z.id
-    )
-    and not exists (
-      select 1 from booth_draw_results r
-      where r.session_id = p_session_id and r.booth_id = z.id
-    )
-  order by gen_random_uuid()
-  limit 1
-  for update skip locked;
+  if v_company.preferred_booth_id is not null then
+    select z.* into v_booth
+    from booth_zones z
+    where z.id = v_company.preferred_booth_id
+      and z.session_id = p_session_id
+      and z.pool_id = v_company.pool_id
+      and z.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.booth_id = z.id
+      )
+      and not exists (
+        select 1 from booth_draw_results r
+        where r.session_id = p_session_id and r.booth_id = z.id
+      )
+    for update;
+  else
+    select z.* into v_booth
+    from booth_zones z
+    where z.session_id = p_session_id
+      and z.pool_id = v_company.pool_id
+      and z.active = true
+      and not exists (
+        select 1 from booth_assignments a
+        where a.session_id = p_session_id and a.booth_id = z.id
+      )
+      and not exists (
+        select 1 from booth_draw_results r
+        where r.session_id = p_session_id and r.booth_id = z.id
+      )
+      and not exists (
+        select 1
+        from booth_companies reserved
+        where reserved.session_id = p_session_id
+          and reserved.pool_id = v_company.pool_id
+          and reserved.preferred_booth_id = z.id
+          and reserved.active = true
+          and not exists (
+            select 1 from booth_assignments assigned
+            where assigned.session_id = p_session_id
+              and assigned.company_id = reserved.id
+          )
+      )
+    order by gen_random_uuid()
+    limit 1
+    for update skip locked;
+  end if;
 
   if not found then raise exception 'NO_AVAILABLE_BOOTHS'; end if;
 
