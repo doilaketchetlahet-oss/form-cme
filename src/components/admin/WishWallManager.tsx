@@ -50,7 +50,7 @@ export function WishWallManager() {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"pending" | "approved" | "hidden" | "rejected">("pending");
   const assetInputRef = useRef<HTMLInputElement>(null);
-  const assetTargetRef = useRef<"shieldImageUrl" | "targetImageUrl" | "backgroundUrl">("shieldImageUrl");
+  const assetTargetRef = useRef<"targetImageUrl" | "backgroundUrl">("targetImageUrl");
 
   const authHeaders = useCallback(async (json = true) => {
     const { data } = await supabase.auth.getSession();
@@ -165,7 +165,7 @@ export function WishWallManager() {
 
   const patch = (value: Partial<WishSettings>) => setDraft((prev) => ({ ...prev, ...value }));
 
-  const openAssetPicker = (target: "shieldImageUrl" | "targetImageUrl" | "backgroundUrl") => {
+  const openAssetPicker = (target: "targetImageUrl" | "backgroundUrl") => {
     assetTargetRef.current = target;
     assetInputRef.current?.click();
   };
@@ -204,9 +204,9 @@ export function WishWallManager() {
   const edgeUrls = useMemo(
     () =>
       event
-        ? (["left", "center", "right"] as const).map((edge) => ({
+        ? (["left", "center", "right", "bottom"] as const).map((edge) => ({
             edge,
-            label: { left: "Bên trái", center: "Chính giữa", right: "Bên phải" }[edge],
+            label: { left: "Từ bên trái", center: "Từ trên xuống", right: "Từ bên phải", bottom: "Từ dưới lên" }[edge],
             url: buildPublicUrl(`/wish/${event.code}?edge=${edge}`),
           }))
         : [],
@@ -224,7 +224,7 @@ export function WishWallManager() {
             <HeartHandshake className="text-rose-500" size={22} /> Trao lời chúc, nhận yêu thương
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Khách nhập hoặc vẽ lời chúc trên tablet; lời chúc bay lên màn LED, xuyên qua tấm khiên rồi
+            Khách nhập hoặc vẽ lời chúc trên tablet; lời chúc bay từ ngoài mép màn LED và
             hội tụ thành một hình ghép tập thể.
           </p>
         </div>
@@ -352,6 +352,7 @@ export function WishWallManager() {
                       <option value="center">Chính giữa (từ trên xuống)</option>
                       <option value="left">Bên trái</option>
                       <option value="right">Bên phải</option>
+                      <option value="bottom">Chính giữa (từ dưới lên)</option>
                     </select>
                   </label>
                   <label>
@@ -442,15 +443,6 @@ export function WishWallManager() {
                       onChange={(value) => patch({ shapeGuideOpacity: value })}
                     />
                     <RangeSetting
-                      label="Kích thước khiên"
-                      hint="Phóng to hoặc thu nhỏ cổng/khiên ánh sáng nơi lời chúc bay vào. 100% là kích thước mặc định."
-                      value={draft.shieldScale}
-                      min={50}
-                      max={180}
-                      suffix="%"
-                      onChange={(value) => patch({ shieldScale: value })}
-                    />
-                    <RangeSetting
                       label="Độ hiện ảnh nền"
                       hint="Độ rõ của ảnh nền LED đã tải lên. 0% chỉ dùng nền theme; 30–55% thường giữ lời chúc dễ đọc."
                       value={draft.backgroundOpacity}
@@ -497,7 +489,6 @@ export function WishWallManager() {
                   <div className="flex flex-wrap gap-2">
                     {(
                       [
-                        ["shieldImageUrl", "Ảnh khiên", "Thay hình khiên lục giác", draft.shieldImageUrl],
                         ["targetImageUrl", "Ảnh hình ghép", "Vùng tụ theo hình dạng ảnh", draft.targetImageUrl],
                         ["backgroundUrl", "Ảnh nền LED", "Nền phía sau màn hình", draft.backgroundUrl],
                       ] as const

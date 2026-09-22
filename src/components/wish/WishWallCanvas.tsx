@@ -269,15 +269,17 @@ function renderCardSprite(wish: Wish, width: number, light: boolean): HTMLCanvas
   return canvas;
 }
 
-function edgePoints(edge: WishEdge, w: number, h: number, layout: CardLayout): { from: ShapePoint; shield: ShapePoint } {
+function edgePoints(edge: WishEdge, w: number, h: number, layout: CardLayout): { from: ShapePoint; entry: ShapePoint } {
   const jitter = Math.random() * 0.3 + 0.35;
   switch (edge) {
     case "left":
-      return { from: { x: -layout.w * 0.7, y: h * jitter }, shield: { x: w * 0.11, y: h * jitter } };
+      return { from: { x: -layout.w * 0.7, y: h * jitter }, entry: { x: w * 0.08, y: h * jitter } };
     case "right":
-      return { from: { x: w + layout.w * 0.7, y: h * jitter }, shield: { x: w * 0.89, y: h * jitter } };
+      return { from: { x: w + layout.w * 0.7, y: h * jitter }, entry: { x: w * 0.92, y: h * jitter } };
+    case "bottom":
+      return { from: { x: w * jitter, y: h + layout.h * 0.7 }, entry: { x: w * jitter, y: h * 0.9 } };
     default:
-      return { from: { x: w * jitter, y: -layout.h * 0.7 }, shield: { x: w * jitter, y: h * 0.13 } };
+      return { from: { x: w * jitter, y: -layout.h * 0.7 }, entry: { x: w * jitter, y: h * 0.1 } };
   }
 }
 
@@ -340,11 +342,10 @@ export const WishWallCanvas = forwardRef<
   const flashRef = useRef<{ startedAt: number; color: string; duration: number } | null>(null);
   const sizeRef = useRef({ w: 1, h: 1 });
   const imagesRef = useRef<{
-    shield?: HTMLImageElement;
     target?: HTMLImageElement;
     bg?: HTMLImageElement;
-    urls: { shield: string | null; target: string | null; bg: string | null };
-  }>({ urls: { shield: null, target: null, bg: null } });
+    urls: { target: string | null; bg: string | null };
+  }>({ urls: { target: null, bg: null } });
 
   useEffect(() => {
     onCueRef.current = onCue;
@@ -415,14 +416,14 @@ export const WishWallCanvas = forwardRef<
         phase: "incoming",
         born: Date.now(),
         from: points.from,
-        to: points.shield,
+        to: points.entry,
         t: 0,
         tDur: 0.9 + Math.random() * 0.4,
         bob: Math.random() * Math.PI * 2,
         target: null,
       });
 
-      // Lời chúc đích đến để sau khi qua khiên sẽ tự trôi về vùng này.
+      // Sau khi bay hẳn từ ngoài mép vào, lời chúc tiếp tục trôi về vùng này.
       itemDestRef.current.set(wish.id, dest);
     },
     [showMessage],
@@ -665,11 +666,10 @@ export const WishWallCanvas = forwardRef<
       };
 
       const next = {
-        shield: event.settings.shieldImageUrl,
         target: event.settings.targetImageUrl,
         bg: event.settings.backgroundUrl,
       };
-      const load = (url: string | null, key: "shield" | "target" | "bg") => {
+      const load = (url: string | null, key: "target" | "bg") => {
         if (!url) {
           imagesRef.current[key] = undefined;
           imagesRef.current.urls[key] = null;
@@ -694,7 +694,6 @@ export const WishWallCanvas = forwardRef<
         };
         imagesRef.current.urls[key] = url;
       };
-      load(next.shield, "shield");
       load(next.target, "target");
       load(next.bg, "bg");
     },
@@ -965,63 +964,6 @@ export const WishWallCanvas = forwardRef<
       }
     };
 
-    const drawShield = (
-      x: number,
-      y: number,
-      radius: number,
-      accent: string,
-      alpha: number,
-      now: number,
-    ) => {
-      const img = imagesRef.current.shield;
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      if (img) {
-        const size = radius * 2.4;
-        ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
-        ctx.restore();
-        return;
-      }
-      const glow = ctx.createRadialGradient(x, y, 0, x, y, radius * 1.8);
-      glow.addColorStop(0, `${accent}cc`);
-      glow.addColorStop(0.45, `${accent}44`);
-      glow.addColorStop(1, "transparent");
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(x, y, radius * 1.8, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(now / 6000);
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 3.5;
-      ctx.shadowColor = accent;
-      ctx.shadowBlur = 18;
-      ctx.beginPath();
-      for (let i = 0; i <= 6; i += 1) {
-        const angle = (Math.PI / 3) * i - Math.PI / 2;
-        const px = Math.cos(angle) * radius;
-        const py = Math.sin(angle) * radius;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.closePath();
-      ctx.stroke();
-
-      ctx.rotate(-now / 3500);
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = `${accent}88`;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([8, 10]);
-      ctx.beginPath();
-      ctx.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-      ctx.restore();
-    };
-
     const render = (now: number) => {
       const event = eventRef.current;
       const { w, h } = sizeRef.current;
@@ -1043,22 +985,6 @@ export const WishWallCanvas = forwardRef<
         const scale = Math.max(w / bg.width, h / bg.height);
         ctx.drawImage(bg, (w - bg.width * scale) / 2, (h - bg.height * scale) / 2, bg.width * scale, bg.height * scale);
         ctx.restore();
-      }
-
-      // Khiên ở cạnh mặc định của chương trình, luôn phát sáng nhẹ.
-      if (event) {
-        const edge = event.settings.edge;
-        const x = edge === "left" ? w * 0.11 : edge === "right" ? w * 0.89 : w * 0.5;
-        const y = edge === "center" ? h * 0.13 : h * 0.5;
-        const pulse = 0.5 + 0.2 * Math.sin(now / 700);
-        drawShield(
-          x,
-          y,
-          Math.min(w, h) * 0.14 * (event.settings.shieldScale / 100),
-          accent,
-          pulse,
-          now,
-        );
       }
 
       // Hình ghép tập thể: nền mờ + ảnh admin tải lên.

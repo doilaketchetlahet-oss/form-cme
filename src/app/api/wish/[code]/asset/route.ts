@@ -32,7 +32,7 @@ async function ensureBucket(admin: Admin) {
   }
 }
 
-/** POST /api/wish/[code]/asset (multipart: file) — tải ảnh khiên/hình ghép/nền. */
+/** POST /api/wish/[code]/asset (multipart: file) — tải ảnh hình ghép/nền. */
 export async function POST(request: NextRequest, context: { params: Promise<{ code: string }> }) {
   const auth = await authorizeAdminApi(request, true);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });

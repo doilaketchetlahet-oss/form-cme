@@ -79,13 +79,11 @@ export type WishSettings = {
   maxLength: number;
   theme: WishThemeKey;
   /** Cạnh tablet so với màn LED: lời chúc bay vào từ cạnh này. */
-  edge: "left" | "right" | "center";
+  edge: "left" | "right" | "center" | "bottom";
   /** Hình dạng tập thể mà các lời chúc hội tụ thành. */
   shape: WishShape;
   /** Chữ cho shape = "text" (tên cô dâu/chú rể, tên thương hiệu…). */
   shapeText: string;
-  /** Ảnh khiên (tấm lá chắn ánh sáng) — admin tải lên sau. */
-  shieldImageUrl: string | null;
   /** Ảnh hình ghép tập thể — admin tải lên sau. */
   targetImageUrl: string | null;
   /** Ảnh nền màn LED. */
@@ -104,8 +102,6 @@ export type WishSettings = {
   shapeImageThreshold: number;
   /** Đảo vùng sáng/tối khi tách hình từ JPG hoặc PNG nền đặc. */
   shapeImageInvert: boolean;
-  /** Kích thước khiên so với mặc định (50..180%). */
-  shieldScale: number;
   /** Độ hiển thị của ảnh nền LED (0..100%). */
   backgroundOpacity: number;
 };
@@ -119,7 +115,6 @@ export const DEFAULT_WISH_SETTINGS: WishSettings = {
   edge: "center",
   shape: "heart",
   shapeText: "",
-  shieldImageUrl: null,
   targetImageUrl: null,
   backgroundUrl: null,
   showNames: true,
@@ -129,13 +124,12 @@ export const DEFAULT_WISH_SETTINGS: WishSettings = {
   shapeGuideOpacity: 20,
   shapeImageThreshold: 210,
   shapeImageInvert: false,
-  shieldScale: 100,
   backgroundOpacity: 40,
 };
 
 export type WishKind = "symbol" | "text" | "drawing";
 export type WishStatus = "pending" | "approved" | "rejected" | "hidden";
-export type WishEdge = "left" | "right" | "center";
+export type WishEdge = "left" | "right" | "center" | "bottom";
 
 export type WishStroke = {
   /** Màu nét vẽ. */
@@ -215,7 +209,7 @@ export function normalizeWishSettings(input: unknown): WishSettings {
     : DEFAULT_WISH_SETTINGS.theme;
   const shape = SHAPES.includes(raw.shape as WishShape) ? (raw.shape as WishShape) : DEFAULT_WISH_SETTINGS.shape;
   const edge =
-    raw.edge === "left" || raw.edge === "right" || raw.edge === "center"
+    raw.edge === "left" || raw.edge === "right" || raw.edge === "center" || raw.edge === "bottom"
       ? raw.edge
       : DEFAULT_WISH_SETTINGS.edge;
   const symbol =
@@ -233,7 +227,6 @@ export function normalizeWishSettings(input: unknown): WishSettings {
     shape,
     shapeText:
       typeof raw.shapeText === "string" ? raw.shapeText.trim().slice(0, 60) : DEFAULT_WISH_SETTINGS.shapeText,
-    shieldImageUrl: cleanUrl(raw.shieldImageUrl),
     targetImageUrl: cleanUrl(raw.targetImageUrl),
     backgroundUrl: cleanUrl(raw.backgroundUrl),
     showNames: raw.showNames !== false,
@@ -253,7 +246,6 @@ export function normalizeWishSettings(input: unknown): WishSettings {
       DEFAULT_WISH_SETTINGS.shapeImageThreshold,
     ),
     shapeImageInvert: raw.shapeImageInvert === true,
-    shieldScale: clampInt(raw.shieldScale, 50, 180, DEFAULT_WISH_SETTINGS.shieldScale),
     backgroundOpacity: clampInt(
       raw.backgroundOpacity,
       0,
@@ -288,7 +280,7 @@ export function normalizeWishRow(row: Record<string, unknown>): Wish {
   const kind = (["symbol", "text", "drawing"] as const).includes(row.kind as WishKind)
     ? (row.kind as WishKind)
     : "symbol";
-  const edge = (["left", "right", "center"] as const).includes(row.edge as WishEdge)
+  const edge = (["left", "right", "center", "bottom"] as const).includes(row.edge as WishEdge)
     ? (row.edge as WishEdge)
     : "center";
   const status = (["pending", "approved", "rejected", "hidden"] as const).includes(
@@ -385,7 +377,9 @@ export function validateWishInput(
     typeof body.nickname === "string" ? body.nickname.trim().slice(0, MAX_NICKNAME_LENGTH) : "";
   const color = typeof body.color === "string" && HEX.test(body.color) ? body.color : "#38bdf8";
   const edge =
-    body.edge === "left" || body.edge === "right" || body.edge === "center" ? body.edge : settings.edge;
+    body.edge === "left" || body.edge === "right" || body.edge === "center" || body.edge === "bottom"
+      ? body.edge
+      : settings.edge;
 
   return {
     ok: true,

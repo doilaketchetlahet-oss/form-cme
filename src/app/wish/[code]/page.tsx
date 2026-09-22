@@ -13,7 +13,7 @@ export default function WishComposerPage() {
 
   const [event, setEvent] = useState<WishEvent | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [edge, setEdge] = useState<"left" | "right" | "center">("center");
+  const [edge, setEdge] = useState<"left" | "right" | "center" | "bottom">("center");
 
   useEffect(() => {
     if (!code) return;
@@ -29,10 +29,10 @@ export default function WishComposerPage() {
     })();
   }, [code]);
 
-  // Mỗi tablet có thể được gán một cạnh riêng qua ?edge=left|right|center.
+  // Mỗi tablet có thể được gán một cạnh riêng qua query `edge`.
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("edge");
-    if (value === "left" || value === "right" || value === "center") {
+    if (value === "left" || value === "right" || value === "center" || value === "bottom") {
       queueMicrotask(() => setEdge(value));
     }
   }, []);

@@ -17,7 +17,7 @@ import {
 type Props = {
   code: string;
   event: WishEvent;
-  edge: "left" | "right" | "center";
+  edge: "left" | "right" | "center" | "bottom";
 };
 
 type Feedback = { tone: "ok" | "warn" | "error"; text: string };
@@ -155,6 +155,8 @@ export function WishComposer({ code, event, edge }: Props) {
     const distance = typeof window === "undefined" ? 800 : Math.max(window.innerWidth, window.innerHeight);
     if (edge === "left") return { x: -distance, y: 0, rotate: -20 };
     if (edge === "right") return { x: distance, y: 0, rotate: 20 };
+    // Tablet đặt phía dưới LED: thẻ bay lên khỏi tablet, rồi đi từ dưới lên trên LED.
+    if (edge === "bottom") return { x: 0, y: -distance, rotate: 0 };
     return { x: 0, y: -distance, rotate: 0 };
   }, [edge]);
 

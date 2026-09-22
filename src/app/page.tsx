@@ -88,7 +88,7 @@ const FEATURES = [
     icon: HeartHandshake,
     emoji: "💌",
     title: "Trao lời chúc, nhận yêu thương",
-    text: "Khách gõ hoặc vẽ lời chúc trên tablet; lời chúc bay lên màn LED, xuyên qua tấm khiên rồi ghép thành một hình tập thể.",
+    text: "Khách gõ hoặc vẽ lời chúc trên tablet; lời chúc bay từ ngoài mép màn LED và ghép thành một hình tập thể.",
     href: "/admin/tools/wish-wall",
     cta: "Mở công cụ",
   },

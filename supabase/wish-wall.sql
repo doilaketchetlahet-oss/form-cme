@@ -1,7 +1,7 @@
 -- ============================================================
 --  WISH WALL — "Trao lời chúc, nhận yêu thương"
 --  Bảng chọn vật phẩm -> gõ/vẽ lời chúc -> gửi. Lời chúc bay ra khỏi
---  màn hình tablet, được tấm khiên trên màn LED hứng lấy rồi trôi nhẹ.
+--  màn hình tablet, bay từ ngoài mép màn LED vào rồi trôi nhẹ.
 --
 --  Postgres là sổ cái, API là trọng tài, Supabase Realtime Broadcast là
 --  kênh hiển thị cho màn LED. Mất mạng thì LED tự đồng bộ lại từ API.
@@ -13,7 +13,7 @@ create extension if not exists pgcrypto;
 
 -- ------------------------------------------------------------
 -- BẢNG: wish_events (chương trình do admin tạo)
---   settings: jsonb cấu hình giao diện (theme, biểu tượng, khiên, hình ghép)
+--   settings: jsonb cấu hình giao diện (theme, biểu tượng, hình ghép)
 -- ------------------------------------------------------------
 create table if not exists public.wish_events (
   id            uuid primary key default gen_random_uuid(),
@@ -47,7 +47,7 @@ create table if not exists public.wishes (
   drawing       jsonb,
   color         text not null default '#38bdf8',
   nickname      text not null default '',
-  edge          text not null default 'center' check (edge in ('left', 'right', 'center')),
+  edge          text not null default 'center' check (edge in ('left', 'right', 'center', 'bottom')),
   status        text not null default 'approved' check (status in ('pending', 'approved', 'rejected', 'hidden')),
   ip_hash       text,
   created_at    timestamptz not null default now(),
@@ -57,6 +57,11 @@ create table if not exists public.wishes (
 create index if not exists idx_wishes_event_status on public.wishes(event_id, status, created_at);
 create index if not exists idx_wishes_event_created on public.wishes(event_id, created_at);
 create index if not exists idx_wishes_ip on public.wishes(ip_hash, created_at);
+
+-- Nâng cấp installation cũ: cho phép tablet đặt phía dưới màn LED.
+alter table public.wishes drop constraint if exists wishes_edge_check;
+alter table public.wishes
+  add constraint wishes_edge_check check (edge in ('left', 'right', 'center', 'bottom'));
 
 -- ------------------------------------------------------------
 -- RLS: KHÔNG mở cho anon. Mọi truy cập đi qua API service_role.
@@ -82,7 +87,7 @@ create policy "wishes admin write" on public.wishes
   for all to authenticated using (can_manage_forms()) with check (can_manage_forms());
 
 -- ------------------------------------------------------------
--- STORAGE: bucket công khai cho ảnh khiên / hình ghép / nền do admin tải lên.
+-- STORAGE: bucket công khai cho ảnh hình ghép / nền do admin tải lên.
 -- ------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('wish-assets', 'wish-assets', true, 6000000,

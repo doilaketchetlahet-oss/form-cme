@@ -167,7 +167,7 @@ function createAudioContext(): AudioContext {
   return new Ctor!();
 }
 
-/** Tiếng "whoosh" khi lời chúc xuyên qua khiên. */
+/** Tiếng "whoosh" khi lời chúc bay từ ngoài mép vào màn LED. */
 function playWhoosh(ctx: AudioContext) {
   const now = ctx.currentTime;
   const osc = ctx.createOscillator();
