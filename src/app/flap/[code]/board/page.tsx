@@ -208,12 +208,13 @@ function Lane({
           style={{ width: `${percent}%`, background: team.color }}
         />
         <motion.div
-          className="absolute top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full text-2xl shadow-md ring-2 ring-white"
-          style={{ background: team.color }}
-          animate={{ left: `calc(${percent}% - ${Math.round(percent * 0.44)}px)` }}
+          className="absolute top-1/2 flex h-14 w-14 -translate-y-1/2 items-center justify-center"
+          animate={{ left: `calc(${percent}% - ${Math.round(percent * 0.56)}px)` }}
           transition={{ type: "spring", stiffness: 120, damping: 20 }}
         >
-          🦅
+          {/* Hoạt ảnh đại bàng. Nếu trình duyệt không phát được WebM thì
+              component tự chuyển sang emoji. */}
+          <EagleSprite />
         </motion.div>
       </div>
 
@@ -224,5 +225,39 @@ function Lane({
       </div>
       <span className="w-6 shrink-0 text-xs font-bold text-slate-400">#{index + 1}</span>
     </div>
+  );
+}
+
+/**
+ * Hoạt ảnh đại bàng cho làn đua.
+ *
+ * `fly-eagle.webm` là VP9 không có kênh alpha, nên khi phát được thì nó che
+ * hoàn toàn emoji. Chỉ khi trình duyệt không phát nổi (một số Safari/iOS cũ)
+ * hoặc mạng chặn file thì mới rơi về emoji, nhờ đó bảng không bao giờ trống.
+ */
+function EagleSprite() {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <span className="text-3xl" style={{ textShadow: "0 1px 3px rgba(255,255,255,0.9)" }} aria-label="Đại bàng">
+        🦅
+      </span>
+    );
+  }
+
+  return (
+    <video
+      src="/fly-eagle.webm"
+      autoPlay
+      loop
+      muted
+      playsInline
+      disablePictureInPicture
+      preload="auto"
+      onError={() => setFailed(true)}
+      className="h-full w-full object-contain drop-shadow-md"
+      aria-label="Đại bàng"
+    />
   );
 }
