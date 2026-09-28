@@ -1,4 +1,5 @@
 import type { SurveyResponse } from "@/lib/surveys";
+import * as XLSX from "xlsx";
 
 export type ImportQuestionMeta = {
   type: string;
@@ -33,6 +34,19 @@ export function normalizeHeader(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+export function parseSpreadsheetFile(file: File): Promise<string[][]> {
+  return file.arrayBuffer().then((buffer) => {
+    const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!firstSheet) return [];
+    return XLSX.utils.sheet_to_json<string[]>(firstSheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    }) as string[][];
+  });
 }
 
 export function parseCsv(text: string): string[][] {
@@ -108,14 +122,14 @@ export function buildQuestionHeaderMap(questionOrder: string[], questionLabels: 
   return questionByHeader;
 }
 
-export function parseSurveyImportCsv(params: {
-  text: string;
+export function parseSurveyImportRows(params: {
+  rows: string[][];
   questionOrder: string[];
   questionLabels: Record<string, string>;
   questionMeta: Record<string, ImportQuestionMeta>;
   existingEmails: Set<string>;
 }) {
-  const rows = parseCsv(params.text);
+  const rows = params.rows;
   if (rows.length < 2) {
     return { headers: rows[0] ?? [], rows: [], totalRows: 0 } satisfies CsvImportPreview;
   }
@@ -188,6 +202,13 @@ export function parseSurveyImportCsv(params: {
     rows: previewRows,
     totalRows: dataRows.length,
   } satisfies CsvImportPreview;
+}
+
+export function parseSurveyImportCsv(params: Omit<Parameters<typeof parseSurveyImportRows>[0], "rows"> & { text: string }) {
+  return parseSurveyImportRows({
+    ...params,
+    rows: parseCsv(params.text),
+  });
 }
 
 export function buildImportPayload(surveyId: string, rows: CsvImportRow[]) {

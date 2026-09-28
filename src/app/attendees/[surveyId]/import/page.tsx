@@ -9,7 +9,9 @@ import type { SurveyResponse } from "@/lib/surveys";
 import {
   buildImportPayload,
   findResponseEmail,
-  parseSurveyImportCsv,
+  parseCsv,
+  parseSpreadsheetFile,
+  parseSurveyImportRows,
   type CsvImportPreview,
   type CsvImportRow,
   type ImportQuestionMeta,
@@ -106,9 +108,10 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
     setParsing(true);
     setResult(null);
     try {
-      const text = await file.text();
-      const parsed = parseSurveyImportCsv({
-        text,
+      const isExcel = /\.xlsx?$/i.test(file.name);
+      const rows = isExcel ? await parseSpreadsheetFile(file) : parseCsv(await file.text());
+      const parsed = parseSurveyImportRows({
+        rows,
         questionOrder,
         questionLabels,
         questionMeta,
@@ -205,7 +208,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           </Link>
           <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Import CSV</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Import Excel / CSV</p>
               <h1 className="mt-1 text-2xl font-bold text-slate-900 leading-snug">{surveyTitle}</h1>
               <p className="mt-1 text-sm text-slate-500">Xem trước, sửa và xoá từng dòng trước khi đưa vào danh sách đăng ký.</p>
             </div>
@@ -214,7 +217,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
                 onClick={() => inputRef.current?.click()}
                 className="inline-flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
-                <Upload size={16} /> Chọn file CSV
+                <Upload size={16} /> Chọn file Excel / CSV
               </button>
               <button
                 onClick={doImport}
@@ -229,7 +232,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,text/csv"
+            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
             className="hidden"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -253,7 +256,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               <div className="min-w-0">
                 <p className="text-sm font-bold text-slate-900">{fileName || "Chưa chọn file"}</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  {preview ? `Đã đọc ${preview.totalRows} dòng dữ liệu. Chỉ các dòng sẵn sàng mới được import.` : "Chọn file CSV để xem trước danh sách."}
+                  {preview ? `Đã đọc ${preview.totalRows} dòng dữ liệu. Chỉ các dòng sẵn sàng mới được import.` : "Chọn file Excel / CSV để xem trước danh sách."}
                 </p>
               </div>
               {preview && (
@@ -291,7 +294,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
                 className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-60"
               >
                 {parsing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                {parsing ? "Đang đọc file..." : "Chọn file CSV"}
+                {parsing ? "Đang đọc file..." : "Chọn file Excel / CSV"}
               </button>
             </div>
           )}
