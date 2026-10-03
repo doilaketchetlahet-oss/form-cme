@@ -272,9 +272,10 @@ export function InvitePdfPage({ formId }: { formId: string }) {
             <ArrowLeft size={15} /> Quay lại form
           </Link>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-            <FileText size={22} className="text-sky-500" /> Thư mời PDF
+            <FileText size={22} className="text-sky-500" /> Thiệp PDF đính kèm
           </h1>
-          <p className="mt-1 text-sm text-slate-600">{form.title} · {responses.length} người đăng ký</p>
+          <p className="mt-1 text-sm text-slate-600">{form.title} · {responses.length} người đăng ký · Tạo file PDF riêng cho từng người để tải về hoặc in.</p>
+          <Link href={`/admin/forms/${form.id}/email`} className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-sky-700">Quay lại Email & thiệp mời <ArrowLeft size={14} /></Link>
         </div>
         {canManageForms && (
           <div className="flex flex-wrap gap-2">

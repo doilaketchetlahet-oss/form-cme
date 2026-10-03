@@ -61,7 +61,7 @@ export function EmailPreviewFrame({ subject, body, surveyTitle, className }: Pro
   return (
     <div className={className}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-[10px] uppercase tracking-widest text-slate-400">Xem trước</div>
+        <div className="text-xs font-semibold text-slate-600">Người nhận sẽ thấy · Dữ liệu minh hoạ</div>
         <button
           type="button"
           onClick={() => setReloadKey((key) => key + 1)}
@@ -74,7 +74,7 @@ export function EmailPreviewFrame({ subject, body, surveyTitle, className }: Pro
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="border-b border-slate-100 px-4 py-3">
-          <div className="text-[10px] uppercase tracking-widest text-slate-400">Subject</div>
+          <div className="text-xs text-slate-500">Tiêu đề email</div>
           <div className="mt-1 text-sm font-semibold text-slate-800">{previewSubject || subject || "—"}</div>
           {attachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

@@ -9,6 +9,8 @@ import { supabase } from "@/lib/supabase";
 import type { Survey, SurveyQuestion } from "@/lib/surveys";
 import type { EmailMergeQuestion } from "@/lib/email-template";
 import { EmailComposer } from "./EmailComposer";
+import { EmailPreviewFrame } from "./EmailPreviewFrame";
+import { useConfirm } from "@/lib/ui/confirm";
 
 type EmailTemplateSummary = {
   id: string;
@@ -19,6 +21,7 @@ type EmailTemplateSummary = {
 };
 
 export function EmailTemplatePage({ formId }: { formId: string }) {
+  const confirm = useConfirm();
   const { canManageForms } = useAdminAccess();
   const [form, setForm] = useState<(Survey & { questions: SurveyQuestion[] }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,6 +36,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const [provider, setProvider] = useState<"" | "resend" | "smtp">("");
+  const [showPreview, setShowPreview] = useState(false);
   const [saved, setSaved] = useState({ subject: "", body: "", provider: "" as "" | "resend" | "smtp" });
 
   const dirty = !loading && (subject !== saved.subject || body !== saved.body || provider !== saved.provider);
@@ -89,10 +93,11 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
     return () => { active = false; };
   }, [loadTemplates]);
 
-  const applyTemplate = (templateId: string) => {
-    setSelectedTemplateId(templateId);
+  const applyTemplate = async (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
     if (!template) return;
+    if (dirty && !(await confirm({ title: "Áp dụng mẫu?", description: "Nội dung đang soạn sẽ được thay bằng mẫu đã chọn.", confirmText: "Áp dụng mẫu" }))) return;
+    setSelectedTemplateId(templateId);
     setSubject(template.subject ?? "");
     setBody(template.body);
     setEditorKey((key) => key + 1);
@@ -187,7 +192,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
         return;
       }
       const providerLabel = result.provider === "smtp" ? "SMTP" : "Resend";
-      setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to} qua ${providerLabel}.` });
+      setMessage({ type: "success", text: `Đã gửi thư thử đến ${result.to} qua ${providerLabel}${result.pdfAttached ? ", có PDF cá nhân hoá" : ""}. QR trong thư chỉ dùng minh hoạ.` });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Gửi thử thất bại." });
     } finally {
@@ -234,9 +239,9 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
             <ArrowLeft size={15} /> Quay lại form
           </Link>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-            <Mail size={22} className="text-sky-500" /> Soạn thư mời
+             <Mail size={22} className="text-sky-500" /> Email & thiệp mời
           </h1>
-          <p className="mt-1 text-sm text-slate-600">{form.title}</p>
+           <p className="mt-1 text-sm text-slate-600">{form.title} · Soạn nội dung → thêm thiệp nếu cần → gửi thử → lưu cho form.</p>
         </div>
         {canManageForms && isCheckinForm && (
           <div className="flex flex-wrap items-center gap-2">
@@ -259,7 +264,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
               disabled={saving}
               className="rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-on-brand hover:bg-sky-400 disabled:opacity-50"
             >
-              {saving ? "Đang lưu..." : "Lưu thư mời"}
+               {saving ? "Đang lưu..." : "Lưu cho form này"}
             </button>
           </div>
         )}
@@ -290,10 +295,10 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
         <>
           <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-sky-100 bg-white p-3">
             <Bookmark size={16} className="text-sky-500" />
-            <span className="text-sm font-semibold text-slate-700">Template</span>
+             <span className="text-sm font-semibold text-slate-700">Mẫu dùng lại</span>
             <select
               value={selectedTemplateId}
-              onChange={(event) => applyTemplate(event.target.value)}
+              onChange={(event) => setSelectedTemplateId(event.target.value)}
               disabled={loadingTemplates}
               className="admin-dark-select min-w-[180px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none disabled:opacity-60"
             >
@@ -302,19 +307,20 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
                 <option key={template.id} value={template.id}>{template.name}</option>
               ))}
             </select>
+            <button type="button" onClick={() => void applyTemplate(selectedTemplateId)} disabled={!selectedTemplateId || loadingTemplates} className="rounded-xl bg-sky-100 px-3 py-2 text-xs font-semibold text-sky-800 disabled:opacity-50">Áp dụng mẫu</button>
             <button
               type="button"
               onClick={saveAsTemplate}
               disabled={savingTemplate}
               className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
             >
-              <Save size={14} /> Lưu thành template
+               <Save size={14} /> Lưu vào thư viện mẫu
             </button>
             <Link
               href="/admin/templates"
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:text-sky-600"
             >
-              <ExternalLink size={14} /> Kho template
+               <ExternalLink size={14} /> Thư viện mẫu
             </Link>
             <button
               type="button"
@@ -328,7 +334,9 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           </div>
 
           <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
-            <label className="mb-4 flex flex-col gap-1.5 sm:max-w-xs">
+            <details className="mb-4 rounded-xl border border-slate-200 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-600">Nâng cao: kênh gửi email</summary>
+              <label className="mt-3 flex flex-col gap-1.5 sm:max-w-xs">
               <span className="text-xs font-medium text-slate-500">Kênh gửi email</span>
               <select
                 value={provider}
@@ -339,7 +347,14 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
                 <option value="resend">Resend</option>
                 <option value="smtp">SMTP riêng</option>
               </select>
-            </label>
+              </label>
+            </details>
+            <div className="mb-4 rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm text-slate-700">
+              <p>Thiệp ảnh hiển thị ngay trong email. Thiệp PDF là file cá nhân hoá đính kèm để tải về hoặc in.</p>
+              <Link href={`/admin/forms/${form.id}/pdf`} className="mt-2 inline-flex items-center gap-1 font-semibold text-sky-700">Thiết kế thiệp PDF đính kèm <ExternalLink size={14} /></Link>
+              <p className="mt-2 text-xs text-slate-500">Gửi thử dùng nội dung đang soạn và mẫu PDF đã lưu, không gửi đến người đăng ký.</p>
+              <p className="mt-1 text-xs font-semibold text-slate-700">PDF cá nhân hoá: {form.pdf_attach_email ? "Đang bật gửi kèm" : "Chưa bật gửi kèm"}</p>
+            </div>
             <EmailComposer
               key={`composer-${editorKey}`}
               subject={subject}
@@ -349,6 +364,13 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
               onSubjectChange={setSubject}
               onBodyChange={setBody}
             />
+            <div className="mt-6 border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => setShowPreview((value) => !value)} aria-expanded={showPreview} className="rounded-xl border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700">
+                {showPreview ? "Ẩn xem trước tổng thể" : "Xem trước toàn bộ email"}
+              </button>
+              {showPreview && <EmailPreviewFrame subject={subject} body={body} surveyTitle={form.title} className="mt-4" />}
+              {showPreview && form.pdf_attach_email && <p className="mt-2 text-xs text-slate-600">Kèm một PDF riêng cho người nhận. Dùng Gửi thử cho tôi để kiểm tra file PDF thực tế.</p>}
+            </div>
           </div>
         </>
       )}

@@ -174,8 +174,9 @@ export function EmailTemplateEditor({
           </label>
         )}
 
-        <div className="rounded-2xl border border-sky-100 bg-white p-3">
-          <div className="mb-3 text-[10px] uppercase tracking-widest text-slate-400">Giao diện thư</div>
+        <details className="rounded-2xl border border-sky-100 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">Tuỳ chỉnh giao diện — màu sắc, logo và liên hệ</summary>
+          <p className="my-3 text-xs text-slate-500">Không bắt buộc. Bạn có thể soạn nội dung trước rồi chỉnh giao diện sau.</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <ColorField label="Màu chủ đạo" value={theme.accent || "#0ea5e9"} onChange={(accent) => patchTheme({ accent, buttonColor: accent })} />
             <ColorField label="Màu nền" value={theme.background || "#f1f5f9"} onChange={(background) => patchTheme({ background })} />
@@ -195,7 +196,7 @@ export function EmailTemplateEditor({
               />
             </label>
           </div>
-        </div>
+        </details>
 
         <div className="flex flex-wrap gap-1.5">
           {BLOCK_OPTIONS.map((option) => (
@@ -219,17 +220,17 @@ export function EmailTemplateEditor({
         </div>
 
         <div className="rounded-2xl border border-sky-100 bg-white p-2">
-          <div className="mb-2 px-2 pt-1 text-[10px] uppercase tracking-widest text-slate-400">Trường attendee</div>
+          <div className="mb-2 px-2 pt-1 text-xs font-semibold text-slate-600">Chèn thông tin người nhận</div>
           <div className="flex flex-wrap gap-1.5 px-2 pb-2">
             {mergeFields.map((field) => (
               <button
                 key={field.token}
                 type="button"
                 onClick={() => insertToken(field.token)}
-                title={field.label}
+                title={`Tự thay bằng thông tin thật khi gửi: ${field.token}`}
                 className="rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100"
               >
-                {field.token}
+                {field.label}
               </button>
             ))}
           </div>
@@ -254,10 +255,10 @@ export function EmailTemplateEditor({
       </div>
 
       <div className="rounded-2xl border border-sky-100 bg-slate-50 p-3 xl:sticky xl:top-6">
-        <div className="mb-2 text-[10px] uppercase tracking-widest text-slate-400">Preview</div>
+        <div className="mb-2 text-xs font-semibold text-slate-600">Người nhận sẽ thấy · Dữ liệu minh hoạ</div>
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="border-b border-slate-100 px-4 py-3">
-            <div className="text-[10px] uppercase tracking-widest text-slate-400">Subject</div>
+            <div className="text-xs text-slate-500">Tiêu đề email</div>
             <div className="mt-1 text-sm font-semibold text-slate-800">
               {fillMergeTokens(subject || "Mã check-in: {{survey_title}}", sampleMergeValues(surveyTitle))}
             </div>

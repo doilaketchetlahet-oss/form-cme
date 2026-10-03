@@ -6,6 +6,8 @@ import { fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues
 import { renderCheckinEmailHtml } from "@/lib/server/email-react";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { sendEmail } from "@/lib/server/email-provider";
+import { composeInvitePdf, sanitizePdfName } from "@/lib/server/email-pdf";
+import type { EmailOverlay } from "@/lib/email-template";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -76,7 +78,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const { data: survey } = await supabase
     .from("surveys")
-    .select("title, email_subject, email_body, checkin_theme, email_provider")
+    .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email")
     .eq("id", surveyId)
     .maybeSingle();
 
@@ -92,8 +94,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   values.checkin_url = previewUrl;
   values.qr_image = qrImgUrl;
 
-  const rawBody = payload?.email_body || survey.email_body || "";
-  const rawSubject = payload?.email_subject || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
+  const rawBody = payload?.email_body ?? survey.email_body ?? "";
+  const rawSubject = payload?.email_subject?.trim() || survey.email_subject || `✅ Mã check-in: ${survey.title}`;
   const html = await renderCheckinEmailHtml(rawBody, values, qrImgUrl);
   const attachments: ResendAttachment[] = [];
   const template = parseEmailTemplate(rawBody);
@@ -113,6 +115,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
   if (template.attachments && template.attachments.length > 0) {
     attachments.push(...await fetchFileAttachments(template.attachments));
+  }
+  const pdfTemplate = survey.pdf_template as EmailOverlay | null;
+  if (survey.pdf_attach_email) {
+    if (!pdfTemplate?.imageUrl) {
+      return NextResponse.json({ ok: false, error: "Đang bật gửi PDF nhưng chưa có mẫu. Hãy lưu mẫu trong Thiệp PDF đính kèm trước." }, { status: 400 });
+    }
+    try {
+      const pdf = await composeInvitePdf(pdfTemplate, values, previewUrl);
+      attachments.push({
+        filename: `${sanitizePdfName(values.name || "Nguoi nhan mau")}.pdf`,
+        content: pdf.toString("base64"),
+        contentType: "application/pdf",
+      });
+    } catch (error) {
+      return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Không tạo được PDF gửi thử." }, { status: 500 });
+    }
   }
   if (!html && attachments.length === 0) {
     return NextResponse.json({ ok: false, error: "Chưa có nội dung thư để gửi thử." }, { status: 400 });
@@ -134,5 +152,5 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: false, error: "Gửi thử thất bại.", detail: result.error }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, to, provider: result.provider });
+  return NextResponse.json({ ok: true, to, provider: result.provider, pdfAttached: !!survey.pdf_attach_email });
 }
