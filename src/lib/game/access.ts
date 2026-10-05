@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { GAME_MODULE_IDS, freeModuleIds } from "./catalog";
+import { GAME_MODULE_IDS } from "./catalog";
 
 type EntitlementRow = { module_id: string; expires_at: string | null };
 
@@ -24,12 +24,7 @@ export async function getEntitledModuleIds(
   }
 }
 
-/** Tập module được phép mở = module miễn phí ∪ entitlements còn hạn. */
-export async function resolveAllowedIds(
-  supabase: SupabaseClient,
-  userId: string
-): Promise<string[]> {
-  const entitled = await getEntitledModuleIds(supabase, userId);
-  const set = new Set<string>([...freeModuleIds(), ...entitled]);
-  return GAME_MODULE_IDS.filter((id) => set.has(id));
+/** Tạm mở toàn bộ catalog cho mọi tài khoản đã xác thực. */
+export function resolveAllowedIds(): string[] {
+  return [...GAME_MODULE_IDS];
 }

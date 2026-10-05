@@ -7,7 +7,7 @@ export type GameAuthResult =
 /**
  * Xác thực người dùng cho API cổng game: đọc Bearer access token do trang
  * /games (client) gửi lên. Mọi tài khoản đã đăng nhập đều dùng được game,
- * quyền mở module do bảng `entitlements` quyết định.
+ * tạm thời được mở toàn bộ module trong catalog.
  */
 export async function authorizeGame(request: Request): Promise<GameAuthResult> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

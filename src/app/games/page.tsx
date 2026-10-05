@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Lock, Play, LogOut } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { ArrowLeft, Gamepad2, Play, LogOut, Search, Users, Camera, X } from "lucide-react";
 import { signOut, useAuth } from "@/hooks/useAuth";
 import { CATEGORY_LABELS, GAME_MODULES } from "@/lib/game/catalog";
 import { GameSessionCookie } from "@/components/game/GameSessionCookie";
@@ -12,37 +11,19 @@ import { GameSessionCookie } from "@/components/game/GameSessionCookie";
 export default function GamesPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const [allowed, setAllowed] = useState<string[] | null>(null);
-  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
+  const categories = [...new Set(GAME_MODULES.map((module) => module.category))];
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi");
+  const visibleModules = GAME_MODULES.filter((module) =>
+    (category === "all" || module.category === category) &&
+    `${module.name} ${module.tagline} ${CATEGORY_LABELS[module.category] ?? module.category}`
+      .toLocaleLowerCase("vi").includes(normalizedQuery)
+  );
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [loading, user, router]);
-
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        const res = await fetch("/api/game/entitlements", {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) throw new Error("Không tải được quyền game.");
-        const json = await res.json();
-        if (active) setAllowed(json.allowedIds ?? []);
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [user]);
-
-  const allowedSet = useMemo(() => new Set(allowed ?? []), [allowed]);
-  const ownedCount = GAME_MODULES.filter((m) => allowedSet.has(m.id)).length;
 
   async function handleSignOut() {
     await signOut();
@@ -50,83 +31,121 @@ export default function GamesPage() {
   }
 
   return (
-    <main className="min-h-dvh px-4 py-8">
+    <main className="min-h-dvh bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
       <GameSessionCookie />
       <div className="mx-auto w-full max-w-6xl">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <span className="inline-block rounded-full bg-sky-100 px-3 py-1 text-xs font-bold text-sky-700">
-              🎮 Game tương tác
-            </span>
-            <h1 className="mt-3 text-3xl font-extrabold text-slate-900">Thư viện Game</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Bạn đang sở hữu <strong>{ownedCount}</strong>/{GAME_MODULES.length} game.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-slate-700 sm:inline">
+        <nav aria-label="Điều hướng thư viện game" className="mb-6 flex items-center justify-between gap-3">
+          <Link href="/" className="inline-flex items-center gap-2 rounded-lg py-2 text-sm font-semibold text-slate-600 hover:text-sky-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-600">
+            <ArrowLeft size={16} /> Trang chủ
+          </Link>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="hidden max-w-64 truncate text-sm text-slate-500 sm:block" title={user?.email}>
               {user?.email}
             </span>
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
             >
-              <LogOut size={15} /> Đăng xuất
+              <LogOut size={16} /> Đăng xuất
             </button>
           </div>
-        </div>
+        </nav>
 
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-sky-100 bg-white p-6 shadow-sm sm:p-8">
+          <div>
+            <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700">
+              <Gamepad2 size={16} /> EventPlay · Game tương tác
+            </span>
+            <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">Chọn game, bắt đầu trải nghiệm</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
+              Khám phá game tương tác cho sự kiện của bạn. Tất cả game đang được mở miễn phí cho tài khoản đã đăng nhập.
+            </p>
           </div>
-        )}
+          <div className="flex items-center gap-4 rounded-2xl bg-sky-50 px-5 py-4">
+            <Gamepad2 size={32} className="text-sky-600" aria-hidden="true" />
+            <div>
+              <p className="text-2xl font-extrabold text-slate-900">{GAME_MODULES.length} game</p>
+              <p className="mt-0.5 text-xs font-medium text-sky-700">Sẵn sàng trải nghiệm</p>
+            </div>
+          </div>
+        </header>
 
-        {allowed === null && !error ? (
-          <div className="py-20 text-center text-sm text-slate-500">Đang tải…</div>
+        {loading || !user ? (
+          <div role="status" className="rounded-2xl border border-slate-200 bg-white py-20 text-center text-sm text-slate-500">Đang tải thư viện game…</div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {GAME_MODULES.map((m) => {
-              const unlocked = allowedSet.has(m.id);
-              return (
-                <div
-                  key={m.id}
-                  className="glass flex flex-col overflow-hidden rounded-2xl border border-slate-200/70"
+          <>
+          <section aria-label="Tìm kiếm và lọc game" className="mb-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-bold text-slate-900">Thư viện game <span className="ml-1 text-sm font-normal text-slate-500">({visibleModules.length})</span></h2>
+              <div className="relative w-full sm:w-80">
+                <Search size={18} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                <input
+                  type="search"
+                  aria-label="Tìm game theo tên hoặc mô tả"
+                  placeholder="Tìm game…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {["all", ...categories].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={category === value}
+                  onClick={() => setCategory(value)}
+                  className={`rounded-full border px-3.5 py-2 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${category === value ? "border-sky-600 bg-sky-600 text-on-brand" : "border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50"}`}
                 >
-                  <div className="relative flex h-28 items-center justify-center bg-slate-50 text-5xl">
-                    <span>{m.icon}</span>
-                    {!unlocked && (
-                      <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-slate-900/80 px-2.5 py-1 text-[11px] font-bold text-white">
-                        <Lock size={11} /> Chưa sở hữu
-                      </span>
+                  {value === "all" ? "Tất cả" : CATEGORY_LABELS[value] ?? value}
+                </button>
+              ))}
+            </div>
+          </section>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {visibleModules.map((m) => {
+              return (
+                <article
+                  key={m.id}
+                  className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-lg"
+                >
+                  <div className="relative flex h-40 items-center justify-center overflow-hidden border-b border-slate-100 bg-gradient-to-br from-sky-50 via-white to-indigo-50">
+                    <div aria-hidden="true" className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-sky-100/60" />
+                    <div aria-hidden="true" className="absolute -bottom-10 -left-5 h-28 w-28 rounded-full bg-indigo-100/50" />
+                    <span aria-hidden="true" className="relative text-6xl motion-safe:transition-transform motion-safe:group-hover:scale-110">{m.icon}</span>
+                    {m.category === "ar" && (
+                      <span className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 rounded-full border border-white bg-white/90 px-2.5 py-1 text-xs font-semibold text-slate-600"><Camera size={12} /> Webcam</span>
                     )}
                   </div>
-                  <div className="flex flex-1 flex-col gap-1.5 p-3.5">
-                    <h3 className="text-sm font-bold text-slate-900">{m.name}</h3>
-                    <p className="flex-1 text-xs leading-relaxed text-slate-500">{m.tagline}</p>
-                    <span className="self-start rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
+                  <div className="flex flex-1 flex-col p-5">
+                    <span className="mb-3 self-start rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700">
                       {CATEGORY_LABELS[m.category] ?? m.category}
                     </span>
-                    {unlocked ? (
-                      <Link
-                        href={`/games/play?module=${m.id}`}
-                        className="mt-1 flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700"
-                      >
-                        <Play size={13} /> Chơi ngay
-                      </Link>
-                    ) : (
-                      <button
-                        disabled
-                        className="mt-1 flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700"
-                      >
-                        <Lock size={13} /> Nâng cấp để mở
-                      </button>
-                    )}
+                    <h3 className="text-base font-bold text-slate-900">{m.name}</h3>
+                    <p className="mt-2 flex-1 text-sm leading-6 text-slate-500">{m.tagline}</p>
+                    <p className="mb-4 mt-4 flex items-center gap-1.5 text-xs text-slate-500"><Users size={14} /> {m.minPlayers === m.maxPlayers ? m.minPlayers : `${m.minPlayers}–${m.maxPlayers}`} người chơi</p>
+                    <Link
+                      href={`/games/play?module=${m.id}`}
+                      aria-label={`Chơi ${m.name}`}
+                      className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 text-sm font-bold text-on-brand transition-colors hover:bg-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+                    >
+                      <Play size={16} /> Chơi ngay
+                    </Link>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
+          {visibleModules.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+              <Search size={28} className="mx-auto mb-3 text-slate-400" aria-hidden="true" />
+              <h3 className="font-bold text-slate-900">Không tìm thấy game phù hợp</h3>
+              <p className="mt-2 text-sm text-slate-500">Thử từ khóa khác hoặc chọn lại thể loại.</p>
+              <button type="button" onClick={() => { setQuery(""); setCategory("all"); }} className="mt-5 inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"><X size={16} /> Xóa bộ lọc</button>
+            </div>
+          )}
+          </>
         )}
 
         <p className="mt-10 text-center text-xs text-slate-400">
