@@ -1,40 +1,51 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { WishComposer } from "@/components/wish/WishComposer";
 import { fetchWishSnapshot } from "@/lib/wish/realtime";
-import { WISH_THEMES, type WishEdge, type WishEvent } from "@/lib/wish/config";
+import { WISH_THEMES, type WishEvent } from "@/lib/wish/config";
+import { parseWishEdge } from "@/lib/wish/edges";
 
-function readRequestedEdge(): WishEdge | null {
-  const value = new URLSearchParams(window.location.search).get("edge");
-  return value === "left" || value === "right" || value === "center" || value === "bottom"
-    ? value
-    : null;
+function LoadingWish() {
+  return (
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-950 text-slate-200">
+      <Loader2 className="animate-spin text-sky-400" size={28} />
+      <p className="text-sm font-semibold">Đang mở trang lời chúc…</p>
+    </main>
+  );
 }
 
 export default function WishComposerPage() {
+  return (
+    <Suspense fallback={<LoadingWish />}>
+      <WishComposerContent />
+    </Suspense>
+  );
+}
+
+function WishComposerContent() {
   const params = useParams<{ code: string }>();
+  const searchParams = useSearchParams();
   const code = (params?.code ?? "").toString().toUpperCase();
 
-  const [event, setEvent] = useState<WishEvent | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "missing">("loading");
-  const [edge, setEdge] = useState<WishEdge>("center");
+  const [result, setResult] = useState<{ code: string; event: WishEvent | null } | null>(null);
+  const event = result?.code === code ? result.event : null;
+  // Derive from the current URL so overrides also survive navigation within the same event.
+  const edge = parseWishEdge(searchParams.get("edge")) ?? event?.settings.edge ?? "center";
 
   useEffect(() => {
     if (!code) return;
+    let cancelled = false;
     void (async () => {
       const snap = await fetchWishSnapshot(code);
-      if (!snap) {
-        setState("missing");
-        return;
-      }
-      setEvent(snap.event);
-      // Hướng trong QR/URL phải ưu tiên hơn hướng mặc định của chương trình.
-      setEdge(readRequestedEdge() ?? snap.event.settings.edge);
-      setState("ready");
+      if (cancelled) return;
+      setResult({ code, event: snap?.event ?? null });
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [code]);
 
   const theme = event ? WISH_THEMES[event.settings.theme] : WISH_THEMES.aurora;
@@ -43,16 +54,11 @@ export default function WishComposerPage() {
     [theme],
   );
 
-  if (state === "loading") {
-    return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-950 text-slate-200">
-        <Loader2 className="animate-spin text-sky-400" size={28} />
-        <p className="text-sm font-semibold">Đang mở trang lời chúc…</p>
-      </main>
-    );
+  if (result?.code !== code) {
+    return <LoadingWish />;
   }
 
-  if (state === "missing" || !event) {
+  if (!event) {
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-2 bg-slate-950 px-6 text-center text-slate-200">
         <p className="text-lg font-bold">Không tìm thấy chương trình</p>
@@ -81,7 +87,7 @@ export default function WishComposerPage() {
           <p className="mt-1 text-sm text-white/70">Cảm ơn bạn đã trao đi yêu thương.</p>
         </div>
       ) : (
-        <WishComposer code={code} event={event} edge={edge} />
+        <WishComposer key={code} code={code} event={event} edge={edge} />
       )}
 
       <p className="mt-6 text-center text-[11px] text-white/40">

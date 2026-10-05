@@ -32,6 +32,7 @@ import {
   type WishEvent,
   type WishSettings,
 } from "@/lib/wish/config";
+import { WISH_EDGES } from "@/lib/wish/edges";
 
 type Snapshot = { event: WishEvent; wishes: Wish[]; counts: { total: number; pending: number; approved: number } };
 type Tab = "setup" | "moderate" | "wishes" | "display";
@@ -204,7 +205,7 @@ export function WishWallManager() {
   const edgeUrls = useMemo(
     () =>
       event
-        ? (["left", "center", "right", "bottom"] as const).map((edge) => ({
+        ? WISH_EDGES.map((edge) => ({
             edge,
             label: { left: "Từ bên trái", center: "Từ trên xuống", right: "Từ bên phải", bottom: "Từ dưới lên" }[edge],
             url: buildPublicUrl(`/wish/${event.code}?edge=${edge}`),

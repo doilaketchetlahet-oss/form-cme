@@ -2,6 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { WISH_THEMES, type Wish, type WishEdge, type WishEvent } from "@/lib/wish/config";
+import { parseWishEdge, wishEntryPoints } from "@/lib/wish/edges";
 import { buildShapePoints, spreadShapePoints, type ShapePoint } from "@/lib/wish/shapes";
 
 export type WishWallHandle = {
@@ -269,20 +270,6 @@ function renderCardSprite(wish: Wish, width: number, light: boolean): HTMLCanvas
   return canvas;
 }
 
-function edgePoints(edge: WishEdge, w: number, h: number, layout: CardLayout): { from: ShapePoint; entry: ShapePoint } {
-  const jitter = Math.random() * 0.3 + 0.35;
-  switch (edge) {
-    case "left":
-      return { from: { x: -layout.w * 0.7, y: h * jitter }, entry: { x: w * 0.08, y: h * jitter } };
-    case "right":
-      return { from: { x: w + layout.w * 0.7, y: h * jitter }, entry: { x: w * 0.92, y: h * jitter } };
-    case "bottom":
-      return { from: { x: w * jitter, y: h + layout.h * 0.7 }, entry: { x: w * jitter, y: h * 0.9 } };
-    default:
-      return { from: { x: w * jitter, y: -layout.h * 0.7 }, entry: { x: w * jitter, y: h * 0.1 } };
-  }
-}
-
 function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
 }
@@ -393,8 +380,8 @@ export const WishWallCanvas = forwardRef<
       const event = eventRef.current;
       const { w, h } = sizeRef.current;
       const layout = measureCard(wish, BASE_CARD_W);
-      const from = edge ?? wish.edge ?? event?.settings.edge ?? "center";
-      const points = edgePoints(from, w, h, layout);
+      const from = parseWishEdge(edge) ?? parseWishEdge(wish.edge) ?? event?.settings.edge ?? "center";
+      const points = wishEntryPoints(from, w, h, layout);
       const dest = {
         x: w * (0.2 + Math.random() * 0.6),
         y: h * (0.3 + Math.random() * 0.4),

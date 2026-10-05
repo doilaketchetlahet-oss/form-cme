@@ -5,6 +5,9 @@
  * (server) lẫn tablet/LED (client) đều import từ đây nên luôn khớp nhau.
  */
 
+import { parseWishEdge, type WishEdge } from "./edges";
+export type { WishEdge } from "./edges";
+
 export const WISH_SYMBOLS = [
   "❤️",
   "💛",
@@ -79,7 +82,7 @@ export type WishSettings = {
   maxLength: number;
   theme: WishThemeKey;
   /** Cạnh tablet so với màn LED: lời chúc bay vào từ cạnh này. */
-  edge: "left" | "right" | "center" | "bottom";
+  edge: WishEdge;
   /** Hình dạng tập thể mà các lời chúc hội tụ thành. */
   shape: WishShape;
   /** Chữ cho shape = "text" (tên cô dâu/chú rể, tên thương hiệu…). */
@@ -129,7 +132,6 @@ export const DEFAULT_WISH_SETTINGS: WishSettings = {
 
 export type WishKind = "symbol" | "text" | "drawing";
 export type WishStatus = "pending" | "approved" | "rejected" | "hidden";
-export type WishEdge = "left" | "right" | "center" | "bottom";
 
 export type WishStroke = {
   /** Màu nét vẽ. */
@@ -208,10 +210,7 @@ export function normalizeWishSettings(input: unknown): WishSettings {
     ? (raw.theme as WishThemeKey)
     : DEFAULT_WISH_SETTINGS.theme;
   const shape = SHAPES.includes(raw.shape as WishShape) ? (raw.shape as WishShape) : DEFAULT_WISH_SETTINGS.shape;
-  const edge =
-    raw.edge === "left" || raw.edge === "right" || raw.edge === "center" || raw.edge === "bottom"
-      ? raw.edge
-      : DEFAULT_WISH_SETTINGS.edge;
+  const edge = parseWishEdge(raw.edge) ?? DEFAULT_WISH_SETTINGS.edge;
   const symbol =
     typeof raw.symbol === "string" && raw.symbol.trim().length > 0
       ? Array.from(raw.symbol.trim()).slice(0, 4).join("")
@@ -255,6 +254,19 @@ export function normalizeWishSettings(input: unknown): WishSettings {
   };
 }
 
+/** Omitted settings retain current values; explicit unknown edges are a request error. */
+export function validateWishSettingsInput(
+  input: unknown,
+  current: WishSettings = DEFAULT_WISH_SETTINGS,
+): { ok: true; settings: WishSettings } | { ok: false; error: string } {
+  if (input == null) return { ok: true, settings: normalizeWishSettings(current) };
+  if (!isRecord(input)) return { ok: false, error: "bad_settings" };
+  if (input.edge !== undefined && !parseWishEdge(input.edge)) {
+    return { ok: false, error: "invalid_edge" };
+  }
+  return { ok: true, settings: normalizeWishSettings({ ...current, ...input }) };
+}
+
 export function normalizeWishEvent(row: Record<string, unknown>): WishEvent {
   return {
     id: String(row.id),
@@ -280,9 +292,7 @@ export function normalizeWishRow(row: Record<string, unknown>): Wish {
   const kind = (["symbol", "text", "drawing"] as const).includes(row.kind as WishKind)
     ? (row.kind as WishKind)
     : "symbol";
-  const edge = (["left", "right", "center", "bottom"] as const).includes(row.edge as WishEdge)
-    ? (row.edge as WishEdge)
-    : "center";
+  const edge = parseWishEdge(row.edge) ?? DEFAULT_WISH_SETTINGS.edge;
   const status = (["pending", "approved", "rejected", "hidden"] as const).includes(
     row.status as WishStatus,
   )
@@ -363,6 +373,9 @@ export function validateWishInput(
   settings: WishSettings,
   body: Record<string, unknown>,
 ): { ok: true; data: { symbol: string; content: string; drawing: WishDrawing | null; color: string; nickname: string; edge: WishEdge } } | { ok: false; error: string } {
+  if (body.edge !== undefined && !parseWishEdge(body.edge)) {
+    return { ok: false, error: "invalid_edge" };
+  }
   const symbol =
     typeof body.symbol === "string" && body.symbol.trim()
       ? Array.from(body.symbol.trim()).slice(0, 4).join("")
@@ -376,10 +389,7 @@ export function validateWishInput(
   const nickname =
     typeof body.nickname === "string" ? body.nickname.trim().slice(0, MAX_NICKNAME_LENGTH) : "";
   const color = typeof body.color === "string" && HEX.test(body.color) ? body.color : "#38bdf8";
-  const edge =
-    body.edge === "left" || body.edge === "right" || body.edge === "center" || body.edge === "bottom"
-      ? body.edge
-      : settings.edge;
+  const edge = parseWishEdge(body.edge) ?? settings.edge;
 
   return {
     ok: true,

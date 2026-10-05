@@ -7,7 +7,7 @@ import {
   generateWishCode,
   normalizeWishEvent,
   normalizeWishRow,
-  normalizeWishSettings,
+  validateWishSettingsInput,
   validateWishInput,
   type Wish,
   type WishSettings,
@@ -121,7 +121,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const existing = await findEvent(admin, cleanCode);
     if (existing) return NextResponse.json({ event: existing, created: false });
 
-    const settings = normalizeWishSettings(body?.settings);
+    const validated = validateWishSettingsInput(body?.settings);
+    if (!validated.ok) return NextResponse.json({ error: validated.error }, { status: 400 });
+    const settings = validated.settings;
     const { data, error } = await auth.service
       .from("wish_events")
       .insert({
@@ -218,7 +220,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
   switch (action) {
     case "settings": {
-      const settings: WishSettings = normalizeWishSettings(body?.settings ?? event.settings);
+      const validated = validateWishSettingsInput(body?.settings, event.settings);
+      if (!validated.ok) return NextResponse.json({ error: validated.error }, { status: 400 });
+      const settings: WishSettings = validated.settings;
       const patch: Record<string, unknown> = {
         settings,
         updated_at: new Date().toISOString(),

@@ -6,7 +6,7 @@
 --  Postgres là sổ cái, API là trọng tài, Supabase Realtime Broadcast là
 --  kênh hiển thị cho màn LED. Mất mạng thì LED tự đồng bộ lại từ API.
 --
---  Chạy 1 lần trong Supabase SQL Editor.
+--  Chạy trong Supabase SQL Editor; chạy lại để nâng cấp installation cũ.
 -- ============================================================
 
 create extension if not exists pgcrypto;
@@ -58,9 +58,10 @@ create index if not exists idx_wishes_event_status on public.wishes(event_id, st
 create index if not exists idx_wishes_event_created on public.wishes(event_id, created_at);
 create index if not exists idx_wishes_ip on public.wishes(ip_hash, created_at);
 
--- Nâng cấp installation cũ: cho phép tablet đặt phía dưới màn LED.
-alter table public.wishes drop constraint if exists wishes_edge_check;
+-- Nâng cấp installation cũ; thay constraint trong cùng một statement (atomic).
+-- Giữ nguyên default 'center', các event và lời chúc đã có.
 alter table public.wishes
+  drop constraint if exists wishes_edge_check,
   add constraint wishes_edge_check check (edge in ('left', 'right', 'center', 'bottom'));
 
 -- ------------------------------------------------------------

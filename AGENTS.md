@@ -92,22 +92,22 @@ true score. Run `supabase/flap-race.sql` once.
 "Trao lời chúc, nhận yêu thương" — a two-screen experience:
 
 - `/admin/tools/wish-wall` - create the event, theme, item, moderation,
-  shield/collector images, QR for the tablet and the LED wall.
+  collector/background images, QR for the tablet and the LED wall.
 - `/wish/[code]` - tablet/mobile: pick a symbol, type or draw a wish, send
-  (optional `?edge=left|right|center` so multiple tablets enter from
-  different sides of the LED).
-- `/wish/[code]/wall` - LED screen: wishes fly in from the edge, pass through
-  the "shield", then drift and slowly crystallize into a collective shape
+  (optional `?edge=left|right|center|bottom` overrides the event default;
+  `center` retains its legacy meaning of entry from the top of the LED).
+- `/wish/[code]/wall` - LED screen: wishes enter from the chosen edge,
+  then drift and slowly crystallize into a collective shape
   (heart/star/flower/text/image). A sound toggle (WebAudio whoosh/chime) and a
   fullscreen button sit in the header; completion triggers a flash + fireworks.
-  The admin Setup tab has one QR per tablet edge (left/center/right) and the
+  The admin Setup tab has one QR per tablet edge (left/center/right/bottom) and the
   Display tab has a "Gửi lời chúc thử" button (broadcast-only demo wish).
 - After sending, the tablet shows a random wish from someone else
   ("Một lời chúc gửi đến bạn").
 - `/api/wish/[code]` - GET snapshot (public; `?scope=all` + admin bearer for
   the moderation queue), POST `create` (admin) / `submit` (public),
   PUT `settings|moderate|delete|clear|spotlight|absorb-all` (admin).
-- `/api/wish/[code]/asset` - admin upload for shield/collector/background
+- `/api/wish/[code]/asset` - admin upload for collector/background
   images into the public `wish-assets` bucket.
 
 Architecture: phones POST to the API (referee: length caps, per-IP cooldown,
@@ -117,9 +117,16 @@ every 6s so a reconnect never loses a wish. The wall renders on Canvas 2D
 (no extra deps) and only tracks a bounded number of floating items; older
 wishes absorb into the target shape.
 
-Run `supabase/wish-wall.sql` once. The shield and collective shape are
-procedural for now; upload a designed image from the admin Setup tab to
-replace them.
+Run (or re-run for an existing installation) `supabase/wish-wall.sql` before
+using the bottom edge. This preserves existing events/wishes and the `center`
+default. Tablets fly right for left entry, left for right entry, down for
+center/top entry, and up for bottom entry. Omitted API edges use the event
+default; explicit invalid edges return HTTP 400. Partial settings updates
+preserve omitted values. The collective shape is procedural; upload a designed
+image from the admin Setup tab to replace it.
+
+Regression checks: `node --test scripts/test-wish-wall.cjs`; optional full
+React/SQL check setup is documented at the top of that script.
 
 ## Data Model Note
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Eraser, Loader2, PenLine, Send, Sparkles, Undo2 } from "lucide-react";
 import { DrawingPad } from "@/components/wish/DrawingPad";
@@ -10,14 +10,16 @@ import {
   WISH_SYMBOLS,
   WISH_THEMES,
   type Wish,
+  type WishEdge,
   type WishEvent,
   type WishStroke,
 } from "@/lib/wish/config";
+import { wishFlyTarget } from "@/lib/wish/edges";
 
 type Props = {
   code: string;
   event: WishEvent;
-  edge: "left" | "right" | "center" | "bottom";
+  edge: WishEdge;
 };
 
 type Feedback = { tone: "ok" | "warn" | "error"; text: string };
@@ -151,14 +153,10 @@ export function WishComposer({ code, event, edge }: Props) {
     setBusy(false);
   };
 
-  const flyTarget = useMemo(() => {
-    const distance = typeof window === "undefined" ? 800 : Math.max(window.innerWidth, window.innerHeight);
-    if (edge === "left") return { x: -distance, y: 0, rotate: -20 };
-    if (edge === "right") return { x: distance, y: 0, rotate: 20 };
-    // Tablet đặt phía dưới LED: thẻ bay lên khỏi tablet, rồi đi từ dưới lên trên LED.
-    if (edge === "bottom") return { x: 0, y: -distance, rotate: 0 };
-    return { x: 0, y: -distance, rotate: 0 };
-  }, [edge]);
+  // Resolve at send time so rotating/resizing the tablet cannot leave the card on screen.
+  const flyTarget = phase === "flying"
+    ? wishFlyTarget(edge, typeof window === "undefined" ? 800 : Math.max(window.innerWidth, window.innerHeight))
+    : { x: 0, y: 0, rotate: 0 };
 
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
