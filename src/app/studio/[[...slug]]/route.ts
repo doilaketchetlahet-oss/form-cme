@@ -1,33 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { authorizeStudio } from "@/lib/game/auth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /**
  * Serves the EventPlay studio bundle (which is a static export and therefore
  * cannot enforce its own auth) behind a signed-in check. Everything under
- * `/studio/` resolves to a file in `public/studio/`, falling back to
+ * `/studio/` resolves to a file in `studio/`, falling back to
  * `index.html` for SPA routes.
  */
 
 const STUDIO_ROOT = path.join(process.cwd(), "studio");
 
-function isSignedIn(request: NextRequest): boolean {
-  const auth = request.headers.get("authorization");
-  if (auth?.startsWith("Bearer ")) return true;
-  const hasSupabaseSession = request.cookies.getAll().some(
-    (cookie) =>
-      (cookie.name.startsWith("sb-") && cookie.name.includes("auth-token") && cookie.value.length > 0) ||
-      (cookie.name === "sb-auth-token" && cookie.value.length > 0),
-  );
-  const hasMarker = request.cookies.get("eventplay_session")?.value === "1";
-  return hasSupabaseSession && hasMarker;
-}
-
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug?: string[] }> }) {
-  if (!isSignedIn(request)) {
+  if (!await authorizeStudio(request)) {
     const login = new URL("/login", request.url);
     login.searchParams.set("next", "/games");
-    return NextResponse.redirect(login);
+    const response = NextResponse.redirect(login);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   }
 
   const slug = (await params).slug ?? [];
@@ -93,15 +87,12 @@ async function serveFile(request: NextRequest, filePath: string) {
 
   // SPA routes must not be cached with HTML semantics; assets are immutable.
   const immutable = ext !== ".html" && ext !== "";
-  const cdn = new URL(request.url);
   return new NextResponse(new Uint8Array(content), {
     headers: {
       "Content-Type": types[ext] ?? "application/octet-stream",
       "Cache-Control": immutable
-        ? "public, max-age=31536000, immutable"
-        : cdn.host === "localhost"
-          ? "no-store"
-          : "public, max-age=0, s-maxage=300, stale-while-revalidate=60",
+        ? "private, max-age=31536000, immutable"
+        : "no-store",
     },
   });
 }

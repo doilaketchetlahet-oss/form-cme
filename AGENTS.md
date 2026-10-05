@@ -160,23 +160,34 @@ items, polls, slides, or badges.
 
 This app now also hosts the EventPlay game portal (kiosk mini-games):
 
-- `/games` - catalog; any signed-in account (not admin-only) sees free modules
-  plus modules it owns via `entitlements`.
+- `/games` - catalog; all 18 modules are temporarily open to any signed-in
+  account (not admin-only).
 - `/games/play?module=<id>` - embeds `/studio/index.html#/games/<id>` in an iframe.
 - `/api/game/entitlements` - Bearer-token auth; returns `allowedIds`.
+- `/api/game/session` - POST verifies a Bearer token and sets the HttpOnly studio
+  session cookie; DELETE clears it on sign-out. The launcher awaits POST before
+  mounting the iframe. Studio requests validate the token signature and expiry.
 - `/api/game/save` - GET/PUT per-user studio state (workspace sync).
 - `/api/game/assets` - uploads to Supabase Storage bucket `game-assets` (public,
   per-account quota: 30 files / 60MB).
-- `public/studio/` - prebuilt EventPlay Studio bundle (do not edit by hand).
+- `studio/` - prebuilt EventPlay Studio bundle, served by the authenticated
+  `/studio/[[...slug]]` route (do not edit by hand).
+- `public/games/covers/` - optimized copies of demo images and screenshots from
+  `D:/Game Mới`, mapped by `cover` in `src/config/gameModules.json`. Re-import
+  with `node scripts/import-game-covers.cjs "D:/Game Mới"` after exporting a new
+  catalog. Modules without original cover art keep their icon fallback.
 
 Auth handshake: `/games/play` posts an access token to the studio iframe via
 `postMessage` after the iframe sends `{ type: "eventplay:ready" }`. The studio
-calls the game APIs with `Authorization: Bearer <token>`.
+calls the game APIs with `Authorization: Bearer <token>`. A standalone studio
+tab can use the verified HttpOnly cookie for these APIs instead.
+
+Session regression checks: `node --test scripts/test-game-session.cjs`.
 
 SQL to run once: `supabase/game-modules.sql`, `supabase/game-saves.sql`.
 
 Rebuild the studio bundle from the EventPlay project with `VITE_BASE=./`, copy
-`dist` into `public/studio`, then run the asset optimizer.
+`dist` into `studio`, then run the asset optimizer.
 
 Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
 `/play` player runtime mentioned below.

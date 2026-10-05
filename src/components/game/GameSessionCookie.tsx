@@ -3,31 +3,37 @@
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
-/**
- * Marks the browser as having an active session so `/studio/*` (a static bundle
- * that cannot check auth itself) can be gated by middleware.
- *
- * The cookie carries no token or personal data: it only says "this browser has
- * a session". Middleware additionally requires a real Supabase session cookie.
- */
-export function GameSessionCookie() {
+/** Await the verified HttpOnly cookie before mounting the studio iframe. */
+export function GameSessionCookie({ onReady, onError }: {
+  onReady: (token: string) => void;
+  onError: (message: string) => void;
+}) {
   useEffect(() => {
     let active = true;
 
-    const sync = (hasSession: boolean) => {
-      if (!active) return;
-      const secure = window.location.protocol === "https:" ? "; Secure" : "";
-      document.cookie = `eventplay_session=${hasSession ? "1" : ""}; path=/; SameSite=Lax${secure}`;
+    const sync = async (token?: string) => {
+      if (!active || !token) return;
+      try {
+        const response = await fetch("/api/game/session", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: "same-origin",
+        });
+        if (!response.ok) throw new Error("Không thể xác thực phiên game. Vui lòng đăng nhập lại rồi thử.");
+        if (active) onReady(token);
+      } catch (error) {
+        if (active) onError(error instanceof Error ? error.message : "Không thể kết nối game. Vui lòng thử lại.");
+      }
     };
 
-    supabase.auth.getSession().then(({ data }) => sync(!!data.session));
+    supabase.auth.getSession().then(({ data }) => sync(data.session?.access_token));
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => sync(!!session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => { void sync(session?.access_token); });
     return () => {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, []);
+  }, [onReady, onError]);
 
   return null;
 }

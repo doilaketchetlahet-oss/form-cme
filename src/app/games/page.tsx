@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Gamepad2, Play, LogOut, Search, Users, Camera, X } from "lucide-react";
 import { signOut, useAuth } from "@/hooks/useAuth";
 import { CATEGORY_LABELS, GAME_MODULES } from "@/lib/game/catalog";
-import { GameSessionCookie } from "@/components/game/GameSessionCookie";
 
 export default function GamesPage() {
   const router = useRouter();
@@ -22,7 +22,7 @@ export default function GamesPage() {
   );
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
+    if (!loading && !user) router.replace("/login?next=/games");
   }, [loading, user, router]);
 
   async function handleSignOut() {
@@ -32,7 +32,6 @@ export default function GamesPage() {
 
   return (
     <main className="min-h-dvh bg-slate-50 px-4 py-5 sm:px-6 sm:py-8">
-      <GameSessionCookie />
       <div className="mx-auto w-full max-w-6xl">
         <nav aria-label="Điều hướng thư viện game" className="mb-6 flex items-center justify-between gap-3">
           <Link href="/" className="inline-flex items-center gap-2 rounded-lg py-2 text-sm font-semibold text-slate-600 hover:text-sky-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-600">
@@ -110,10 +109,16 @@ export default function GamesPage() {
                   key={m.id}
                   className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-lg"
                 >
-                  <div className="relative flex h-40 items-center justify-center overflow-hidden border-b border-slate-100 bg-gradient-to-br from-sky-50 via-white to-indigo-50">
-                    <div aria-hidden="true" className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-sky-100/60" />
-                    <div aria-hidden="true" className="absolute -bottom-10 -left-5 h-28 w-28 rounded-full bg-indigo-100/50" />
-                    <span aria-hidden="true" className="relative text-6xl motion-safe:transition-transform motion-safe:group-hover:scale-110">{m.icon}</span>
+                  <div className="relative flex aspect-[3/2] w-full shrink-0 items-center justify-center overflow-hidden border-b border-slate-100 bg-gradient-to-br from-sky-50 via-white to-indigo-50">
+                    {m.cover ? (
+                      <Image src={m.cover} alt={`Minh hoạ game ${m.name}`} fill sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, (max-width: 1279px) 33vw, 25vw" className="object-contain motion-safe:transition-transform motion-safe:group-hover:scale-105" />
+                    ) : (
+                      <>
+                        <div aria-hidden="true" className="absolute -right-6 -top-8 h-28 w-28 rounded-full bg-sky-100/60" />
+                        <div aria-hidden="true" className="absolute -bottom-10 -left-5 h-28 w-28 rounded-full bg-indigo-100/50" />
+                        <span aria-hidden="true" className="relative text-6xl motion-safe:transition-transform motion-safe:group-hover:scale-110">{m.icon}</span>
+                      </>
+                    )}
                     {m.category === "ar" && (
                       <span className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 rounded-full border border-white bg-white/90 px-2.5 py-1 text-xs font-semibold text-slate-600"><Camera size={12} /> Webcam</span>
                     )}

@@ -9,7 +9,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": true,
-    "sort": 1
+    "sort": 1,
+    "cover": "/games/covers/balloon.webp"
   },
   {
     "id": "bridgedash",
@@ -21,7 +22,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": false,
-    "sort": 2
+    "sort": 2,
+    "cover": "/games/covers/bridgedash.webp"
   },
   {
     "id": "catchdrop",
@@ -45,7 +47,8 @@
     "minPlayers": 1,
     "maxPlayers": 4,
     "isFree": false,
-    "sort": 4
+    "sort": 4,
+    "cover": "/games/covers/connect.webp"
   },
   {
     "id": "decodeletters",
@@ -57,7 +60,8 @@
     "minPlayers": 1,
     "maxPlayers": 8,
     "isFree": false,
-    "sort": 5
+    "sort": 5,
+    "cover": "/games/covers/decodeletters.webp"
   },
   {
     "id": "handslice",
@@ -81,7 +85,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": false,
-    "sort": 7
+    "sort": 7,
+    "cover": "/games/covers/hidden.webp"
   },
   {
     "id": "jigsaw",
@@ -93,7 +98,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": false,
-    "sort": 8
+    "sort": 8,
+    "cover": "/games/covers/jigsaw.webp"
   },
   {
     "id": "picword",
@@ -105,7 +111,8 @@
     "minPlayers": 1,
     "maxPlayers": 8,
     "isFree": false,
-    "sort": 9
+    "sort": 9,
+    "cover": "/games/covers/picword.webp"
   },
   {
     "id": "pulsecourier",
@@ -117,7 +124,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": false,
-    "sort": 10
+    "sort": 10,
+    "cover": "/games/covers/pulsecourier.webp"
   },
   {
     "id": "quiz",
@@ -129,7 +137,8 @@
     "minPlayers": 1,
     "maxPlayers": 8,
     "isFree": true,
-    "sort": 11
+    "sort": 11,
+    "cover": "/games/covers/quiz.webp"
   },
   {
     "id": "spotdiff",
@@ -153,7 +162,8 @@
     "minPlayers": 1,
     "maxPlayers": 4,
     "isFree": false,
-    "sort": 13
+    "sort": 13,
+    "cover": "/games/covers/trucxanh.webp"
   },
   {
     "id": "unlock",
@@ -165,7 +175,8 @@
     "minPlayers": 1,
     "maxPlayers": 8,
     "isFree": false,
-    "sort": 14
+    "sort": 14,
+    "cover": "/games/covers/unlock.webp"
   },
   {
     "id": "vaccineshot",
@@ -201,7 +212,8 @@
     "minPlayers": 1,
     "maxPlayers": 99,
     "isFree": false,
-    "sort": 17
+    "sort": 17,
+    "cover": "/games/covers/wheel.webp"
   },
   {
     "id": "wordsearch",
@@ -213,6 +225,7 @@
     "minPlayers": 1,
     "maxPlayers": 6,
     "isFree": false,
-    "sort": 18
+    "sort": 18,
+    "cover": "/games/covers/wordsearch.webp"
   }
 ]

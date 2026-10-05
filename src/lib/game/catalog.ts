@@ -4,6 +4,7 @@ export interface GameModule {
   id: string;
   name: string;
   icon: string;
+  cover?: string;
   tagline: string;
   category: string;
   accent: string;
