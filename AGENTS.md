@@ -187,8 +187,13 @@ Session regression checks: `node --test scripts/test-game-session.cjs`.
 
 SQL to run once: `supabase/game-modules.sql`, `supabase/game-saves.sql`.
 
-Rebuild the studio bundle from the EventPlay project with `VITE_BASE=./`, copy
-`dist` into `studio`, then run the asset optimizer.
+Rebuild the studio bundle from the EventPlay project with `VITE_BASE=./`, then
+run `node scripts/import-studio.cjs "D:/Game Mới/dist"` to copy and optimize it.
+Source changes for Camera / Mouse / Touch HandSlice are preserved in
+`scripts/studio-patches/handslice-pointer.patch` (already applied locally).
+See the adjacent README for rebuild instructions. HandSlice shows a control
+picker before mounting the engine; pointer mode never opens the camera,
+including the win screen. Regression: `node scripts/test-handslice-input.cjs`.
 
 Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
 `/play` player runtime mentioned below.

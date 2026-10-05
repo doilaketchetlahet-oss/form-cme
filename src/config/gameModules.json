@@ -68,7 +68,7 @@
     "id": "handslice",
     "name": "Chém Hoa Quả",
     "icon": "🍉",
-    "tagline": "Vung tay chém hoa quả bằng webcam!",
+    "tagline": "Chém hoa quả bằng camera, chuột hoặc màn hình cảm ứng!",
     "category": "ar",
     "accent": "from-lime-400 to-emerald-500",
     "minPlayers": 1,
