@@ -17,6 +17,8 @@ const covers = {
   unlock: "src/modules/Unlock/images/demo.png",
   bridgedash: "src/modules/BridgeDash/images/background.png",
   pulsecourier: "src/modules/PulseCourier/demo.png",
+  handslice: "chemhoaqua.png",
+  catchdrop: "hungdo.png",
   balloon: "shots/06-balloon.png",
   hidden: "shots/09-hidden.png",
   wheel: "shots/08-wheel.png",

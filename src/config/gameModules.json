@@ -35,7 +35,8 @@
     "minPlayers": 1,
     "maxPlayers": 2,
     "isFree": false,
-    "sort": 3
+    "sort": 3,
+    "cover": "/games/covers/catchdrop.webp"
   },
   {
     "id": "connect",
@@ -73,7 +74,8 @@
     "minPlayers": 1,
     "maxPlayers": 2,
     "isFree": false,
-    "sort": 6
+    "sort": 6,
+    "cover": "/games/covers/handslice.webp"
   },
   {
     "id": "hidden",
