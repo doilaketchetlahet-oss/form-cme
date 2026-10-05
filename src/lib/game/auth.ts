@@ -7,8 +7,8 @@ export type GameAuthResult =
 
 /**
  * Xác thực người dùng cho API cổng game: đọc Bearer access token do trang
- * /games (client) gửi lên. Mọi tài khoản đã đăng nhập đều dùng được game,
- * tạm thời được mở toàn bộ module trong catalog.
+ * /games (client) gửi lên, hoặc cookie HttpOnly cho tab studio. Chỉ API dữ liệu
+ * tài khoản (lưu workspace, upload) cần xác thực; việc chơi game là công khai.
  */
 export async function authorizeGame(request: Request): Promise<GameAuthResult> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,21 +32,4 @@ export async function authorizeGame(request: Request): Promise<GameAuthResult> {
   }
 
   return { user: { id: data.user.id, email: data.user.email ?? "" } };
-}
-
-/** Validate the JWT signature and expiry; Supabase caches its public signing keys. */
-export async function authorizeStudio(request: Request): Promise<boolean> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const token = getGameAccessToken(request);
-  if (!url || !anonKey || !token) return false;
-  try {
-    const supabase = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data, error } = await supabase.auth.getClaims(token);
-    return !error && typeof data?.claims.sub === "string" && data.claims.role === "authenticated";
-  } catch {
-    return false;
-  }
 }

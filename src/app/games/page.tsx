@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { ArrowLeft, Gamepad2, Play, LogOut, Search, Users, Camera, X } from "lucide-react";
 import { signOut, useAuth } from "@/hooks/useAuth";
 import { CATEGORY_LABELS, GAME_MODULES } from "@/lib/game/catalog";
 
 export default function GamesPage() {
-  const router = useRouter();
   const { user, loading } = useAuth();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
@@ -21,13 +19,9 @@ export default function GamesPage() {
       .toLocaleLowerCase("vi").includes(normalizedQuery)
   );
 
-  useEffect(() => {
-    if (!loading && !user) router.replace("/login?next=/games");
-  }, [loading, user, router]);
-
   async function handleSignOut() {
     await signOut();
-    window.location.href = "/login";
+    window.location.href = "/games";
   }
 
   return (
@@ -38,15 +32,21 @@ export default function GamesPage() {
             <ArrowLeft size={16} /> Trang chủ
           </Link>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="hidden max-w-64 truncate text-sm text-slate-500 sm:block" title={user?.email}>
-              {user?.email}
-            </span>
-            <button
-              onClick={handleSignOut}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
-            >
-              <LogOut size={16} /> Đăng xuất
-            </button>
+            {!loading && user ? (
+              <>
+                <span className="hidden max-w-64 truncate text-sm text-slate-500 sm:block" title={user.email}>
+                  {user.email}
+                </span>
+                <button
+                  onClick={handleSignOut}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+                >
+                  <LogOut size={16} /> Đăng xuất
+                </button>
+              </>
+            ) : (
+              <Link href="/login?next=/games" className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">Đăng nhập</Link>
+            )}
           </div>
         </nav>
 
@@ -57,7 +57,7 @@ export default function GamesPage() {
             </span>
             <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">Chọn game, bắt đầu trải nghiệm</h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-              Khám phá game tương tác cho sự kiện của bạn. Tất cả game đang được mở miễn phí cho tài khoản đã đăng nhập.
+              Khám phá game tương tác cho sự kiện của bạn. Tất cả game đều mở miễn phí, không cần đăng nhập.
             </p>
           </div>
           <div className="flex items-center gap-4 rounded-2xl bg-sky-50 px-5 py-4">
@@ -69,10 +69,6 @@ export default function GamesPage() {
           </div>
         </header>
 
-        {loading || !user ? (
-          <div role="status" className="rounded-2xl border border-slate-200 bg-white py-20 text-center text-sm text-slate-500">Đang tải thư viện game…</div>
-        ) : (
-          <>
           <section aria-label="Tìm kiếm và lọc game" className="mb-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-bold text-slate-900">Thư viện game <span className="ml-1 text-sm font-normal text-slate-500">({visibleModules.length})</span></h2>
@@ -150,8 +146,6 @@ export default function GamesPage() {
               <button type="button" onClick={() => { setQuery(""); setCategory("all"); }} className="mt-5 inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"><X size={16} /> Xóa bộ lọc</button>
             </div>
           )}
-          </>
-        )}
 
         <p className="mt-10 text-center text-xs text-slate-400">
           © 2026 Hội Thảo Trực Tuyến · Game engine: EventPlay Studio

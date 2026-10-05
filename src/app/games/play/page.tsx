@@ -2,8 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useAuth } from "@/hooks/useAuth";
+import { useSearchParams } from "next/navigation";
 import { getGameModule } from "@/lib/game/catalog";
 import { GameSessionCookie } from "@/components/game/GameSessionCookie";
 
@@ -11,28 +10,19 @@ function PlayInner() {
   const params = useSearchParams();
   const moduleId = params.get("module") ?? "";
   const mod = getGameModule(moduleId);
-  const router = useRouter();
-  const { user, loading } = useAuth();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const tokenRef = useRef<string | null>(null);
   const [studioReady, setStudioReady] = useState(false);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const canPlay = !loading && !!user && !!mod;
-
-  useEffect(() => {
-    if (!loading && !user) router.replace(`/login?next=${encodeURIComponent(`/games/play?module=${moduleId}`)}`);
-  }, [loading, user, router, moduleId]);
 
   const sendToken = useCallback(() => {
-    if (tokenRef.current) {
-      iframeRef.current?.contentWindow?.postMessage(
-        { type: "eventplay:token", token: tokenRef.current }, window.location.origin
-      );
-    }
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "eventplay:token", token: tokenRef.current }, window.location.origin
+    );
   }, []);
 
-  const onSessionReady = useCallback((token: string) => {
+  const onSessionReady = useCallback((token: string | null) => {
     tokenRef.current = token;
     setError("");
     setStudioReady(true);
@@ -43,7 +33,7 @@ function PlayInner() {
 
   // Bắt tay với studio: gửi access token khi studio báo sẵn sàng.
   useEffect(() => {
-    if (!canPlay) return;
+    if (!mod) return;
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== window.location.origin || e.source !== iframeRef.current?.contentWindow) return;
       if (e.data?.type === "eventplay:ready") sendToken();
@@ -53,7 +43,7 @@ function PlayInner() {
     return () => {
       window.removeEventListener("message", onMessage);
     };
-  }, [canPlay, sendToken]);
+  }, [mod, sendToken]);
 
   if (!mod) {
     return (
@@ -62,14 +52,6 @@ function PlayInner() {
         <Link href="/games" className="text-sm font-semibold text-sky-600">
           ← Về thư viện
         </Link>
-      </div>
-    );
-  }
-
-  if (!canPlay) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center text-sm text-slate-500">
-        Đang tải…
       </div>
     );
   }

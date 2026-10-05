@@ -24,7 +24,7 @@ export async function getEntitledModuleIds(
   }
 }
 
-/** Tạm mở toàn bộ catalog cho mọi tài khoản đã xác thực. */
+/** Mở toàn bộ catalog, kể cả khách chưa đăng nhập. */
 export function resolveAllowedIds(): string[] {
   return [...GAME_MODULE_IDS];
 }

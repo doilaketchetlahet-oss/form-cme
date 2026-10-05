@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { authorizeStudio } from "@/lib/game/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Serves the EventPlay studio bundle (which is a static export and therefore
- * cannot enforce its own auth) behind a signed-in check. Everything under
+ * Serves the public EventPlay studio bundle. Everything under
  * `/studio/` resolves to a file in `studio/`, falling back to
  * `index.html` for SPA routes.
  */
@@ -16,14 +14,6 @@ export const dynamic = "force-dynamic";
 const STUDIO_ROOT = path.join(process.cwd(), "studio");
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug?: string[] }> }) {
-  if (!await authorizeStudio(request)) {
-    const login = new URL("/login", request.url);
-    login.searchParams.set("next", "/games");
-    const response = NextResponse.redirect(login);
-    response.headers.set("Cache-Control", "no-store");
-    return response;
-  }
-
   const slug = (await params).slug ?? [];
   const segments = [...slug];
   // /studio and /studio/index.html both load the SPA shell.
@@ -91,7 +81,7 @@ async function serveFile(request: NextRequest, filePath: string) {
     headers: {
       "Content-Type": types[ext] ?? "application/octet-stream",
       "Cache-Control": immutable
-        ? "private, max-age=31536000, immutable"
+        ? "public, max-age=31536000, immutable"
         : "no-store",
     },
   });
