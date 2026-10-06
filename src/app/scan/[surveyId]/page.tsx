@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, XCircle, UserCheck, SwitchCamera, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -8,6 +8,8 @@ import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
 import type { CheckinTheme } from "@/lib/surveys";
 import { logCheckinEvent } from "@/lib/checkinLogs";
 import QrScanner from "qr-scanner";
+import { canAttendSession, normalizeSessionConfig } from "@/lib/checkin-sessions";
+import { recordSessionCheckin } from "@/lib/session-checkin-client";
 
 function getInitialScanQuery() {
   if (typeof window === "undefined") return { hall: "", session: "" };
@@ -25,6 +27,7 @@ interface PendingCheckin {
   alreadyCheckedIn: boolean;
   wrongHall?: string | null;
   notCheckedInGeneral?: boolean;
+  checkedInAt?: string | null;
 }
 
 function isPaymentSettled(status: unknown) {
@@ -75,6 +78,14 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const [welcome, setWelcome] = useState<{ name: string; hall: string } | null>(null);
   const [session, setSession] = useState<string>(initialQuery.session);
   const [theme, setTheme] = useState<CheckinTheme | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const sessionConfig = useMemo(() => normalizeSessionConfig(theme?.sessionConfig), [theme]);
+  const sessionConfigRef = useRef(sessionConfig);
+  const surveyReadyRef = useRef(false);
+  useEffect(() => { sessionConfigRef.current = sessionConfig; }, [sessionConfig]);
+  const configuredSession = sessionConfig?.sessions.find((item) => item.id === session);
+  const sessionName = configuredSession?.name ?? session;
+  const currentVenue = configuredSession?.hall ?? hall;
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerRef = useRef<QrScanner | null>(null);
   const lastScannedRef = useRef("");
@@ -90,13 +101,20 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   useEffect(() => {
     const id = surveyId;
     if (!id) return;
+    surveyReadyRef.current = false;
     surveyIdRef.current = id;
     Promise.all([
       supabase.from("surveys").select("title, checkin_theme").eq("id", id).single(),
       supabase.from("survey_questions").select("id, text, position").eq("survey_id", id).order("position"),
-    ]).then(([{ data: survey }, { data: questions }]) => {
+    ]).then(([{ data: survey, error }, { data: questions }]) => {
+      if (error || !survey) {
+        setScanResult({ type: "error", message: "Không tải được cấu hình check-in. Tải lại trang để thử lại." });
+        return;
+      }
       setSurveyTitle(survey?.title ?? "");
       setTheme((survey?.checkin_theme as CheckinTheme) ?? null);
+      sessionConfigRef.current = normalizeSessionConfig(survey.checkin_theme?.sessionConfig);
+      surveyReadyRef.current = true;
       const labels: Record<string, string> = {};
       const order: string[] = [];
       (questions ?? []).forEach((q: { id: string; text: string }) => { labels[q.id] = q.text; order.push(q.id); });
@@ -111,22 +129,15 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   useEffect(() => {
     if (!surveyId) return;
     const fetchCount = async () => {
-      const totalQ = supabase.from("survey_responses").select("*", { count: "exact", head: true }).eq("survey_id", surveyId);
-      if (hall) totalQ.eq("hall", hall);
-
       if (session) {
-        // Session mode: count rows where session_checkins has this session key
-        const [{ count: total }, { data: rows }] = await Promise.all([
-          totalQ,
-          supabase.from("survey_responses").select("session_checkins").eq("survey_id", surveyId),
-        ]);
-        const checked = (rows ?? []).filter((r) => {
-          const sc = r.session_checkins as Record<string, string> | null;
-          return sc && sc[session];
-        }).length;
-        setTotalCount(total ?? 0);
-        setCheckedCount(checked);
+        const { data: rows, error } = await supabase.from("survey_responses").select("answers, hall, session_checkins").eq("survey_id", surveyId);
+        if (error) return;
+        const eligible = (rows ?? []).filter((row) => canAttendSession(sessionConfig, session, row.answers ?? {}) && (sessionConfig || !hall || row.hall === hall));
+        setTotalCount(eligible.length);
+        setCheckedCount(eligible.filter((row) => row.session_checkins?.[session]).length);
       } else {
+        const totalQ = supabase.from("survey_responses").select("*", { count: "exact", head: true }).eq("survey_id", surveyId);
+        if (hall) totalQ.eq("hall", hall);
         const checkedQ = supabase.from("survey_responses").select("*", { count: "exact", head: true }).eq("survey_id", surveyId).eq("checked_in", true);
         if (hall) checkedQ.eq("hall", hall);
         const [{ count: total }, { count: checked }] = await Promise.all([totalQ, checkedQ]);
@@ -137,7 +148,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     fetchCount();
     const interval = setInterval(fetchCount, 5000);
     return () => clearInterval(interval);
-  }, [surveyId, hall, session]);
+  }, [surveyId, hall, session, sessionConfig]);
 
   const getFirstTextField = (answers: Record<string, unknown>): string => {
     for (const k of orderRef.current) {
@@ -148,7 +159,13 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   };
 
   const handleScan = async (responseId: string) => {
+    if (!surveyReadyRef.current) return;
     const sid = surveyIdRef.current;
+    if (sessionConfigRef.current && !sessionRef.current) {
+      playBeep(false);
+      setScanResult({ type: "error", message: "Mở link quét của từng buổi từ Danh sách khách trước khi check-in." });
+      return;
+    }
     const { data: resp } = await supabase
       .from("survey_responses")
       .select("id, survey_id, answers, checked_in, hall, session_checkins, payment_status")
@@ -188,7 +205,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     const currentSession = sessionRef.current;
 
     // Check hall mismatch (applies in both modes)
-    if (currentHall && resp.hall && resp.hall !== currentHall) {
+    if (!sessionConfigRef.current && currentHall && resp.hall && resp.hall !== currentHall) {
       playBeep(false);
       setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: false, wrongHall: resp.hall });
       return;
@@ -196,10 +213,15 @@ function ScanInner({ surveyId }: { surveyId: string }) {
 
     // SESSION MODE: check session_checkins[currentSession]
     if (currentSession) {
-      const sessionCheckins = (resp.session_checkins as Record<string, string>) ?? {};
-      const alreadyInSession = !!sessionCheckins[currentSession];
+      const result = await recordSessionCheckin(sid, responseId, currentSession, "preview", "qr");
+      if (!result.ok) {
+        playBeep(false);
+        setScanResult({ type: "error", message: result.error ?? "Không được tham dự buổi này." });
+        return;
+      }
+      const alreadyInSession = result.code === "already";
       playBeep(!alreadyInSession);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: alreadyInSession });
+      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: alreadyInSession, checkedInAt: result.checkedInAt });
       return;
     }
 
@@ -217,14 +239,20 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   };
 
   const confirmCheckin = async () => {
-    if (!pending) return;
+    if (!pending || confirming) return;
+    setConfirming(true);
     const currentHall = hallRef.current;
     const currentSession = sessionRef.current;
 
     if (currentSession) {
-      // Session mode: atomic RPC update to session_checkins
-      await supabase.rpc("checkin_session", { resp_id: pending.responseId, session_name: currentSession });
-      await logCheckinEvent({ surveyId, responseId: pending.responseId, action: "session_checkin", method: "qr", hall: currentHall, sessionName: currentSession });
+      const result = await recordSessionCheckin(surveyId, pending.responseId, currentSession, "checkin", "qr");
+      if (!result.ok || result.code === "already") {
+        playBeep(false);
+        setScanResult({ type: result.code === "already" ? "already" : "error", message: result.code === "already" ? "Đã check-in buổi này. Không ghi nhận thêm." : result.error ?? "Chưa ghi nhận được check-in." });
+        setPending(null);
+        setConfirming(false);
+        return;
+      }
     } else {
       // General/hall mode: update checked_in boolean
       await supabase.from("survey_responses")
@@ -234,9 +262,10 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     }
 
     setCheckedCount((c) => c + 1);
+    setConfirming(false);
     lastScannedRef.current = pending.responseId;
     setTimeout(() => { lastScannedRef.current = ""; }, 3000);
-    setWelcome({ name: pending.name, hall: currentSession || currentHall });
+    setWelcome({ name: pending.name, hall: sessionName || currentHall });
     setTimeout(() => setWelcome(null), 2000);
     setPending(null);
   };
@@ -250,7 +279,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   };
 
   const handleScannedUrl = (url: string) => {
-    if (busyRef.current) return; // block while modal or welcome screen is showing
+    if (busyRef.current || !surveyReadyRef.current) return;
     const match = url.match(/\/checkin\/([a-f0-9-]+)/i);
     if (!match) {
       if (url && url.length > 5) setScanResult({ type: "error", message: "Mã QR không phải mã check-in" });
@@ -318,8 +347,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       >
         {/* Sub-info */}
         <div className="absolute top-4 left-5 flex items-center gap-2 text-xs sm:text-sm">
-          {hall && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🏛 {hall}</span>}
-          {session && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🕐 {session}</span>}
+          {currentVenue && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🏛 {currentVenue}</span>}
+          {session && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🕐 {sessionName}</span>}
         </div>
         <button onClick={() => setFacingMode((f) => f === "environment" ? "user" : "environment")}
           title={facingMode === "environment" ? "Chuyển sang camera trước" : "Chuyển sang camera sau"}
@@ -331,6 +360,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
         <h2 className="text-on-brand font-bold text-xl sm:text-2xl text-center mt-6 sm:mt-2 mb-4 drop-shadow">
           Vui lòng đưa mã QR vào khung
         </h2>
+        {configuredSession && (configuredSession.opensAt || configuredSession.closesAt) && <p className="mb-3 text-center text-xs text-white/70">Giờ check-in: {configuredSession.opensAt ? new Date(configuredSession.opensAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Không giới hạn mở"} — {configuredSession.closesAt ? new Date(configuredSession.closesAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Không giới hạn đóng"}</p>}
 
         {/* Camera box with scan line */}
         <div className="relative w-full max-w-[720px] aspect-video rounded-[24px] overflow-hidden bg-black/40 border border-white/20">
@@ -379,7 +409,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
               {/* Already checked in */}
               {pending.alreadyCheckedIn && !pending.wrongHall && (
                 <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium text-center">
-                  ⚠️ Đã check-in {session ? `buổi "${session}"` : "trước đó"}
+                  ⚠️ Đã check-in {session ? `buổi "${sessionName}"` : "trước đó"}
+                  {pending.checkedInAt && <p className="mt-1">{new Date(pending.checkedInAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p>}
                 </div>
               )}
 
@@ -403,14 +434,14 @@ function ScanInner({ surveyId }: { surveyId: string }) {
                 ))}
               </div>
               <div className="flex gap-3">
-                <button onClick={cancelCheckin}
+                <button onClick={cancelCheckin} disabled={confirming}
                   className="flex-1 py-3 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors">
                   Đóng
                 </button>
-                {!pending.wrongHall && (
-                  <button onClick={confirmCheckin}
+                {!pending.wrongHall && !(session && pending.alreadyCheckedIn) && (
+                  <button onClick={confirmCheckin} disabled={confirming}
                     className="flex-1 py-3 rounded-xl text-sm font-bold text-on-brand bg-sky-600 hover:bg-sky-500 transition-colors">
-                    ✓ Check-in
+                    {confirming ? "Đang ghi nhận…" : "✓ Check-in"}
                   </button>
                 )}
               </div>

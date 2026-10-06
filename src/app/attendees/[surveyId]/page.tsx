@@ -12,6 +12,8 @@ import Link from "next/link";
 import { buildPublicUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import type { QRBranding } from "@/lib/surveys";
+import { arrivalSummary, canAttendSession, normalizeSessionConfig, sessionLabel, type CheckinSessionConfig } from "@/lib/checkin-sessions";
+import { recordSessionCheckin } from "@/lib/session-checkin-client";
 
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
@@ -26,7 +28,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [questionLabels, setQuestionLabels] = useState<Record<string, string>>({});
   const [questionOrder, setQuestionOrder] = useState<string[]>([]);
-  const [questionMeta, setQuestionMeta] = useState<Record<string, { type: string; options: string[] | null; isHall: boolean }>>({});
+  const [questionMeta, setQuestionMeta] = useState<Record<string, { type: string; options: string[] | null; isHall: boolean; allowMultiple: boolean }>>({});
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "name" | "checkin" | "hall">("newest");
   const [statusFilter, setStatusFilter] = useState<"all" | "checked" | "unchecked" | "email_failed" | "payment_pending">("all");
@@ -43,6 +45,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [halls, setHalls] = useState<string[]>([]);
   const [resending, setResending] = useState(false);
   const [sessions, setSessions] = useState<string[]>([]);
+  const [sessionConfig, setSessionConfig] = useState<CheckinSessionConfig | null>(null);
+  const [sessionFilter, setSessionFilter] = useState("");
+  const [participationFilter, setParticipationFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [sessionsEnabled, setSessionsEnabled] = useState(false);
@@ -55,18 +60,20 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     const [{ data: survey }, { data: resps }, { data: questions }] = await Promise.all([
       supabase.from("surveys").select("title, vip_checkin_enabled, checkin_theme").eq("id", id).single(),
       supabase.from("survey_responses").select("*").eq("survey_id", id).order("submitted_at", { ascending: false }),
-      supabase.from("survey_questions").select("id, text, position, type, options, is_hall_selector").eq("survey_id", id).order("position"),
+      supabase.from("survey_questions").select("id, text, position, type, options, is_hall_selector, allow_multiple").eq("survey_id", id).order("position"),
     ]);
     setSurveyTitle(survey?.title ?? "Khảo sát");
     setVipCheckinEnabled(!!(survey as { vip_checkin_enabled?: boolean } | null)?.vip_checkin_enabled);
     setQrBranding(((survey as { checkin_theme?: { qr?: QRBranding } } | null)?.checkin_theme?.qr) ?? null);
     setSessionsEnabled(!!((survey as { checkin_theme?: { sessionsEnabled?: boolean } } | null)?.checkin_theme?.sessionsEnabled));
     setResponses(resps ?? []);
+    const config = normalizeSessionConfig(survey?.checkin_theme?.sessionConfig);
+    setSessionConfig(config);
     const labels: Record<string, string> = {};
     const order: string[] = [];
-    const meta: Record<string, { type: string; options: string[] | null; isHall: boolean }> = {};
-    (questions ?? []).forEach((q: { id: string; text: string; type: string; options: string[] | null; is_hall_selector: boolean }) => {
-      meta[q.id] = { type: q.type, options: q.options, isHall: !!q.is_hall_selector };
+    const meta: Record<string, { type: string; options: string[] | null; isHall: boolean; allowMultiple: boolean }> = {};
+    (questions ?? []).forEach((q: { id: string; text: string; type: string; options: string[] | null; is_hall_selector: boolean; allow_multiple: boolean }) => {
+      meta[q.id] = { type: q.type, options: q.options, isHall: !!q.is_hall_selector, allowMultiple: !!q.allow_multiple };
       if (q.type !== "section" && q.type !== "image_banner") {
         labels[q.id] = q.text;
         order.push(q.id);
@@ -76,11 +83,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setQuestionOrder(order);
     setQuestionMeta(meta);
     // Extract unique halls
-    const uniqueHalls = [...new Set((resps ?? []).map((r: SurveyResponse) => r.hall).filter(Boolean))] as string[];
+    const uniqueHalls = [...new Set([...(resps ?? []).map((r: SurveyResponse) => r.hall), ...(config?.sessions.map((session) => session.hall) ?? [])].filter(Boolean))] as string[];
     setHalls(uniqueHalls);
     // Load sessions: from localStorage + derive from existing session_checkins keys
-    const stored = JSON.parse(localStorage.getItem(`sessions-${id}`) || "[]") as string[];
-    const derived = new Set<string>(stored);
+    let stored: string[] = [];
+    try {
+      const value = JSON.parse(localStorage.getItem(`sessions-${id}`) || "[]");
+      if (Array.isArray(value)) stored = value.filter((item) => typeof item === "string");
+    } catch { /* An unavailable/corrupt browser cache does not affect shared configuration. */ }
+    const derived = new Set<string>(config ? config.sessions.map((session) => session.id) : stored);
     (resps ?? []).forEach((r: SurveyResponse) => {
       Object.keys(r.session_checkins ?? {}).forEach((k) => derived.add(k));
     });
@@ -171,6 +182,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   // CRUD
   const doCheckin = async (id: string) => {
     const response = responses.find((r) => r.id === id);
+    if (sessionConfig) {
+      if (!sessionFilter) { toast.info("Chọn buổi cần điểm danh hoặc mở chi tiết khách để điểm danh từng buổi."); return; }
+      if (response) await toggleSession(response, sessionFilter);
+      return;
+    }
     if (response && !isPaymentSettled(response.payment_status)) {
       toast.error("Người này chưa hoàn tất thanh toán, chưa thể check-in.");
       return;
@@ -183,6 +199,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const undoCheckin = async (id: string) => {
     const response = responses.find((r) => r.id === id);
+    if (sessionConfig) {
+      if (!sessionFilter) { toast.info("Mở chi tiết khách để hủy check-in của buổi cần sửa."); return; }
+      if (response) await toggleSession(response, sessionFilter);
+      return;
+    }
     await supabase.from("survey_responses").update({ checked_in: false, checked_in_at: null }).eq("id", id);
     await logCheckinEvent({ surveyId, responseId: id, action: "undo_checkin", method: "manual", hall: response?.hall });
     if (selectedResponse?.id === id) await loadCheckinLogs(id);
@@ -201,7 +222,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     questionOrder.forEach((k) => {
       const v = r.answers[k];
       // For choice (single), store the selected index as string for the <select> value
-      ans[k] = Array.isArray(v) ? String(v[0] ?? "") : String(v ?? "");
+      ans[k] = Array.isArray(v) ? v.join(",") : String(v ?? "");
     });
     setEditAnswers(ans);
   };
@@ -215,7 +236,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       const m = questionMeta[qId];
       if (m?.type === "choice") {
         const idx = parseInt(raw, 10);
-        finalAnswers[qId] = isNaN(idx) ? raw : idx;
+        finalAnswers[qId] = m.allowMultiple ? raw.split(",").filter(Boolean).map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < (m.options?.length ?? 0)) : isNaN(idx) ? raw : idx;
         // Re-derive hall if this is the hall-selector question
         if (m.isHall && !isNaN(idx) && m.options?.[idx] !== undefined) {
           derivedHall = m.options[idx];
@@ -273,25 +294,30 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const toggleSession = async (r: SurveyResponse, sessionName: string) => {
     const current = r.session_checkins ?? {};
     const isChecked = !!current[sessionName];
-    if (isChecked) {
-      await supabase.rpc("uncheckin_session", { resp_id: r.id, session_name: sessionName });
-      await logCheckinEvent({ surveyId, responseId: r.id, action: "session_uncheckin", method: "manual", hall: r.hall, sessionName });
-    } else {
-      await supabase.rpc("checkin_session", { resp_id: r.id, session_name: sessionName });
-      await logCheckinEvent({ surveyId, responseId: r.id, action: "session_checkin", method: "manual", hall: r.hall, sessionName });
-    }
+    const result = await recordSessionCheckin(surveyId, r.id, sessionName, isChecked ? "undo" : "checkin", "manual");
+    if (!result.ok) { toast.error(result.error ?? "Chưa ghi nhận được check-in."); return; }
     if (selectedResponse?.id === r.id) await loadCheckinLogs(r.id);
-    const updated = { ...current };
-    if (isChecked) delete updated[sessionName];
-    else updated[sessionName] = new Date().toISOString();
-    setResponses((prev) => prev.map((x) => x.id === r.id ? { ...x, session_checkins: updated } : x));
-    if (selectedResponse?.id === r.id) setSelectedResponse({ ...selectedResponse, session_checkins: updated });
+    const apply = (response: SurveyResponse) => {
+      const updated = { ...response.session_checkins };
+      if (isChecked) delete updated[sessionName];
+      else if (result.checkedInAt) updated[sessionName] = result.checkedInAt;
+      return { ...response, session_checkins: updated };
+    };
+    setResponses((prev) => prev.map((x) => x.id === r.id ? apply(x) : x));
+    setSelectedResponse((previous) => previous?.id === r.id ? apply(previous) : previous);
   };
 
   const addNew = async () => {
+    const answers: SurveyResponse["answers"] = {};
+    for (const [key, raw] of Object.entries(newAnswers)) {
+      const meta = questionMeta[key];
+      answers[key] = meta?.type === "choice"
+        ? meta.allowMultiple ? raw.split(",").filter(Boolean).map(Number) : raw === "" ? "" : Number(raw)
+        : raw;
+    }
     const { data } = await supabase.from("survey_responses").insert({
       survey_id: surveyId,
-      answers: newAnswers,
+      answers,
     }).select("*").single();
     if (data) {
       setResponses((prev) => [data, ...prev]);
@@ -314,7 +340,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       "Thời gian giao dịch PayOS",
       "Check-in",
       "Thời gian check-in",
-      ...sessions.map((s) => `Buổi: ${s}`),
+      ...sessions.flatMap((s) => [`Quyền tham dự: ${sessionLabel(sessionConfig, s)}`, `Check-in: ${sessionLabel(sessionConfig, s)}`]),
       "Thời gian đăng ký",
     ];
     const rows = responses.map((r, i) => {
@@ -329,10 +355,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         }
         return v != null ? String(v) : "";
       });
-      const sessionFields = sessions.map((s) => {
+      const sessionFields = sessions.flatMap((s) => {
         const at = r.session_checkins?.[s];
-        return at ? new Date(at).toLocaleString("vi-VN") : "";
+        return [canAttendSession(sessionConfig, s, r.answers) ? "Có" : "Không", at ? new Date(at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : ""];
       });
+      const arrival = arrivalSummary(r, sessionConfig);
       return [
         String(i + 1),
         ...fields,
@@ -344,8 +371,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         r.payment_reference ?? "",
         r.payment_order_code ? String(r.payment_order_code) : "",
         r.payment_transaction_datetime ?? "",
-        r.checked_in ? "Có" : "Chưa",
-        r.checked_in_at ? new Date(r.checked_in_at).toLocaleString("vi-VN") : "",
+        hasArrival(r) ? "Có" : "Chưa",
+        arrival.checked_in_at ? new Date(arrival.checked_in_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
         ...sessionFields,
         new Date(r.submitted_at).toLocaleString("vi-VN"),
       ];
@@ -363,23 +390,29 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     URL.revokeObjectURL(url);
   };
 
-  const checkedCount = responses.filter((r) => r.checked_in).length;
+  const hasArrival = (r: SurveyResponse) => arrivalSummary(r, sessionConfig).checked_in;
+  const checkedCount = responses.filter(hasArrival).length;
   const totalCount = responses.length;
-  const uncheckedCount = totalCount - checkedCount;
+  const filterTotal = sessionFilter ? responses.filter((r) => canAttendSession(sessionConfig, sessionFilter, r.answers)).length : totalCount;
+  const filterChecked = sessionFilter ? responses.filter((r) => canAttendSession(sessionConfig, sessionFilter, r.answers) && r.session_checkins?.[sessionFilter]).length : checkedCount;
   const pendingPaymentCount = responses.filter((r) => r.payment_status === "pending").length;
   const emailFailedCount = responses.filter((r) => r.email_status === "failed").length;
 
   // Stats: check-in by hour, by hall
   const checkinRate = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
   const hallStats = halls.map((h) => {
-    const inHall = responses.filter((r) => r.hall === h);
-    const checked = inHall.filter((r) => r.checked_in).length;
+    const venueSessions = sessionConfig?.sessions.filter((session) => session.hall === h);
+    const inHall = responses.filter((r) => venueSessions ? venueSessions.some((session) => canAttendSession(sessionConfig, session.id, r.answers)) : r.hall === h);
+    const checked = inHall.filter((r) => venueSessions ? venueSessions.some((session) => !!r.session_checkins?.[session.id]) : r.checked_in).length;
     return { hall: h, total: inHall.length, checked };
   });
   // Check-in by hour
   const hourBuckets: Record<number, number> = {};
-  responses.filter((r) => r.checked_in && r.checked_in_at).forEach((r) => {
-    const h = new Date(r.checked_in_at!).getHours();
+  responses.filter(hasArrival).forEach((r) => {
+    const times = [r.checked_in_at, ...(sessionConfig ? Object.values(r.session_checkins ?? {}) : [])].filter((at): at is string => !!at && Number.isFinite(Date.parse(at)));
+    if (!times.length) return;
+    const firstArrival = Math.min(...times.map(Date.parse));
+    const h = new Date(firstArrival + 7 * 3600000).getUTCHours();
     hourBuckets[h] = (hourBuckets[h] || 0) + 1;
   });
   // Build range from min to max hour
@@ -417,10 +450,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   })();
 
   const filtered = responses.filter((r) => {
-    if (hallFilter && r.hall !== hallFilter) return false;
+    if (sessionFilter && !canAttendSession(sessionConfig, sessionFilter, r.answers)) return false;
+    const admitted = sessionConfig?.sessions.filter((session) => canAttendSession(sessionConfig, session.id, r.answers)) ?? [];
+    if (participationFilter === "multiple" && admitted.length < 2) return false;
+    if (participationFilter.startsWith("only:") && (admitted.length !== 1 || admitted[0].id !== participationFilter.slice(5))) return false;
+    if (hallFilter && (sessionConfig ? !admitted.some((session) => session.hall === hallFilter && (!sessionFilter || session.id === sessionFilter)) : r.hall !== hallFilter)) return false;
     if (fieldFilterKey && fieldFilterValue && !answerDisplay(r, fieldFilterKey).toLowerCase().includes(fieldFilterValue.toLowerCase())) return false;
-    if (statusFilter === "checked" && !r.checked_in) return false;
-    if (statusFilter === "unchecked" && r.checked_in) return false;
+    const isChecked = sessionFilter ? !!r.session_checkins?.[sessionFilter] : hasArrival(r);
+    if (statusFilter === "checked" && !isChecked) return false;
+    if (statusFilter === "unchecked" && isChecked) return false;
     if (statusFilter === "email_failed" && r.email_status !== "failed") return false;
     if (statusFilter === "payment_pending" && r.payment_status !== "pending") return false;
     if (!search) return true;
@@ -437,7 +475,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       return (findName(a.answers) || "").localeCompare(findName(b.answers) || "", "vi");
     }
     if (sortBy === "checkin") {
-      if (a.checked_in !== b.checked_in) return a.checked_in ? 1 : -1;
+      const aChecked = sessionFilter ? !!a.session_checkins?.[sessionFilter] : hasArrival(a);
+      const bChecked = sessionFilter ? !!b.session_checkins?.[sessionFilter] : hasArrival(b);
+      if (aChecked !== bChecked) return aChecked ? 1 : -1;
       return new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime();
     }
     if (sortBy === "hall") {
@@ -458,6 +498,21 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const selectAll = () => { setSelectedIds(new Set(filtered.map((r) => r.id))); };
   const clearSelection = () => { setSelectedIds(new Set()); };
   const bulkCheckin = async () => {
+    if (sessionConfig) {
+      if (!sessionFilter) { toast.info("Chọn buổi trước khi điểm danh danh sách đã chọn."); return; }
+      const updates = new Map<string, string>();
+      let failed = 0;
+      for (const id of selectedIds) {
+        const result = await recordSessionCheckin(surveyId, id, sessionFilter, "checkin", "manual");
+        if (result.ok && result.checkedInAt) updates.set(id, result.checkedInAt);
+        else failed += 1;
+      }
+      setResponses((previous) => previous.map((r) => updates.has(r.id) ? { ...r, session_checkins: { ...r.session_checkins, [sessionFilter]: updates.get(r.id)! } } : r));
+      setSelectedIds(new Set());
+      if (failed) toast.warning(`${updates.size} khách đã ghi nhận; ${failed} khách chưa ghi nhận do quyền tham dự, giờ hoặc kết nối.`);
+      else toast.success(`Đã ghi nhận ${updates.size} khách cho ${sessionLabel(sessionConfig, sessionFilter)}.`);
+      return;
+    }
     const ids = [...selectedIds].filter((id) => {
       const response = responses.find((r) => r.id === id);
       return !response || isPaymentSettled(response.payment_status);
@@ -745,13 +800,13 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 <Mail size={14} /> Gửi cho đã chọn ({selectedIds.size})
               </button>
             )}
-            <Link href={`/scan/${surveyId}${hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
+            {sessionConfig && !sessionFilter ? <button onClick={() => setShowSessions(true)} className="rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white">Chọn buổi check-in</button> : <Link href={`/scan/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
               className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
               style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>
               <QrCode size={14} /> Scan
-            </Link>
-            {vipCheckinEnabled && (
-              <Link href={`/face-checkin/${surveyId}${hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
+            </Link>}
+            {vipCheckinEnabled && (!sessionConfig || sessionFilter) && (
+              <Link href={`/face-checkin/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
                 className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
                 style={{ background: "linear-gradient(135deg, #0ea5e9, #0891b2)" }}>
                 <ShieldCheck size={14} /> VIP Face
@@ -832,26 +887,35 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
                 <div className="px-4 pb-4 space-y-2">
                   <p className="text-xs text-slate-500">Mỗi buổi có link quét riêng. Người tham dự check-in lại từng buổi (dùng cho CME cấp giờ tham dự).</p>
+                  {sessionConfig && <p className="text-xs font-medium text-indigo-700">Dự {sessionConfig.sessions.length === 2 ? "cả hai buổi" : "nhiều buổi"}: {responses.filter((r) => sessionConfig.sessions.filter((session) => canAttendSession(sessionConfig, session.id, r.answers)).length >= 2).length} người · Khách dùng cùng một QR cho các buổi đã đăng ký.</p>}
                   {sessions.map((s) => {
                     const checkedInSession = responses.filter((r) => r.session_checkins?.[s]).length;
-                    const scanUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/scan/${surveyId}?session=${encodeURIComponent(s)}`;
+                    const eligible = responses.filter((r) => canAttendSession(sessionConfig, s, r.answers)).length;
+                    const definition = sessionConfig?.sessions.find((session) => session.id === s);
+                    const archived = !!sessionConfig && !definition;
+                    const scanUrl = buildPublicUrl(`/scan/${surveyId}?session=${encodeURIComponent(s)}`);
+                    const faceUrl = buildPublicUrl(`/face-checkin/${surveyId}?session=${encodeURIComponent(s)}`);
                     return (
                       <div key={s} className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{s}</p>
-                          <p className="text-[11px] text-slate-500">{checkedInSession}/{totalCount} đã điểm danh</p>
+                          <p className="text-sm font-medium text-slate-800 truncate">{sessionLabel(sessionConfig, s)}{definition?.hall ? ` · ${definition.hall}` : ""}</p>
+                          <p className="text-[11px] text-slate-500">{archived ? `${checkedInSession} lượt đã ghi nhận · Buổi cũ` : `${checkedInSession}/${eligible} đã điểm danh`}</p>
+                          {definition && (definition.opensAt || definition.closesAt) && <p className="text-[11px] text-slate-500">{definition.opensAt ? new Date(definition.opensAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Mở không giới hạn"} — {definition.closesAt ? new Date(definition.closesAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Đóng không giới hạn"}</p>}
                         </div>
+                        {!archived && <>
                         <button onClick={() => { navigator.clipboard.writeText(scanUrl); toast.success("Đã copy link quét buổi này!"); }}
                           className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-100">Copy link</button>
                         <a href={scanUrl} target="_blank" rel="noopener noreferrer"
                           className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-on-brand bg-indigo-600 hover:bg-indigo-500">Mở scan</a>
-                        <button onClick={() => removeSession(s)} className="px-2 py-1.5 rounded-lg text-red-600 hover:bg-red-50"><Trash2 size={12} /></button>
+                        {vipCheckinEnabled && <a href={faceUrl} target="_blank" rel="noopener noreferrer" className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-indigo-700 bg-indigo-100">VIP Face</a>}
+                        </>}
+                        {!sessionConfig && <button onClick={() => removeSession(s)} className="px-2 py-1.5 rounded-lg text-red-600 hover:bg-red-50"><Trash2 size={12} /></button>}
                       </div>
                     );
                   })}
-                  <button onClick={addSession} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors">
+                  {sessionConfig ? <Link href={`/admin/forms/${surveyId}`} className="block rounded-lg bg-indigo-50 px-3 py-2 text-center text-sm font-medium text-indigo-600">Chỉnh buổi, hội trường và quyền tham dự trong form</Link> : <button onClick={addSession} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors">
                     <Plus size={14} /> Thêm buổi
-                  </button>
+                  </button>}
                 </div>
               </motion.div>
             )}
@@ -872,8 +936,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   {questionOrder.map((k) => (
                     <div key={k}>
                       <label className="text-[11px] text-slate-500 mb-0.5 block">{questionLabels[k]}</label>
-                      <input value={newAnswers[k] ?? ""} onChange={(e) => setNewAnswers({ ...newAnswers, [k]: e.target.value })}
-                        className="admin-field w-full rounded-lg px-3 py-2 text-sm focus:outline-none" />
+                      {questionMeta[k]?.type === "choice" ? <select multiple={questionMeta[k].allowMultiple} value={questionMeta[k].allowMultiple ? (newAnswers[k] ?? "").split(",").filter(Boolean) : newAnswers[k] ?? ""} onChange={(e) => setNewAnswers({ ...newAnswers, [k]: questionMeta[k].allowMultiple ? Array.from(e.target.selectedOptions, (option) => option.value).join(",") : e.target.value })} className="admin-field w-full rounded-lg px-3 py-2 text-sm"><option value="">— Chọn —</option>{questionMeta[k].options?.map((option, index) => <option key={index} value={index}>{option}</option>)}</select> : <input value={newAnswers[k] ?? ""} onChange={(e) => setNewAnswers({ ...newAnswers, [k]: e.target.value })} className="admin-field w-full rounded-lg px-3 py-2 text-sm focus:outline-none" />}
                     </div>
                   ))}
                 </div>
@@ -950,11 +1013,16 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               )}
             </div>
           )}
+          {sessionConfig && <div className="flex flex-wrap gap-2">
+            <select value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)} className="admin-field rounded-xl px-3 py-2.5 text-sm"><option value="">Tất cả buổi tham dự</option>{sessionConfig.sessions.map((session) => <option key={session.id} value={session.id}>{session.name}</option>)}</select>
+            <select value={participationFilter} onChange={(e) => setParticipationFilter(e.target.value)} className="admin-field rounded-xl px-3 py-2.5 text-sm"><option value="">Tất cả nhóm đăng ký</option>{sessionConfig.sessions.map((session) => <option key={session.id} value={`only:${session.id}`}>Chỉ {session.name}</option>)}<option value="multiple">{sessionConfig.sessions.length === 2 ? "Dự cả hai buổi" : "Dự nhiều buổi"}</option></select>
+            {sessionFilter && <p className="self-center text-xs text-indigo-700">Bộ lọc đã/chưa check-in áp dụng cho {sessionLabel(sessionConfig, sessionFilter)}.</p>}
+          </div>}
           <div className="flex flex-wrap gap-1.5">
             {([
-              { value: "all", label: `Tất cả (${totalCount})` },
-              { value: "checked", label: `Đã check-in (${checkedCount})` },
-              { value: "unchecked", label: `Chưa check-in (${uncheckedCount})` },
+              { value: "all", label: `Tất cả (${filterTotal})` },
+              { value: "checked", label: `Đã check-in (${filterChecked})` },
+              { value: "unchecked", label: `Chưa check-in (${filterTotal - filterChecked})` },
               { value: "payment_pending", label: `Chờ thanh toán (${pendingPaymentCount})` },
               { value: "email_failed", label: `Email lỗi (${emailFailedCount})` },
             ] as const).map((option) => (
@@ -978,10 +1046,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
           <div className="glass-strong mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 px-4 py-2.5">
             <span className="text-sm font-semibold text-indigo-700">{selectedIds.size} đã chọn</span>
             <button onClick={bulkCheckin} className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400">Check-in tất cả</button>
-            <button onClick={() => {
+            {!sessionConfig && <button onClick={() => {
               const name = prompt("Tên hội trường:");
               if (name) bulkAssignHall(name);
-            }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-on-brand" style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>Gán hội trường</button>
+            }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-on-brand" style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>Gán hội trường</button>}
             <button onClick={printAllBadges} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-slate-600">In thẻ đã chọn</button>
             <button onClick={bulkDelete} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Xoá đã chọn</button>
             <button onClick={clearSelection} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Bỏ chọn</button>
@@ -992,6 +1060,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         {/* List */}
         <div className="glass-strong divide-y divide-[color:var(--border)] overflow-hidden rounded-2xl">
           {filtered.slice(0, visibleLimit).map((r) => {
+            const rowChecked = sessionFilter ? !!r.session_checkins?.[sessionFilter] : hasArrival(r);
             const name = findName(r.answers) || r.id.slice(0, 8).toUpperCase();
             const time = new Date(r.submitted_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
             const rowTone = selectedIds.has(r.id)
@@ -1004,8 +1073,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   onClick={(e) => e.stopPropagation()}
                   className="h-4 w-4 flex-shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
                 <div className="flex-1 min-w-0 flex items-center gap-3" onClick={() => { void openDetail(r); }}>
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${r.checked_in ? "bg-emerald-100" : "bg-slate-100"}`}>
-                    {r.checked_in ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${rowChecked ? "bg-emerald-100" : "bg-slate-100"}`}>
+                    {rowChecked ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{name}{r.hall && <span className="text-xs text-indigo-500 ml-2">🏛 {r.hall}</span>}</p>
@@ -1016,10 +1085,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       <PaymentStatusBadge response={r} compact />
                       <EmailStatusBadge response={r} compact />
+                      {sessionConfig?.sessions.map((session) => canAttendSession(sessionConfig, session.id, r.answers) && <span key={session.id} className={`rounded-full px-2 py-0.5 text-[10px] ${r.session_checkins?.[session.id] ? "bg-emerald-100 text-emerald-700" : "bg-indigo-50 text-indigo-700"}`}>{session.name}{r.session_checkins?.[session.id] ? " ✓" : " · đã đăng ký"}</span>)}
                     </div>
                   </div>
                 </div>
-                {!r.checked_in ? (
+                {(!sessionConfig || sessionFilter) && (!rowChecked ? (
                   <button
                     onClick={(e) => { e.stopPropagation(); doCheckin(r.id); }}
                     disabled={!isPaymentSettled(r.payment_status)}
@@ -1029,7 +1099,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   </button>
                 ) : (
                   <span className="text-emerald-600 text-xs font-semibold">✓</span>
-                )}
+                ))}
               </div>
             );
           })}
@@ -1071,8 +1141,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             >
               {/* Status badges */}
               <div className="mb-3 flex flex-wrap gap-1.5">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${selectedResponse.checked_in ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                  {selectedResponse.checked_in ? <><UserCheck size={12} /> Đã check-in</> : <><Users size={12} /> Chưa check-in</>}
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${hasArrival(selectedResponse) ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                  {hasArrival(selectedResponse) ? <><UserCheck size={12} /> Đã đến</> : <><Users size={12} /> Chưa check-in</>}
                 </span>
                 <PaymentStatusBadge response={selectedResponse} />
                 <EmailStatusBadge response={selectedResponse} />
@@ -1096,8 +1166,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                       {editingId === selectedResponse.id ? (
                         isChoice ? (
                           <select
-                            value={editAnswers[k] ?? ""}
-                            onChange={(e) => setEditAnswers({ ...editAnswers, [k]: e.target.value })}
+                            multiple={meta?.allowMultiple}
+                            value={meta?.allowMultiple ? (editAnswers[k] ?? "").split(",").filter(Boolean) : editAnswers[k] ?? ""}
+                            onChange={(e) => setEditAnswers({ ...editAnswers, [k]: meta?.allowMultiple ? Array.from(e.target.selectedOptions, (option) => option.value).join(",") : e.target.value })}
                             className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-800 bg-white focus:outline-none focus:border-indigo-400"
                           >
                             <option value="">— Chọn —</option>
@@ -1160,7 +1231,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   <div className="space-y-1.5">
                     {selectedLogs.map((log) => (
                       <div key={log.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-2 text-xs">
-                        <span className="font-medium text-slate-700">{formatLogLabel(log)}</span>
+                        <span className="font-medium text-slate-700">{formatLogLabel({ ...log, session_name: log.session_name ? sessionLabel(sessionConfig, log.session_name) : null })}</span>
                         <span className="text-slate-400">{new Date(log.created_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</span>
                       </div>
                     ))}
@@ -1175,14 +1246,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   <div className="space-y-1.5">
                     {sessions.map((s) => {
                       const at = selectedResponse.session_checkins?.[s];
+                        const eligible = canAttendSession(sessionConfig, s, selectedResponse.answers);
                       return (
-                        <button key={s} onClick={() => toggleSession(selectedResponse, s)}
+                        <button key={s} onClick={() => toggleSession(selectedResponse, s)} disabled={!eligible && !at}
                           className="w-full flex items-center justify-between text-xs px-2.5 py-2 rounded-lg hover:bg-slate-50 transition-colors">
-                          <span className="text-slate-600">{s}</span>
+                          <span className="text-slate-600">{sessionLabel(sessionConfig, s)}</span>
                           {at ? (
                             <span className="text-emerald-600 font-medium">✓ {new Date(at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>
                           ) : (
-                            <span className="text-slate-400">Chưa · bấm để điểm danh</span>
+                            <span className="text-slate-400">{eligible ? "Chưa · bấm để điểm danh" : "Không đăng ký buổi này"}</span>
                           )}
                         </button>
                       );
@@ -1212,7 +1284,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                       className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                       <Mail size={14} /> {resending ? "Đang gửi..." : "Gửi lại QR"}
                     </button>
-                    {!selectedResponse.checked_in ? (
+                    {!sessionConfig && (!selectedResponse.checked_in ? (
                       <button onClick={() => { doCheckin(selectedResponse.id); setSelectedResponse({ ...selectedResponse, checked_in: true, checked_in_at: new Date().toISOString() }); }}
                         className="flex items-center gap-1 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-on-brand hover:bg-sky-400">
                         <UserCheck size={14} /> Check-in
@@ -1222,7 +1294,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                         className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100">
                         <RotateCcw size={14} /> Huỷ check-in
                       </button>
-                    )}
+                    ))}
                     <button onClick={() => { deleteResponse(selectedResponse.id); setSelectedResponse(null); }}
                       className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100">
                       <Trash2 size={14} /> Xoá
@@ -1231,7 +1303,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 )}
 
                 {/* Hall assignment */}
-                {editingId !== selectedResponse.id && (
+                {!sessionConfig && editingId !== selectedResponse.id && (
                   <div className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 pt-3">
                     <span className="text-xs text-slate-500">Hội trường:</span>
                     <input

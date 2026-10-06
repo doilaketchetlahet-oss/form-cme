@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { arrivalSummary, normalizeSessionConfig } from "./checkin-sessions";
 import { listRegistrationForms, type RegistrationFormSummary } from "./forms";
 
 export type DashboardResponseRow = {
@@ -6,6 +7,7 @@ export type DashboardResponseRow = {
   submitted_at: string;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  session_checkins?: Record<string, string> | null;
   email_status: string | null;
   payment_status: string | null;
   payment_amount: number | null;
@@ -42,13 +44,13 @@ export async function loadDashboardData(formIds?: string[]): Promise<DashboardDa
   let responses: DashboardResponseRow[] = [];
   const full = await supabase
     .from("survey_responses")
-    .select("survey_id, submitted_at, checked_in, checked_in_at, email_status, payment_status, payment_amount")
+    .select("survey_id, submitted_at, checked_in, checked_in_at, session_checkins, email_status, payment_status, payment_amount")
     .in("survey_id", surveyIds);
 
   if (full.error) {
     const basic = await supabase
       .from("survey_responses")
-      .select("survey_id, submitted_at, checked_in, checked_in_at")
+      .select("survey_id, submitted_at, checked_in, checked_in_at, session_checkins")
       .in("survey_id", surveyIds);
     responses = ((basic.data ?? []) as Omit<DashboardResponseRow, "email_status" | "payment_status" | "payment_amount">[])
       .map((row) => ({ ...row, email_status: null, payment_status: null, payment_amount: null }));
@@ -63,13 +65,15 @@ export async function loadDashboardData(formIds?: string[]): Promise<DashboardDa
       .in("survey_id", surveyIds)
       .order("created_at", { ascending: false })
       .limit(12),
-    supabase.from("surveys").select("id, checkin_pin").in("id", surveyIds),
+    supabase.from("surveys").select("id, checkin_pin, checkin_theme").in("id", surveyIds),
   ]);
 
   const pins: Record<string, string | null> = {};
   (pinsResult.data ?? []).forEach((row: { id: string; checkin_pin: string | null }) => {
     pins[row.id] = row.checkin_pin;
   });
+  const configs = new Map((pinsResult.data ?? []).map((row) => [row.id, normalizeSessionConfig(row.checkin_theme?.sessionConfig)]));
+  responses = responses.map((row) => ({ ...row, ...arrivalSummary(row, configs.get(row.survey_id) ?? null) }));
 
   return {
     forms,

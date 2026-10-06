@@ -27,7 +27,7 @@ async function waitForVideoElement(videoRef: React.RefObject<HTMLVideoElement | 
   throw new Error("Video element is not ready");
 }
 
-export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCheckinProps) {
+export function VIPFaceCheckin({ surveyId, hall, session, onManualConfirm, onClose }: VIPFaceCheckinProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
@@ -41,6 +41,7 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
   const [modelsReady, setModelsReady] = useState(false);
   const [qualityScore, setQualityScore] = useState(0);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -254,20 +255,20 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
   };
 
   const confirmVIP = async () => {
+    if (confirming || !matchedResponseId) return;
+    setConfirming(true);
     stopCamera();
-    if (onManualConfirm && matchedResponseId) {
-      await onManualConfirm(matchedResponseId);
+    try {
+      if (onManualConfirm) await onManualConfirm(matchedResponseId);
+      setShowWelcome(true);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Chưa ghi nhận được check-in.");
+    } finally {
+      setConfirming(false);
     }
-    setShowWelcome(true);
   };
 
-  const handleManualConfirm = async () => {
-    stopCamera();
-    if (onManualConfirm && matchedResponseId) {
-      await onManualConfirm(matchedResponseId);
-    }
-    setShowWelcome(true);
-  };
+  const handleManualConfirm = confirmVIP;
 
   const retryScan = () => {
     reset();
@@ -290,7 +291,7 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
   };
 
   if (showWelcome) {
-    return <VipWelcomeScreen name={matchedName || "Quý khách"} onComplete={handleWelcomeComplete} />;
+    return <VipWelcomeScreen name={matchedName || "Quý khách"} hall={session || hall} onComplete={handleWelcomeComplete} />;
   }
 
   return (
@@ -316,7 +317,7 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
 
             <div className="absolute top-4 right-4 z-10 flex items-center gap-2 px-3 py-1.5 rounded-full bg-sky-600/80 backdrop-blur">
               <ShieldCheck size={16} className="text-on-brand" />
-              <span className="text-on-brand text-sm font-semibold">VIP Check-in</span>
+              <span className="text-on-brand text-sm font-semibold">{session ? `${session}${hall ? ` · ${hall}` : ""}` : "VIP Check-in"}</span>
             </div>
 
             <div className="flex-1 relative overflow-hidden bg-black">
@@ -429,9 +430,10 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
             </div>
             <button
               onClick={confirmVIP}
+              disabled={confirming}
               className="w-full max-w-xs py-4 rounded-2xl bg-sky-600 text-on-brand font-bold text-lg hover:bg-sky-500 transition-colors"
             >
-              Tiếp tục check-in
+              {confirming ? "Đang ghi nhận…" : "Tiếp tục check-in"}
             </button>
           </motion.div>
         )}
@@ -454,7 +456,7 @@ export function VIPFaceCheckin({ surveyId, onManualConfirm, onClose }: VIPFaceCh
               </p>
             </div>
             <div className="w-full max-w-xs flex flex-col gap-3">
-              <button onClick={handleManualConfirm} className="w-full py-3 rounded-xl bg-sky-600 text-on-brand font-bold hover:bg-sky-500 transition-colors">
+              <button onClick={handleManualConfirm} disabled={confirming || !matchedResponseId} className="w-full py-3 rounded-xl bg-sky-600 text-on-brand font-bold hover:bg-sky-500 transition-colors">
                 Xác nhận thủ công
               </button>
               <button

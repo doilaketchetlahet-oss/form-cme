@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { arrivalSummary, normalizeSessionConfig } from "./checkin-sessions";
 import {
   upsertSurveyQuestions,
   type CheckinTheme,
@@ -156,7 +157,7 @@ export async function listRegistrationForms(): Promise<RegistrationFormSummary[]
   const containerIds = containers.map((item) => item.id);
   const surveysResult = await supabase
     .from("surveys")
-    .select("id, quiz_id, title, form_type, created_at, accent_color, vip_checkin_enabled")
+    .select("id, quiz_id, title, form_type, created_at, accent_color, vip_checkin_enabled, checkin_theme")
     .in("quiz_id", containerIds)
     .order("created_at", { ascending: false });
 
@@ -168,12 +169,13 @@ export async function listRegistrationForms(): Promise<RegistrationFormSummary[]
     created_at: string;
     accent_color: string | null;
     vip_checkin_enabled: boolean;
+    checkin_theme: CheckinTheme | null;
   }[] | null);
 
   if (isMissingColumn(surveysResult.error, "form_type")) {
     const fallbackResult = await supabase
       .from("surveys")
-      .select("id, quiz_id, title, created_at, accent_color, vip_checkin_enabled")
+      .select("id, quiz_id, title, created_at, accent_color, vip_checkin_enabled, checkin_theme")
       .in("quiz_id", containerIds)
       .order("created_at", { ascending: false });
     surveys = fallbackResult.data as typeof surveys;
@@ -185,7 +187,7 @@ export async function listRegistrationForms(): Promise<RegistrationFormSummary[]
   const [{ data: responses }, { data: questions }] = await Promise.all([
     supabase
       .from("survey_responses")
-      .select("survey_id, checked_in")
+      .select("survey_id, checked_in, session_checkins")
       .in("survey_id", surveyIds),
     supabase
       .from("survey_questions")
@@ -204,7 +206,7 @@ export async function listRegistrationForms(): Promise<RegistrationFormSummary[]
       formType: normalizeFormType((survey as { form_type?: unknown }).form_type),
       createdAt: survey.created_at,
       responseCount: responseRows.length,
-      checkinCount: responseRows.filter((row) => !!row.checked_in).length,
+      checkinCount: responseRows.filter((row) => arrivalSummary(row, normalizeSessionConfig(survey.checkin_theme?.sessionConfig)).checked_in).length,
       questionCount: (questions ?? []).filter((row) => row.survey_id === survey.id).length,
       vipCheckinEnabled: !!survey.vip_checkin_enabled,
       accentColor: survey.accent_color ?? null,
@@ -429,6 +431,13 @@ export async function duplicateRegistrationForm(surveyId: string): Promise<strin
   const newId = await createRegistrationForm(ownerId, `${source.title} (bản sao)`, source.form_type);
   if (!newId) return null;
 
+  const idMap = new Map<string, string>();
+  source.questions.forEach((question) => idMap.set(question.id, newQuestionId()));
+  const copiedTheme = source.checkin_theme ? { ...source.checkin_theme } : null;
+  if (copiedTheme?.sessionConfig?.questionId) {
+    copiedTheme.sessionConfig = { ...copiedTheme.sessionConfig, questionId: idMap.get(copiedTheme.sessionConfig.questionId) ?? copiedTheme.sessionConfig.questionId };
+  }
+
   const { error: configError } = await supabase
     .from("surveys")
     .update({
@@ -440,16 +449,13 @@ export async function duplicateRegistrationForm(surveyId: string): Promise<strin
       email_subject: source.email_subject,
       email_body: source.email_body,
       checkin_pin: source.checkin_pin,
-      checkin_theme: source.checkin_theme,
+      checkin_theme: copiedTheme,
       scoring_config: source.scoring_config,
       payment_config: source.payment_config,
       vip_checkin_enabled: source.vip_checkin_enabled,
     })
     .eq("id", newId);
   if (configError) console.warn("Duplicate form config failed:", configError.message);
-
-  const idMap = new Map<string, string>();
-  source.questions.forEach((question) => idMap.set(question.id, newQuestionId()));
 
   const questions: SurveyQuestionUpsert[] = source.questions.map((question, index) => ({
     id: idMap.get(question.id),

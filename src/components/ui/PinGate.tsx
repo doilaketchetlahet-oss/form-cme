@@ -22,7 +22,7 @@ export function PinGate({ surveyId, children }: { surveyId: string; children: Re
       const { data } = await supabase.from("surveys").select("checkin_pin").eq("id", surveyId).single();
       const p = (data?.checkin_pin ?? "").trim();
       if (!p) { setStatus("open"); return; } // no pin → open
-      if (typeof window !== "undefined" && sessionStorage.getItem(`pin-ok-${surveyId}`) === "1") {
+      if (typeof window !== "undefined" && sessionStorage.getItem(`checkin-pin-${surveyId}`) === p) {
         setStatus("open"); return;
       }
       setPin(p);
@@ -34,6 +34,7 @@ export function PinGate({ surveyId, children }: { surveyId: string; children: Re
     e.preventDefault();
     if (input.trim() === pin) {
       sessionStorage.setItem(`pin-ok-${surveyId}`, "1");
+      sessionStorage.setItem(`checkin-pin-${surveyId}`, pin);
       setStatus("open");
     } else {
       setError(true);

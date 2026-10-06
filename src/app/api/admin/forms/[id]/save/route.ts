@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { RegistrationFormSave } from "@/lib/forms";
 import type { SurveyQuestionUpsert } from "@/lib/surveys";
+import { normalizeSessionConfig, sessionQuestionChanged, validateSessionConfig } from "@/lib/checkin-sessions";
+import type { CheckinTheme, SurveyQuestion } from "@/lib/surveys";
 
 export const runtime = "nodejs";
 
@@ -58,7 +60,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { data: survey, error: loadError } = await supabase
     .from("surveys")
-    .select("quiz_id")
+    .select("quiz_id, checkin_theme")
     .eq("id", surveyId)
     .single();
 
@@ -68,6 +70,17 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!survey?.quiz_id) {
     return NextResponse.json({ ok: false, error: "Không tìm thấy form." }, { status: 404 });
+  }
+
+  const oldConfig = normalizeSessionConfig((survey.checkin_theme as CheckinTheme | null)?.sessionConfig);
+  if (oldConfig?.questionId) {
+    const { data: oldQuestions, error: questionsError } = await supabase.from("survey_questions").select("*").eq("survey_id", surveyId);
+    if (questionsError) return NextResponse.json({ ok: false, error: questionsError.message }, { status: 500 });
+    if (sessionQuestionChanged(oldConfig, (oldQuestions ?? []) as SurveyQuestion[], payload!.questions)) {
+      const { count, error } = await supabase.from("survey_responses").select("id", { count: "exact", head: true }).eq("survey_id", surveyId);
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      if (count) return NextResponse.json({ ok: false, error: "Đã có người đăng ký. Giữ nguyên câu hỏi và thứ tự lựa chọn quyền tham dự để tránh đổi quyền của khách cũ." }, { status: 400 });
+    }
   }
 
   const surveyUpdate = {
@@ -181,6 +194,9 @@ function validatePayload(payload: RegistrationFormSave | null) {
     (q) => q.type !== "image_banner" && q.type !== "face_checkin" && !q.text?.trim(),
   );
   if (emptyQuestion >= 0) return `Câu ${emptyQuestion + 1} đang trống.`;
+
+  const sessionError = validateSessionConfig(payload.checkin_theme?.sessionConfig, payload.questions);
+  if (sessionError) return sessionError;
 
   return null;
 }

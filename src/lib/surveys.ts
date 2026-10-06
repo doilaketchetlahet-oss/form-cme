@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { arrivalSummary, normalizeSessionConfig, type CheckinSessionConfig } from "./checkin-sessions";
 
 export type SurveyQuestionType = "rating" | "nps" | "choice" | "text" | "paragraph" | "phone" | "date" | "province" | "section" | "image_banner" | "file_upload" | "signature" | "face_checkin";
 export type SurveyFormType = "registration" | "poster_scoring" | "feedback";
@@ -63,6 +64,7 @@ export interface CheckinTheme {
   overlayOpacity?: number; // 0-100, default 40
   qr?: QRBranding;
   sessionsEnabled?: boolean;
+  sessionConfig?: CheckinSessionConfig | null;
 }
 
 export interface QRBranding {
@@ -313,7 +315,9 @@ export async function getSurveyAnalytics(surveyId: string): Promise<SurveyAnalyt
 
   if (!survey || !questions) return null;
 
-  return computeSurveyAnalytics(survey, questions, responses ?? []);
+  const config = normalizeSessionConfig(survey.checkin_theme?.sessionConfig);
+  const arrivals = (responses ?? []).map((response) => ({ ...response, ...arrivalSummary(response, config) }));
+  return computeSurveyAnalytics(survey, questions, arrivals);
 }
 
 function computeSurveyAnalytics(survey: Survey, questions: SurveyQuestion[], allResponses: SurveyResponse[]): SurveyAnalytics {

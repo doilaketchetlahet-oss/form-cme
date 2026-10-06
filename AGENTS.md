@@ -69,6 +69,33 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - `/face-checkin/[surveyId]` VIP face check-in
 - `/checkin/[id]` QR confirmation page
 
+## Attendance sessions (conference / gala)
+
+- In `/admin/forms/[id]`, Check-in tab → enable “Điểm danh theo buổi” →
+  “Tạo mẫu Hội thảo + Gala”. This adds a required three-option question and two
+  sessions. Set each venue and optional opening/closing time (Vietnam time), save.
+- Sessions are shared in `surveys.checkin_theme.sessionConfig`; IDs remain stable
+  when display names or venues change. `questionId` links to the choice question;
+  each session's `optionIndexes` controls eligibility. Missing answers fail closed.
+- One registration and `/checkin/[responseId]` QR covers all eligible sessions.
+  `/attendees/[surveyId]` provides attendance-group/session filters, counts, CSV,
+  manual check-in, and `/scan/[surveyId]?session=<stable-id>` / VIP Face links.
+  Each session uses its own venue; the legacy single `hall` column is not a gate.
+- `/api/checkin/[surveyId]` accepts preview/checkin/undo with PIN (if configured)
+  or writable admin authentication. `record_session_checkin` validates eligibility,
+  payment, and server time, then atomically updates `session_checkins` and logs.
+  Opening is inclusive, closing exclusive; duplicates keep their first timestamp.
+  Undo works after eligibility/window changes. Managed forms require a session.
+- Existing forms without `sessionConfig` keep the old sessions and hall behavior.
+  The migration does not rewrite registrations or general check-in flags. Reports
+  derive one arrival per person from independent session timestamps. Once guests
+  register, the save API rejects reordering/deleting the attendance question options.
+- Existing installations: run `supabase/checkin-sessions.sql` once (re-runnable).
+  Fresh installations have the same functions/guard in `supabase/schema.sql`.
+  `SUPABASE_SERVICE_ROLE_KEY` is required for the new check-in API.
+- Regression: `node --test scripts/test-checkin-sessions.cjs`; optional real
+  PostgreSQL/React checks are documented at the top of that script.
+
 ## Tools & mini-games (added)
 
 - `/admin/tools/booth-draw` - booth lucky draw (admin); public at `/booth-draw`.

@@ -13,6 +13,8 @@ import type { Survey, SurveyFormType, SurveyQuestion, SurveyQuestionType, Survey
 import Link from "next/link";
 import { ThemeImageUpload } from "./ThemeImageUpload";
 import { QRCodeView } from "@/components/ui/QRCodeView";
+import { SessionSettings } from "./SessionSettings";
+import { validateSessionConfig } from "@/lib/checkin-sessions";
 
 interface Props {
   initial?: Survey & { questions?: SurveyQuestion[] };
@@ -293,6 +295,23 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
     if (expandedKey === key) setExpandedKey(null);
   };
 
+  const createConferenceGala = () => {
+    const id = newId();
+    const question: DraftQuestion = {
+      _key: newKey(), id, position: questions.length, type: "choice",
+      text: "Bạn tham dự chương trình nào?", options: ["Chỉ hội thảo", "Chỉ Gala dinner", "Cả hội thảo và Gala dinner"],
+      required: true, allow_multiple: false, show_if: null, is_hall_selector: false,
+    };
+    setQuestions((previous) => [...previous, question]);
+    patchTheme({ sessionsEnabled: true, sessionConfig: {
+      questionId: id,
+      sessions: [
+        { id: newId(), name: "Hội thảo", hall: "", opensAt: null, closesAt: null, optionIndexes: [0, 2] },
+        { id: newId(), name: "Gala dinner", hall: "", opensAt: null, closesAt: null, optionIndexes: [1, 2] },
+      ],
+    } });
+  };
+
   const emptyQuestionNumbers = questions
     .map((q, index) => ({ q, index }))
     .filter(({ q }) => q.type !== "image_banner" && q.type !== "face_checkin" && q.text.trim().length === 0)
@@ -307,7 +326,7 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
         ? "Cần ít nhất một câu hỏi."
         : emptyQuestionNumbers.length > 0
           ? `Câu ${emptyQuestionNumbers.join(", ")} đang trống.`
-          : null;
+          : isCheckinEnabled ? validateSessionConfig(theme.sessionConfig, questions) : null;
 
   const isValid = !validationMessage;
 
@@ -615,6 +634,7 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
               </span>
             </span>
           </label>
+          {theme.sessionsEnabled && <SessionSettings value={theme.sessionConfig} questions={questions} onChange={(sessionConfig) => patchTheme({ sessionConfig })} onPreset={createConferenceGala} />}
         </div>
       </div>
       )}
