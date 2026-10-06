@@ -179,8 +179,8 @@ export function MailMergeManager() {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "ket-qua-gui-thu.csv"; anchor.click(); URL.revokeObjectURL(url);
   };
 
-  if (!canManageForms) return <p className="rounded-xl bg-slate-100 p-5 text-slate-600">Tool dành cho tài khoản quản trị có quyền chỉnh sửa.</p>;
-  return <div className="space-y-5">
+  if (!canManageForms) return <p className="mx-4 my-8 rounded-xl bg-slate-100 p-5 text-slate-600 sm:mx-8 sm:my-10">Tool dành cho tài khoản quản trị có quyền chỉnh sửa.</p>;
+  return <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-8 sm:px-8 sm:py-10">
     <PageHeader title="Gửi mail theo trường" subtitle="Nhập danh sách, chèn trường và gửi từng thư qua tài khoản SMTP của bạn." action={<button className={buttonClass} disabled={busy || running} onClick={() => void newCampaign()}><Plus size={16} /> Chiến dịch mới</button>} />
     <div className="flex flex-wrap items-center gap-3">
       <select aria-label="Chiến dịch đã lưu" className={`${fieldClass} max-w-lg`} value={campaign?.id ?? ""} disabled={busy || running} onChange={(event) => event.target.value && void open(event.target.value)}><option value="">Mở chiến dịch đã lưu…</option>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.name} · {CAMPAIGN_STATUS[item.status]}</option>)}</select>
