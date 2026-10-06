@@ -1,0 +1,231 @@
+// node --test scripts/test-mail-merge.cjs
+// Optional PostgreSQL tests: set MAIL_MERGE_TEST_DEPS to a temporary package
+// directory containing @electric-sql/pglite@0.5.8.
+const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const { randomUUID } = require('node:crypto');
+const { test } = require('node:test');
+const ts = require('typescript');
+function loadSource(file, mocks = {}) {
+  const { outputText } = ts.transpileModule(readFileSync(path.join(__dirname, '..', file), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true }, fileName: file,
+  });
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', outputText)((name) => Object.hasOwn(mocks, name) ? mocks[name] : require(name), module, module.exports);
+  return module.exports;
+}
+const merge = loadSource('src/lib/mail-merge.ts');
+const table = merge.mergeTable(merge.parseMergeText('Email\tHọ tên\tTrường\r\nan@example.test\tNguyễn An\tĐại học A\r\nbinh@example.test\tTrần Bình\tĐại học B'));
+const template = { columns: table.columns, emailColumn: table.emailColumn, subject: 'Gửi {{ho_ten}} tại {{truong}}', blocks: [{ id: 'body', type: 'text', text: 'Kính gửi {{ho_ten}}\n{{truong}}', url: '' }] };
+const account = { host: 'smtp.example.test', port: 587, secure: false, user: 'user', password: 'test-only-secret', fromEmail: 'sender@example.test', fromName: 'Ban tổ chức', replyTo: '' };
+const owner = 'owner@example.test';
+
+test('CSV/TSV/semicolon and Excel matrices preserve formatted values and generate unique Vietnamese fields', () => {
+  assert.deepEqual(table.columns.map((c) => c.key), ['email', 'ho_ten', 'truong']);
+  assert.equal(table.rows[1].sourceRow, 3);
+  const commas = merge.parseMergeText('\uFEFFEmail,Họ tên,Ghi chú\n"a@example.test","A, B","Hai\ndòng"');
+  assert.equal(commas[1][1], 'A, B'); assert.equal(commas[1][2], 'Hai\ndòng');
+  assert.deepEqual(merge.parseMergeText('Email;Tên\na@example.test;A'), [['Email', 'Tên'], ['a@example.test', 'A']]);
+  const duplicates = merge.mergeTable([['Email', 'Họ tên', 'Họ-tên', '1A', ''], ['a@example.test', 'A', 'B', '0012', 'tail']]);
+  assert.deepEqual(duplicates.columns.map((c) => c.key), ['email', 'ho_ten', 'ho_ten_2', 'cot_1a', 'cot_5']);
+  assert.equal(duplicates.rows[0].fields.cot_1a, '0012');
+  assert.throws(() => merge.parseMergeText('Email,Name\n"unclosed'), /ngoặc kép/);
+  assert.throws(() => merge.mergeTable([['Email']]), /ít nhất/);
+});
+
+test('merge render personalizes each row, escapes spreadsheet HTML and does not recursively expand user data', () => {
+  assert.equal(merge.renderMergeMail(template, table.rows[0].fields).subject, 'Gửi Nguyễn An tại Đại học A');
+  assert.equal(merge.renderMergeMail(template, table.rows[1].fields).subject, 'Gửi Trần Bình tại Đại học B');
+  const rendered = merge.renderMergeMail(template, { email: 'a@example.test', ho_ten: '<img src=x onerror=alert(1)>', truong: '{{ho_ten}}' });
+  assert.ok(rendered.html.includes('&lt;img')); assert.ok(!rendered.html.includes('<img src=x'));
+  assert.ok(rendered.text.includes('{{ho_ten}}'));
+  assert.equal(merge.renderMergeMail(template, { ...table.rows[0].fields, ho_ten: 'A\r\nB' }).subject, 'Gửi A B tại Đại học A');
+  assert.throws(() => merge.renderMergeMail({ ...template, blocks: [{ id: 'link', type: 'button', text: 'Mở', url: '{{truong}}' }] }, { ...table.rows[0].fields, truong: 'javascript:alert(1)' }), /HTTP/);
+  assert.throws(() => merge.renderMergeMail({ ...template, blocks: [{ id: 'img', type: 'image', text: 'Ảnh', url: 'file:///etc/passwd' }] }, table.rows[0].fields), /HTTP/);
+});
+
+test('validation catches unknown fields, malformed templates and skips invalid/duplicate recipients', () => {
+  assert.equal(merge.validateMergeTemplate(template), null);
+  assert.match(merge.validateMergeTemplate({ ...template, subject: '{{missing}}' }), /không có/);
+  assert.match(merge.validateMergeTemplate({ ...template, columns: [table.columns[0], table.columns[0]] }), /trùng/);
+  assert.match(merge.validateMergeTemplate({ ...template, subject: 'bad\nheader' }), /một dòng/);
+  const rows = [...table.rows, { sourceRow: 4, fields: { ...table.rows[0].fields, email: 'AN@EXAMPLE.TEST' } }, { sourceRow: 5, fields: { ...table.rows[0].fields, email: 'not-an-email' } }];
+  assert.deepEqual(merge.prepareMergeRecipients(template, rows).map((r) => r.status), ['pending', 'pending', 'skipped', 'skipped']);
+  assert.equal(merge.isMergeEmail('one@example.test,two@example.test'), false);
+  assert.equal(merge.isMergeEmail('Name <one@example.test>'), false);
+  assert.throws(() => merge.prepareMergeRecipients(template, [{ sourceRow: 2, fields: { email: ['x'] } }]), /văn bản/);
+  assert.throws(() => merge.prepareMergeRecipients(template, [table.rows[0], table.rows[0]]), /số dòng bị trùng/);
+  assert.throws(() => merge.prepareMergeRecipients(template, [{ ...table.rows[0], sourceRow: -1 }]), /không hợp lệ/);
+});
+
+test('fresh schema includes the same independent mail merge migration', () => {
+  const normalize = (value) => value.replace(/\r\n/g, '\n').trim();
+  assert.ok(normalize(readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8')).includes(normalize(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8'))));
+});
+
+function smtpHarness() {
+  let options, sent, closes = 0, error = null, closeError = false, addresses = [{ address: '8.8.8.8', family: 4 }];
+  const smtp = loadSource('src/lib/server/mail-merge-smtp.ts', {
+    '@/lib/mail-merge': merge,
+    'node:dns/promises': { lookup: async () => addresses },
+    nodemailer: { createTransport: (input) => { options = input; return { verify: async () => true, close() { closes++; if (closeError) throw new Error('test cleanup error'); }, async sendMail(mail) { sent = mail; if (error) throw error; return { accepted: [mail.to], messageId: 'test-message' }; } }; } },
+  });
+  return { smtp, info: () => ({ options, sent, closes }), fail: (e) => { error = e; }, failClose: () => { closeError = true; }, addresses: (items) => { addresses = items; } };
+}
+
+test('SMTP credentials are encrypted with owner binding and never require changes to the check-in provider', () => {
+  const { smtp } = smtpHarness();
+  process.env.MAIL_MERGE_ENCRYPTION_KEY = 'test-only-key';
+  const encrypted = smtp.encryptSmtpPassword(account.password, owner);
+  assert.ok(!encrypted.includes(account.password));
+  assert.equal(smtp.decryptSmtpPassword(encrypted, owner), account.password);
+  assert.throws(() => smtp.decryptSmtpPassword(encrypted, 'other@example.test'), /Nhập lại/);
+  assert.notEqual(smtp.encryptSmtpPassword(account.password, owner), encrypted);
+  assert.throws(() => smtp.validateSmtpAccount({ ...account, fromEmail: 'a@example.test\r\nBcc: other@example.test' }), /không hợp lệ/);
+  assert.throws(() => smtp.validateSmtpAccount({ ...account, port: 0 }), /Kiểm tra/);
+});
+
+test('SMTP resolves only public addresses, requires TLS and treats an uncertain acceptance as needing review', async () => {
+  const h = smtpHarness();
+  for (const addr of ['127.0.0.1','10.0.0.1','172.16.1.1','192.168.0.2','169.254.169.254','::1','::ffff:127.0.0.1','fc00::1','fe80::1']) assert.equal(h.smtp.isPublicSmtpAddress(addr), false, addr);
+  assert.equal(h.smtp.isPublicSmtpAddress('8.8.8.8'), true);
+  const mail = { to: 'a@example.test', subject: 'A', html: '<p>A</p>', text: 'A' };
+  assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'sent');
+  const { options, sent, closes } = h.info();
+  assert.equal(options.host, '8.8.8.8'); assert.equal(options.tls.servername, account.host); assert.equal(options.requireTLS, true);
+  assert.equal(sent.disableFileAccess, true); assert.equal(sent.disableUrlAccess, true); assert.equal(closes, 1);
+  h.failClose();
+  assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'sent');
+  h.fail({ code: 'ETIMEDOUT', command: 'DATA' });
+  assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'uncertain');
+  h.fail({ code: 'ESOCKET', command: '.' });
+  assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'uncertain');
+  assert.equal(h.smtp.smtpErrorOutcome({ code: 'EAUTH', command: 'AUTH' }).status, 'failed');
+  assert.equal(h.smtp.smtpErrorOutcome({ responseCode: 550, command: 'DATA' }).status, 'failed');
+  h.addresses([{ address: '127.0.0.1', family: 4 }]);
+  assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'failed');
+});
+
+function apiHarness() {
+  const id = randomUUID(), recipient = randomUUID(), attempt = randomUUID();
+  const stored = { id, owner_email: owner, name: 'Mail merge', template, smtp_public: { ...account, password: undefined }, smtp_secret: 'encrypted-test', status: 'running' };
+  let authError = null, sends = [], calls = [], claimed = false, reject = null, sendError = false;
+  const service = {
+    from(tableName) {
+      const query = { select(columns) { query.columns = columns; return query; }, eq(key, value) { if (key === 'owner_email') assert.equal(value, owner); return query; }, order() { return query; }, limit() { return query; }, range() { return query; },
+        async maybeSingle() { const publicResult = query.columns === '*' ? stored : Object.fromEntries(query.columns.split(',').map((key) => [key, stored[key]])); return { data: publicResult, error: null }; },
+        then(resolve) { return Promise.resolve({ data: tableName === 'mail_merge_recipients' ? [{ id: recipient, source_row: 2, fields: table.rows[0].fields, status: 'sent' }] : [], error: null }).then(resolve); },
+      }; return query;
+    },
+    async rpc(name, args) {
+      calls.push({ name, args });
+      if (reject) return { data: null, error: reject };
+      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
+      if (name === 'control_mail_merge') return { data: stored.status, error: null };
+      return { data: name === 'save_mail_merge' ? id : true, error: null };
+    },
+  };
+  const route = loadSource('src/app/api/admin/mail-merge/route.ts', {
+    '@/lib/mail-merge': merge,
+    '@/lib/server/admin-api': { authorizeAdminApi: async (_request, writable) => { assert.equal(writable, true); return authError || { email: owner, service }; } },
+    '@/lib/server/mail-merge-smtp': { validateSmtpAccount: (value) => value, decryptSmtpPassword: () => account.password, encryptSmtpPassword: () => 'ciphertext-test', verifyMergeSmtp: async () => true,
+      sendMergeSmtp: async (smtp, mail) => { sends.push({ smtp, mail }); if (sendError) throw new Error('test unexpected transport failure'); return { status: 'sent', messageId: 'test-id' }; } },
+  });
+  return { id, calls, sends, stored, deny: () => { authError = { error: 'Denied', status: 403 }; }, reject: (e) => { reject = e; }, failSend: () => { sendError = true; },
+    post: (data) => route.POST(new Request('https://example.test/api/admin/mail-merge', { method: 'POST', body: JSON.stringify({ id, ...data }) })),
+    get: () => route.GET(new Request(`https://example.test/api/admin/mail-merge?id=${id}`)),
+  };
+}
+
+test('mail API requires writable admins, omits stored passwords and validates before SMTP', async () => {
+  const api = apiHarness();
+  const view = await (await api.get()).json();
+  assert.ok(!JSON.stringify(view).includes('encrypted-test'));
+  assert.equal(view.campaign.recipients[0].sourceRow, 2);
+  assert.equal(api.calls[0].args.p_action, 'refresh');
+  api.calls.length = 0;
+  assert.equal((await api.post({ action: 'save', name: 'Test', smtp: account, template: { ...template, subject: '{{missing}}' }, rows: table.rows })).status, 400);
+  assert.equal(api.sends.length, 0);
+  assert.equal(api.calls.length, 0);
+  api.deny();
+  assert.equal((await api.post({ action: 'process' })).status, 403);
+  assert.equal((await api.get()).status, 403);
+});
+
+test('sending API claims atomically, uses a single recipient and records acceptance with the claim token', async () => {
+  const api = apiHarness();
+  assert.equal((await api.post({ action: 'process' })).status, 200);
+  assert.equal((await api.post({ action: 'process' })).status, 200);
+  assert.equal(api.sends.length, 1);
+  assert.equal(api.sends[0].mail.to, 'an@example.test');
+  assert.equal(api.sends[0].mail.subject, 'Gửi Nguyễn An tại Đại học A');
+  assert.ok(!api.sends[0].mail.html.includes('/checkin/'));
+  const finish = api.calls.find((call) => call.name === 'finish_mail_merge');
+  assert.equal(finish.args.p_owner, owner); assert.equal(finish.args.p_status, 'sent'); assert.ok(finish.args.p_attempt);
+});
+
+test('an unexpected error after SMTP starts cannot become an automatically retryable failure', async () => {
+  const api = apiHarness();
+  api.failSend();
+  const response = await (await api.post({ action: 'process' })).json();
+  assert.equal(response.status, 'uncertain');
+  assert.equal(api.calls.find((call) => call.name === 'finish_mail_merge').args.p_status, 'uncertain');
+});
+
+const extra = process.env.MAIL_MERGE_TEST_DEPS ? createRequire(path.join(process.env.MAIL_MERGE_TEST_DEPS, 'package.json')) : null;
+test('PostgreSQL queue is repeatable, owner isolated, atomic across tabs and never auto-retries ambiguous SMTP', { skip: !extra }, async () => {
+  const { PGlite } = extra('@electric-sql/pglite');
+  const db = new PGlite();
+  try {
+    await db.exec("create role anon; create role authenticated; create role service_role; create table survey_responses(id int, answers jsonb); insert into survey_responses values(1,'{\"old\":true}');");
+    const sql = readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8');
+    await db.exec(sql); await db.exec(sql);
+    assert.deepEqual((await db.query('select * from survey_responses')).rows, [{ id: 1, answers: { old: true } }]);
+    const id = randomUUID(), queueRows = [...table.rows, { sourceRow: 4, fields: { email: 'c@example.test', ho_ten: 'C', truong: 'C' } }];
+    const save = async (who = owner) => db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [id, who, 'Test', template, account, 'ciphertext-only', merge.prepareMergeRecipients(template, queueRows)]);
+    const control = async (action, row = null, who = owner) => db.query('select control_mail_merge($1,$2,$3,$4) result', [id, who, action, row]);
+    const claim = async () => (await db.query('select claim_mail_merge($1,$2) result', [id, owner])).rows[0].result;
+    const finish = async (job, status = 'sent', token = job.recipient.attempt_id) => (await db.query('select finish_mail_merge($1,$2,$3,$4,$5,$6) result', [job.recipient.id, owner, token, status, status === 'sent' ? 'test-message' : null, status === 'sent' ? null : 'test-error'])).rows[0].result;
+    await save(); await save(); // Updating drafts replaces the queue atomically, no duplicate rows.
+    assert.equal((await db.query('select count(*)::int n from mail_merge_recipients')).rows[0].n, 3);
+    assert.equal(await claim(), null);
+    await assert.rejects(save('other@example.test'), /NOT_FOUND/);
+    await assert.rejects(control('start', null, 'other@example.test'), /NOT_FOUND/);
+    await control('start');
+    const simultaneous = await Promise.all([claim(), claim()]);
+    assert.ok(simultaneous[0]); assert.equal(simultaneous[1], null);
+    assert.equal(simultaneous[0].smtp_secret, 'ciphertext-only');
+    assert.equal(await finish(simultaneous[0], 'sent', randomUUID()), false);
+    assert.equal(await finish(simultaneous[0]), true);
+    assert.equal(await finish(simultaneous[0]), false);
+    await assert.rejects(save(), /LOCKED_CAMPAIGN/);
+    const second = await claim();
+    await control('pause'); assert.equal(await claim(), null);
+    assert.equal(await finish(second, 'failed'), true);
+    await control('retry_failed');
+    await control('start');
+    const retried = await claim();
+    assert.equal(retried.recipient.id, second.recipient.id);
+    assert.notEqual(retried.recipient.attempt_id, second.recipient.attempt_id);
+    assert.equal(await finish(second), false);
+    await control('pause');
+    await db.query("update mail_merge_recipients set claimed_at=now()-interval '4 minutes' where id=$1", [retried.recipient.id]);
+    await control('refresh'); // Reopening a paused tab must expose a stale claim for review.
+    assert.equal((await db.query('select status from mail_merge_recipients where id=$1', [retried.recipient.id])).rows[0].status, 'uncertain');
+    assert.equal(await claim(), null);
+    assert.equal((await db.query('select status from mail_merge_campaigns where id=$1', [id])).rows[0].status, 'paused');
+    assert.equal((await db.query('select status from mail_merge_recipients where id=$1', [retried.recipient.id])).rows[0].status, 'uncertain');
+    await assert.rejects(control('start'), /UNCERTAIN_DELIVERY/);
+    await control('resolve_sent', retried.recipient.id);
+    await control('start');
+    const third = await claim();
+    assert.notEqual(third.recipient.id, retried.recipient.id);
+    await finish(third); assert.equal(await claim(), null);
+    assert.equal((await db.query('select status from mail_merge_campaigns where id=$1', [id])).rows[0].status, 'completed');
+    assert.equal((await db.query("select count(*)::int n from mail_merge_recipients where status='sent'")).rows[0].n, 3);
+    const permissions = (await db.query("select has_table_privilege('anon','mail_merge_campaigns','select') a,has_table_privilege('authenticated','mail_merge_campaigns','select') b,has_function_privilege('anon','claim_mail_merge(uuid,text)','execute') c,has_function_privilege('service_role','claim_mail_merge(uuid,text)','execute') s")).rows[0];
+    assert.deepEqual(permissions, { a: false, b: false, c: false, s: true });
+  } finally { await db.close(); }
+});

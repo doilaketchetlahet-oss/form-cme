@@ -14,6 +14,7 @@ const PAGES = [
   { label: "Chiến dịch email", href: "/admin/campaigns", icon: Send },
   { label: "Phân quyền", href: "/admin/permissions", icon: ShieldCheck },
   { label: "Bốc thăm gian hàng", href: "/admin/tools/booth-draw", icon: Dices },
+  { label: "Gửi mail theo trường (SMTP)", href: "/admin/tools/mail-merge", icon: Mail },
   { label: "Thư viện game", href: "/games", icon: Gamepad2 },
   { label: "Trò chơi hợp lực (Lắc điện thoại)", href: "/admin/tools/flap", icon: Activity },
   { label: "Trao lời chúc, nhận yêu thương", href: "/admin/tools/wish-wall", icon: HeartHandshake },

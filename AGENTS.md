@@ -51,6 +51,9 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - `EMAIL_PROVIDER` (optional; `resend` default or `smtp`)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`,
   `SMTP_FROM` (when `EMAIL_PROVIDER=smtp`)
+- `MAIL_MERGE_ENCRYPTION_KEY` (optional stable secret for standalone SMTP
+  accounts; defaults to the server-only service-role key. Changing the selected
+  encryption key requires re-entering saved SMTP passwords.)
 - `CRON_SECRET` (optional; protects `/api/cron/email-campaigns`)
 - `SUPABASE_DB_URL` (optional after setup; needed by `/admin/permissions` to
   bootstrap role tables and policies from the UI)
@@ -95,6 +98,35 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `SUPABASE_SERVICE_ROLE_KEY` is required for the new check-in API.
 - Regression: `node --test scripts/test-checkin-sessions.cjs`; optional real
   PostgreSQL/React checks are documented at the top of that script.
+
+## Standalone SMTP mail merge
+
+- `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
+  separated list. The first row supplies column names; Excel reads the first
+  sheet and preserves formatted cell text. Up to 5,000 recipients / 60 columns.
+- Select the email column. Other columns become insertion fields such as
+  `{{ho_ten}}`, `{{truong}}`; duplicate column labels receive unique keys.
+  Compose headings, paragraphs, images, buttons or dividers, then preview each
+  row, configure a private SMTP account, verify the connection and send a test.
+- `/api/admin/mail-merge` requires a writable admin. Campaigns are scoped to the
+  creating account and use separate `mail_merge_campaigns` / `mail_merge_recipients`
+  tables, with no survey/registration/check-in links. Passwords use AES-256-GCM
+  encryption with owner binding; API responses never return encrypted/plain secrets.
+- Save before sending. Keep the tab open; it drains one SMTP message per request.
+  SQL claims serialize across tabs/devices, freeze lists after sending begins,
+  and preserve per-recipient progress. SMTP acceptance means `sent`, not delivery.
+  Connection loss with unclear acceptance pauses for operator review; stale claims
+  become `uncertain` after 3 minutes and are never automatically resent.
+- SMTP uses the entered account (TLS or mandatory STARTTLS), independently of
+  `EMAIL_PROVIDER` and the existing check-in sender. Public DNS/IP checks prevent
+  the custom host from accessing LAN/metadata endpoints. No real test messages
+  should be sent during development without a user-specified recipient.
+- Run `supabase/mail-merge.sql` on existing installs; fresh `schema.sql` includes
+  the same tables/RPCs. RLS and revoked browser privileges keep credentials private.
+- Regression: `node --test scripts/test-mail-merge.cjs`; optional SQL dependency
+  setup is documented there. `node scripts/test-mail-merge-ui.cjs` exercises XLSX,
+  field insertion, preview, SMTP form and mobile layout against mocked APIs
+  (requires Playwright; its dependency directory can be set via `MAIL_MERGE_UI_DEPS`).
 
 ## Tools & mini-games (added)
 
