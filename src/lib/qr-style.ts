@@ -1,6 +1,6 @@
 import type { QRBranding } from "@/lib/surveys";
 
-export const QR_STYLE_VERSION = "ocean-logo-v2";
+export const QR_STYLE_VERSION = "ocean-logo-v3";
 
 function cleanHex(value: string | undefined, fallback: string) {
   if (!value) return fallback;
