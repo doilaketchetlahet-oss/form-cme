@@ -1,6 +1,6 @@
 export type MergeColumn = { key: string; label: string };
 export type MergeSourceRow = { sourceRow: number; fields: Record<string, string> };
-export type MergeBlock = { id: string; type: "heading" | "text" | "image" | "button" | "divider"; text: string; url: string };
+export type MergeBlock = { id: string; type: "heading" | "text" | "image" | "button" | "divider"; text: string; url: string; format?: "plain" | "markdown" };
 export type MergeTemplate = { columns: MergeColumn[]; emailColumn: string; subject: string; blocks: MergeBlock[] };
 export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string };
 export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null };
@@ -69,6 +69,54 @@ export function replaceMergeTokens(template: string, fields: Record<string, stri
   return template.replace(tokenPattern, (token, key: string) => Object.hasOwn(fields, key) ? fields[key] : token);
 }
 
+/** Expand selections across a merge token so formatting never splits its key. */
+export function toggleMergeBold(source: string, start: number, end: number, formatted = false) {
+  start = Math.max(0, Math.min(start, source.length)); end = Math.max(start, Math.min(end, source.length));
+  if (start === end) return null;
+  for (const match of source.matchAll(tokenPattern)) {
+    const tokenEnd = match.index + match[0].length;
+    if (start < tokenEnd && end > match.index) { start = Math.min(start, match.index); end = Math.max(end, tokenEnd); }
+  }
+  const characters: { value: string; position: number; bold: boolean }[] = [];
+  const append = (value: string, position: number, bold: boolean) => {
+    for (let i = 0; i < value.length; i++) characters.push({ value: value[i], position: position + i, bold });
+  };
+  let position = 0;
+  if (formatted) for (const match of source.matchAll(/\*\*([\s\S]+?)\*\*/g)) {
+    append(source.slice(position, match.index), position, false);
+    append(match[1], match.index + 2, true);
+    position = match.index + match[0].length;
+  }
+  append(source.slice(position), position, false);
+  const selected = characters.filter((char) => char.position >= start && char.position < end);
+  if (!selected.length) return null;
+  const bold = !selected.every((char) => char.bold);
+  // Flatten overlapping selections instead of producing nested ** markers.
+  let text = "", activeBold = false, selectionStart = -1, selectionEnd = -1;
+  for (const char of characters) {
+    const chosen = char.position >= start && char.position < end;
+    const nextBold = chosen ? bold : char.bold;
+    if (activeBold !== nextBold) { text += "**"; activeBold = nextBold; }
+    if (chosen && selectionStart === -1) selectionStart = text.length;
+    text += char.value;
+    if (chosen) selectionEnd = text.length;
+  }
+  if (activeBold) text += "**";
+  return { text, start: selectionStart, end: selectionEnd };
+}
+
+function mergeTextParts(source: string, formatted: boolean) {
+  if (!formatted) return [{ text: source, bold: false }];
+  const parts: { text: string; bold: boolean }[] = [];
+  let position = 0;
+  for (const match of source.matchAll(/\*\*([\s\S]+?)\*\*/g)) {
+    parts.push({ text: source.slice(position, match.index), bold: false }, { text: match[1], bold: true });
+    position = match.index + match[0].length;
+  }
+  parts.push({ text: source.slice(position), bold: false });
+  return parts;
+}
+
 export function validateMergeTemplate(input: unknown): string | null {
   if (!input || typeof input !== "object") return "Mẫu thư không hợp lệ.";
   const template = input as MergeTemplate;
@@ -84,7 +132,8 @@ export function validateMergeTemplate(input: unknown): string | null {
   const ids = new Set<string>();
   for (const block of template.blocks) {
     if (!block || typeof block.id !== "string" || !block.id || ids.has(block.id) || !["heading", "text", "image", "button", "divider"].includes(block.type)
-      || typeof block.text !== "string" || block.text.length > 20000 || typeof block.url !== "string" || block.url.length > 4000) return "Khối nội dung không hợp lệ.";
+      || typeof block.text !== "string" || block.text.length > 20000 || typeof block.url !== "string" || block.url.length > 4000
+      || block.format !== undefined && !["plain", "markdown"].includes(block.format)) return "Khối nội dung không hợp lệ.";
     ids.add(block.id);
     if ((block.type === "button" || block.type === "image") && !block.url.trim()) return "Nhập liên kết cho hình ảnh / nút bấm.";
   }
@@ -102,9 +151,14 @@ export function renderMergeMail(template: MergeTemplate, fields: Record<string, 
   if (!subject || subject.length > 998) throw new Error("Tiêu đề sau khi chèn trường quá dài hoặc trống.");
   const paragraphs: string[] = [];
   const parts = template.blocks.map((block) => {
-    const text = replaceMergeTokens(block.text, fields);
+    // Interpret only the author's formatting, before substituting spreadsheet data.
+    const segments = mergeTextParts(block.text, block.format === "markdown").map((part) => ({ ...part, text: replaceMergeTokens(part.text, fields) }));
+    const text = segments.map((part) => part.text).join("");
     const url = replaceMergeTokens(block.url, fields).trim();
-    const safeText = htmlEscape(text).replace(/\r?\n/g, "<br />");
+    const safeText = segments.map((part) => {
+      const escaped = htmlEscape(part.text).replace(/\r?\n/g, "<br />");
+      return part.bold ? `<strong style="font-weight:700">${escaped}</strong>` : escaped;
+    }).join("");
     if (block.type === "divider") return '<hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0" />';
     if (block.type === "image" || block.type === "button") {
       let parsed: URL;

@@ -108,6 +108,15 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `{{ho_ten}}`, `{{truong}}`; duplicate column labels receive unique keys.
   Compose headings, paragraphs, images, buttons or dividers, then preview each
   row, configure a private SMTP account, verify the connection and send a test.
+- The recipient section can edit each imported cell while the campaign is a
+  draft; preview and email validation update immediately. Save edits before sending.
+  The send button is always visible, and is enabled after saving valid data.
+- In text/heading/button blocks, select content and press **In đậm** or Ctrl+B
+  (Cmd+B on Mac) to toggle bold; selections never split a merge placeholder.
+  The block's optional `format: "markdown"` interprets only `**bold**` authored
+  in the template, before inserting escaped cell values. Older blocks without
+  this flag retain their plain text, including literal asterisks. Both preview
+  and SMTP use the same renderer; plain-text mail omits formatting markers.
 - `/api/admin/mail-merge` requires a writable admin. Campaigns are scoped to the
   creating account and use separate `mail_merge_campaigns` / `mail_merge_recipients`
   tables, with no survey/registration/check-in links. Passwords use AES-256-GCM

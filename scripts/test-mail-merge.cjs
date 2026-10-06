@@ -60,6 +60,29 @@ test('validation catches unknown fields, malformed templates and skips invalid/d
   assert.throws(() => merge.prepareMergeRecipients(template, [{ ...table.rows[0], sourceRow: -1 }]), /không hợp lệ/);
 });
 
+test('bold formatting preserves old plain templates and styles merged values without interpreting recipient data', () => {
+  const plain = { ...template, blocks: [{ id: 'body', type: 'text', text: 'Kính gửi **{{ho_ten}}**\n{{truong}}', url: '' }] };
+  const legacy = merge.renderMergeMail(plain, table.rows[0].fields);
+  assert.ok(legacy.html.includes('**Nguyễn An**'));
+  assert.ok(!legacy.html.includes('<strong'));
+  const formatted = { ...plain, blocks: [{ ...plain.blocks[0], format: 'markdown' }] };
+  assert.equal(merge.validateMergeTemplate(formatted), null);
+  const rendered = merge.renderMergeMail(formatted, { ...table.rows[0].fields, ho_ten: '<img src=x> **khách**', truong: '**Dữ liệu nguyên văn**' });
+  assert.ok(rendered.html.includes('<strong style="font-weight:700">&lt;img src=x&gt; **khách**</strong>'));
+  assert.ok(rendered.html.includes('<br />**Dữ liệu nguyên văn**'));
+  assert.equal(rendered.text, 'Kính gửi <img src=x> **khách**\n**Dữ liệu nguyên văn**');
+  assert.ok(!rendered.html.includes('<img src=x>'));
+  assert.match(merge.validateMergeTemplate({ ...plain, blocks: [{ ...plain.blocks[0], format: 'html' }] }), /không hợp lệ/);
+  assert.equal(merge.toggleMergeBold('Nội dung', 0, 0), null);
+  const source = 'Kính gửi {{ho_ten}}, hẹn gặp.';
+  const bold = merge.toggleMergeBold(source, source.indexOf('ho_ten'), source.indexOf('ho_ten') + 3);
+  assert.equal(bold.text, 'Kính gửi **{{ho_ten}}**, hẹn gặp.');
+  assert.equal(merge.toggleMergeBold(bold.text, bold.start, bold.end, true).text, source);
+  assert.equal(merge.toggleMergeBold('**Đoạn văn**', 0, '**Đoạn văn**'.length, true).text, 'Đoạn văn');
+  assert.equal(merge.toggleMergeBold('**A** B', 0, '**A** B'.length, true).text, '**A B**');
+  assert.equal(merge.toggleMergeBold('**abcde**', 3, 5, true).text, '**a**bc**de**');
+});
+
 test('fresh schema includes the same independent mail merge migration', () => {
   const normalize = (value) => value.replace(/\r\n/g, '\n').trim();
   assert.ok(normalize(readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8')).includes(normalize(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8'))));
@@ -122,7 +145,7 @@ function apiHarness() {
     async rpc(name, args) {
       calls.push({ name, args });
       if (reject) return { data: null, error: reject };
-      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
+      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
       if (name === 'control_mail_merge') return { data: stored.status, error: null };
       return { data: name === 'save_mail_merge' ? id : true, error: null };
     },
@@ -156,11 +179,14 @@ test('mail API requires writable admins, omits stored passwords and validates be
 
 test('sending API claims atomically, uses a single recipient and records acceptance with the claim token', async () => {
   const api = apiHarness();
+  api.stored.template = { ...template, blocks: [{ ...template.blocks[0], format: 'markdown', text: 'Kính gửi **{{ho_ten}}**\n{{truong}}' }] };
   assert.equal((await api.post({ action: 'process' })).status, 200);
   assert.equal((await api.post({ action: 'process' })).status, 200);
   assert.equal(api.sends.length, 1);
   assert.equal(api.sends[0].mail.to, 'an@example.test');
   assert.equal(api.sends[0].mail.subject, 'Gửi Nguyễn An tại Đại học A');
+  assert.ok(api.sends[0].mail.html.includes('<strong style="font-weight:700">Nguyễn An</strong>'));
+  assert.equal(api.sends[0].mail.text, 'Kính gửi Nguyễn An\nĐại học A');
   assert.ok(!api.sends[0].mail.html.includes('/checkin/'));
   const finish = api.calls.find((call) => call.name === 'finish_mail_merge');
   assert.equal(finish.args.p_owner, owner); assert.equal(finish.args.p_status, 'sent'); assert.ok(finish.args.p_attempt);
