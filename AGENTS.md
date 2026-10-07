@@ -111,6 +111,10 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - The recipient section can edit each imported cell while the campaign is a
   draft; preview and email validation update immediately. Save edits before sending.
   The send button is always visible, and is enabled after saving valid data.
+- A campaign can upload shared files (up to 10 files, 10MB each and 20MB total)
+  and can attach a personalized invitation card rendered from the existing
+  overlay editor as a JPG, PDF, or both. Each row is rendered server-side before
+  its SMTP request; the sender never passes remote URLs or file paths to Nodemailer.
 - In text/heading/button blocks, select content and press **In đậm** or Ctrl+B
   (Cmd+B on Mac) to toggle bold; selections never split a merge placeholder.
   The block's optional `format: "markdown"` interprets only `**bold**` authored
@@ -130,6 +134,11 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `EMAIL_PROVIDER` and the existing check-in sender. Public DNS/IP checks prevent
   the custom host from accessing LAN/metadata endpoints. No real test messages
   should be sent during development without a user-specified recipient.
+- **Theo dõi mở thư** adds an opaque per-recipient image URL at
+  `/api/mail-merge/open/[id]`; the server stores only a token digest and exposes
+  the first-open timestamp/count in the campaign table. Tracking can be disabled
+  per campaign, and image blocking or privacy prefetching can make the metric
+  incomplete.
 - Run `supabase/mail-merge.sql` on existing installs; fresh `schema.sql` includes
   the same tables/RPCs. RLS and revoked browser privileges keep credentials private.
 - Regression: `node --test scripts/test-mail-merge.cjs`; optional SQL dependency

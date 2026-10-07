@@ -1,10 +1,22 @@
+import type { EmailOverlay } from "@/lib/email-template";
+
 export type MergeColumn = { key: string; label: string };
 export type MergeSourceRow = { sourceRow: number; fields: Record<string, string> };
+export type MergeAttachment = { id: string; name: string; url: string; size?: number; type?: string };
 export type MergeBlock = { id: string; type: "heading" | "text" | "image" | "button" | "divider"; text: string; url: string; format?: "plain" | "markdown" };
-export type MergeTemplate = { columns: MergeColumn[]; emailColumn: string; subject: string; blocks: MergeBlock[] };
+export type MergeTemplate = {
+  columns: MergeColumn[];
+  emailColumn: string;
+  subject: string;
+  blocks: MergeBlock[];
+  attachments?: MergeAttachment[];
+  card?: EmailOverlay | null;
+  cardAttachment?: "none" | "jpg" | "pdf" | "both";
+  trackingEnabled?: boolean;
+};
 export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string };
-export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null };
-export type MergeCampaign = { id: string; name: string; template: MergeTemplate; smtp_public: Omit<SmtpAccount, "password"> | null; hasPassword: boolean; status: "draft" | "running" | "paused" | "completed"; created_at: string; recipients?: MergeRecipient[] };
+export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null; opened_at?: string | null; open_count?: number; last_opened_at?: string | null };
+export type MergeCampaign = { id: string; name: string; template: MergeTemplate; smtp_public: Omit<SmtpAccount, "password"> | null; hasPassword: boolean; status: "draft" | "running" | "paused" | "completed"; created_at: string; recipients?: MergeRecipient[]; tracking?: { sent: number; opened: number } };
 
 export const MAX_MERGE_ROWS = 5000;
 export const MAX_MERGE_COLUMNS = 60;
@@ -127,6 +139,32 @@ export function validateMergeTemplate(input: unknown): string | null {
     keys.add(column.key);
   }
   if (!keys.has(template.emailColumn)) return "Chọn cột chứa địa chỉ Email.";
+  if (template.trackingEnabled !== undefined && typeof template.trackingEnabled !== "boolean") return "Cấu hình tracking không hợp lệ.";
+  if (template.cardAttachment !== undefined && !["none", "jpg", "pdf", "both"].includes(template.cardAttachment)) return "Cấu hình thiệp đính kèm không hợp lệ.";
+  if (template.attachments !== undefined) {
+    if (!Array.isArray(template.attachments) || template.attachments.length > 10) return "Tối đa 10 file đính kèm.";
+    let total = 0;
+    for (const attachment of template.attachments) {
+      if (!attachment || typeof attachment.id !== "string" || !attachment.id || typeof attachment.name !== "string" || !attachment.name.trim()
+        || attachment.name.length > 160 || /[\r\n]/.test(attachment.name) || typeof attachment.url !== "string" || attachment.url.length > 2048) return "File đính kèm không hợp lệ.";
+      let url: URL;
+      try { url = new URL(attachment.url); } catch { return "URL file đính kèm không hợp lệ."; }
+      if (!["https:", "http:"].includes(url.protocol) || Number(attachment.size) > 10 * 1024 * 1024) return "File đính kèm chỉ dùng HTTP/HTTPS và tối đa 10MB mỗi file.";
+      total += Math.max(0, Number(attachment.size) || 0);
+    }
+    if (total > 20 * 1024 * 1024) return "Tổng file đính kèm tối đa 20MB.";
+  }
+  if (template.card !== undefined && template.card !== null) {
+    if (typeof template.card.imageUrl !== "string" || template.card.imageUrl.length > 2048) return "Ảnh thiệp không hợp lệ.";
+    try { const url = new URL(template.card.imageUrl); if (!["https:", "http:"].includes(url.protocol)) return "Ảnh thiệp cần dùng HTTP/HTTPS."; } catch { return "Ảnh thiệp không hợp lệ."; }
+    if (!Array.isArray(template.card.fields) || template.card.fields.length > 40 || !Number.isFinite(template.card.width) || !Number.isFinite(template.card.height)) return "Thiệp cá nhân hóa không hợp lệ.";
+    for (const field of template.card.fields) {
+      if (!field || typeof field.id !== "string" || typeof field.token !== "string" || !/^\{\{[a-zA-Z0-9_]+\}\}$/.test(field.token)
+        || !Number.isFinite(field.x) || !Number.isFinite(field.y) || !Number.isFinite(field.w) || !Number.isFinite(field.h)) return "Vị trí trường trên thiệp không hợp lệ.";
+      const key = field.token.slice(2, -2);
+      if (!keys.has(key) && !["name", "email", "hall", "survey_title", "checkin_url", "qr_image", "qr_url"].includes(key)) return `Trường thiệp {{${key}}} không có trong danh sách import.`;
+    }
+  }
   if (typeof template.subject !== "string" || !template.subject.trim() || template.subject.length > 500 || /[\r\n]/.test(template.subject)) return "Tiêu đề cần từ 1 đến 500 ký tự và chỉ một dòng.";
   if (!Array.isArray(template.blocks) || !template.blocks.length || template.blocks.length > 50) return "Cần từ 1 đến 50 khối nội dung.";
   const ids = new Set<string>();
@@ -146,7 +184,7 @@ export function validateMergeTemplate(input: unknown): string | null {
   return null;
 }
 
-export function renderMergeMail(template: MergeTemplate, fields: Record<string, string>) {
+export function renderMergeMail(template: MergeTemplate, fields: Record<string, string>, options: { cardUrl?: string; trackingPixelUrl?: string } = {}) {
   const subject = replaceMergeTokens(template.subject, fields).replace(/[\r\n]+/g, " ").trim();
   if (!subject || subject.length > 998) throw new Error("Tiêu đề sau khi chèn trường quá dài hoặc trống.");
   const paragraphs: string[] = [];
@@ -171,7 +209,10 @@ export function renderMergeMail(template: MergeTemplate, fields: Record<string, 
     paragraphs.push(text);
     return block.type === "heading" ? `<h2 style="font-size:24px;color:#0f172a;margin:0 0 16px">${safeText}</h2>` : `<p style="margin:0 0 16px;line-height:1.7">${safeText}</p>`;
   });
-  return { subject, text: paragraphs.join("\n\n"), html: `<div style="background:#f1f5f9;padding:24px 12px"><div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;font-family:Arial,Helvetica,sans-serif;color:#334155">${parts.join("")}</div></div>` };
+  const cardUrl = options.cardUrl || template.card?.imageUrl;
+  const card = cardUrl ? `<p style="margin:0 0 20px"><img src="${htmlEscape(cardUrl)}" alt="Thiệp mời" width="640" style="width:100%;max-width:640px;height:auto;display:block;border:0" /></p>` : "";
+  const tracking = options.trackingPixelUrl ? `<img src="${htmlEscape(options.trackingPixelUrl)}" alt="" width="1" height="1" style="display:block;width:1px;height:1px;border:0" />` : "";
+  return { subject, text: paragraphs.join("\n\n"), html: `<div style="background:#f1f5f9;padding:24px 12px"><div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;font-family:Arial,Helvetica,sans-serif;color:#334155">${card}${parts.join("")}${tracking}</div></div>` };
 }
 
 export function prepareMergeRecipients(template: MergeTemplate, rows: MergeSourceRow[]) {

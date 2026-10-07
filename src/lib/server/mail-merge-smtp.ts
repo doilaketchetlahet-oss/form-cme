@@ -74,12 +74,21 @@ export function smtpErrorOutcome(error: unknown): { status: "failed" | "uncertai
   return { status, error: message };
 }
 
+/** Attachments are built server-side from validated buffers. File paths and
+ * remote URLs are deliberately never accepted by the mail-merge sender. */
+export type MergeSmtpAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+  cid?: string;
+};
+
 export async function verifyMergeSmtp(account: SmtpAccount) {
   const transport = await smtpTransport(account);
   try { await transport.verify(); } finally { transport.close(); }
 }
 
-export async function sendMergeSmtp(account: SmtpAccount, email: { to: string; subject: string; html: string; text: string }) {
+export async function sendMergeSmtp(account: SmtpAccount, email: { to: string; subject: string; html: string; text: string; attachments?: MergeSmtpAttachment[] }) {
   let transport: Awaited<ReturnType<typeof smtpTransport>>;
   try { transport = await smtpTransport(account); } catch { return { status: "failed" as const, error: "Không kết nối được SMTP. Kiểm tra máy chủ, tài khoản và TLS." }; }
   try {

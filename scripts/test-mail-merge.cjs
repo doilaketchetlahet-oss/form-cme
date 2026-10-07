@@ -17,6 +17,7 @@ function loadSource(file, mocks = {}) {
   return module.exports;
 }
 const merge = loadSource('src/lib/mail-merge.ts');
+const tracking = loadSource('src/lib/server/mail-merge-tracking.ts');
 const table = merge.mergeTable(merge.parseMergeText('Email\tHọ tên\tTrường\r\nan@example.test\tNguyễn An\tĐại học A\r\nbinh@example.test\tTrần Bình\tĐại học B'));
 const template = { columns: table.columns, emailColumn: table.emailColumn, subject: 'Gửi {{ho_ten}} tại {{truong}}', blocks: [{ id: 'body', type: 'text', text: 'Kính gửi {{ho_ten}}\n{{truong}}', url: '' }] };
 const account = { host: 'smtp.example.test', port: 587, secure: false, user: 'user', password: 'test-only-secret', fromEmail: 'sender@example.test', fromName: 'Ban tổ chức', replyTo: '' };
@@ -44,6 +45,42 @@ test('merge render personalizes each row, escapes spreadsheet HTML and does not 
   assert.equal(merge.renderMergeMail(template, { ...table.rows[0].fields, ho_ten: 'A\r\nB' }).subject, 'Gửi A B tại Đại học A');
   assert.throws(() => merge.renderMergeMail({ ...template, blocks: [{ id: 'link', type: 'button', text: 'Mở', url: '{{truong}}' }] }, { ...table.rows[0].fields, truong: 'javascript:alert(1)' }), /HTTP/);
   assert.throws(() => merge.renderMergeMail({ ...template, blocks: [{ id: 'img', type: 'image', text: 'Ảnh', url: 'file:///etc/passwd' }] }, table.rows[0].fields), /HTTP/);
+});
+
+test('open tracking uses an opaque token, embeds no recipient data, and renders a 1px pixel only when enabled', () => {
+  const token = 'a'.repeat(64);
+  const hash = tracking.hashMailMergeOpenToken(token);
+  assert.match(hash, /^[a-f0-9]{32}$/);
+  assert.notEqual(hash, tracking.hashMailMergeOpenToken('b'.repeat(64)));
+  const pixelUrl = 'https://mail.example.test/api/mail-merge/open/00000000-0000-4000-8000-000000000000?token=' + token;
+  const rendered = merge.renderMergeMail(template, table.rows[0].fields, { trackingPixelUrl: pixelUrl });
+  assert.ok(rendered.html.includes('width="1" height="1"'));
+  assert.ok(rendered.html.includes('mail.example.test'));
+  assert.ok(!rendered.text.includes('mail.example.test'));
+  assert.ok(!merge.renderMergeMail(template, table.rows[0].fields).html.includes('mail-merge/open'));
+  assert.ok(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8').includes('record_mail_merge_open'));
+  assert.ok(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8').includes('open_token_hash'));
+});
+
+test('open tracking route always returns a cache-free pixel and records only a token digest', async () => {
+  const calls = [];
+  const previousServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only-service-key';
+  const openRoute = loadSource('src/app/api/mail-merge/open/[id]/route.ts', {
+    '@/lib/server/supabase-admin': { createSupabaseAdmin: () => ({ rpc: async (name, args) => { calls.push({ name, args }); return { data: true, error: null }; } }) },
+    '@/lib/server/mail-merge-tracking': tracking,
+  });
+  const token = 'a'.repeat(64);
+  const valid = await openRoute.GET(new Request(`https://example.test/api/mail-merge/open/00000000-0000-4000-8000-000000000000?token=${token}`), { params: Promise.resolve({ id: '00000000-0000-4000-8000-000000000000' }) });
+  assert.equal(valid.status, 200);
+  assert.equal(valid.headers.get('content-type'), 'image/gif');
+  assert.match(valid.headers.get('cache-control') || '', /no-store/);
+  assert.equal(calls[0].name, 'record_mail_merge_open');
+  assert.equal(calls[0].args.p_token_hash, tracking.hashMailMergeOpenToken(token));
+  const invalid = await openRoute.GET(new Request('https://example.test/api/mail-merge/open/nope?token=x'), { params: Promise.resolve({ id: 'nope' }) });
+  assert.equal(invalid.status, 200); assert.equal(calls.length, 1);
+  if (previousServiceKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = previousServiceKey;
 });
 
 test('validation catches unknown fields, malformed templates and skips invalid/duplicate recipients', () => {
@@ -119,6 +156,9 @@ test('SMTP resolves only public addresses, requires TLS and treats an uncertain 
   const { options, sent, closes } = h.info();
   assert.equal(options.host, '8.8.8.8'); assert.equal(options.tls.servername, account.host); assert.equal(options.requireTLS, true);
   assert.equal(sent.disableFileAccess, true); assert.equal(sent.disableUrlAccess, true); assert.equal(closes, 1);
+  const attachmentMail = { ...mail, attachments: [{ filename: 'invite.pdf', content: Buffer.from('test-pdf'), contentType: 'application/pdf' }] };
+  assert.equal((await h.smtp.sendMergeSmtp(account, attachmentMail)).status, 'sent');
+  assert.equal(h.info().sent.attachments[0].filename, 'invite.pdf');
   h.failClose();
   assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'sent');
   h.fail({ code: 'ETIMEDOUT', command: 'DATA' });
@@ -134,7 +174,7 @@ test('SMTP resolves only public addresses, requires TLS and treats an uncertain 
 function apiHarness() {
   const id = randomUUID(), recipient = randomUUID(), attempt = randomUUID();
   const stored = { id, owner_email: owner, name: 'Mail merge', template, smtp_public: { ...account, password: undefined }, smtp_secret: 'encrypted-test', status: 'running' };
-  let authError = null, sends = [], calls = [], claimed = false, reject = null, sendError = false;
+  let authError = null, sends = [], calls = [], attachmentCalls = [], claimed = false, reject = null, sendError = false;
   const service = {
     from(tableName) {
       const query = { select(columns) { query.columns = columns; return query; }, eq(key, value) { if (key === 'owner_email') assert.equal(value, owner); return query; }, order() { return query; }, limit() { return query; }, range() { return query; },
@@ -145,7 +185,7 @@ function apiHarness() {
     async rpc(name, args) {
       calls.push({ name, args });
       if (reject) return { data: null, error: reject };
-      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
+      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, open_token: 'a'.repeat(64), template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
       if (name === 'control_mail_merge') return { data: stored.status, error: null };
       return { data: name === 'save_mail_merge' ? id : true, error: null };
     },
@@ -155,8 +195,9 @@ function apiHarness() {
     '@/lib/server/admin-api': { authorizeAdminApi: async (_request, writable) => { assert.equal(writable, true); return authError || { email: owner, service }; } },
     '@/lib/server/mail-merge-smtp': { validateSmtpAccount: (value) => value, decryptSmtpPassword: () => account.password, encryptSmtpPassword: () => 'ciphertext-test', verifyMergeSmtp: async () => true,
       sendMergeSmtp: async (smtp, mail) => { sends.push({ smtp, mail }); if (sendError) throw new Error('test unexpected transport failure'); return { status: 'sent', messageId: 'test-id' }; } },
+    '@/lib/server/mail-merge-attachments': { resolveMailMergeTemplateAttachments: async (value, fields) => { attachmentCalls.push({ value, fields }); return [{ filename: 'invite.pdf', content: Buffer.from('pdf'), contentType: 'application/pdf' }]; } },
   });
-  return { id, calls, sends, stored, deny: () => { authError = { error: 'Denied', status: 403 }; }, reject: (e) => { reject = e; }, failSend: () => { sendError = true; },
+  return { id, calls, sends, attachmentCalls, stored, deny: () => { authError = { error: 'Denied', status: 403 }; }, reject: (e) => { reject = e; }, failSend: () => { sendError = true; },
     post: (data) => route.POST(new Request('https://example.test/api/admin/mail-merge', { method: 'POST', body: JSON.stringify({ id, ...data }) })),
     get: () => route.GET(new Request(`https://example.test/api/admin/mail-merge?id=${id}`)),
   };
@@ -185,7 +226,10 @@ test('sending API claims atomically, uses a single recipient and records accepta
   assert.equal(api.sends.length, 1);
   assert.equal(api.sends[0].mail.to, 'an@example.test');
   assert.equal(api.sends[0].mail.subject, 'Gửi Nguyễn An tại Đại học A');
+  assert.equal(api.sends[0].mail.attachments[0].filename, 'invite.pdf');
+  assert.equal(api.attachmentCalls.length, 1);
   assert.ok(api.sends[0].mail.html.includes('<strong style="font-weight:700">Nguyễn An</strong>'));
+  assert.ok(api.sends[0].mail.html.includes('/api/mail-merge/open/'));
   assert.equal(api.sends[0].mail.text, 'Kính gửi Nguyễn An\nĐại học A');
   assert.ok(!api.sends[0].mail.html.includes('/checkin/'));
   const finish = api.calls.find((call) => call.name === 'finish_mail_merge');
@@ -225,6 +269,11 @@ test('PostgreSQL queue is repeatable, owner isolated, atomic across tabs and nev
     assert.equal(simultaneous[0].smtp_secret, 'ciphertext-only');
     assert.equal(await finish(simultaneous[0], 'sent', randomUUID()), false);
     assert.equal(await finish(simultaneous[0]), true);
+    assert.match(simultaneous[0].open_token, /^[a-f0-9]{64}$/);
+    const openHash = tracking.hashMailMergeOpenToken(simultaneous[0].open_token);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [simultaneous[0].recipient.id, openHash])).rows[0].result, true);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [simultaneous[0].recipient.id, openHash])).rows[0].result, true);
+    assert.deepEqual((await db.query('select open_count,opened_at is not null opened from mail_merge_recipients where id=$1', [simultaneous[0].recipient.id])).rows[0], { open_count: 1, opened: true });
     assert.equal(await finish(simultaneous[0]), false);
     await assert.rejects(save(), /LOCKED_CAMPAIGN/);
     const second = await claim();

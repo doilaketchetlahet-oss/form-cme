@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizeAdminApi } from "@/lib/server/admin-api";
 import { isMergeEmail, prepareMergeRecipients, renderMergeMail, validateMergeTemplate, type MergeSourceRow, type MergeTemplate, type SmtpAccount } from "@/lib/mail-merge";
 import { decryptSmtpPassword, encryptSmtpPassword, sendMergeSmtp, validateSmtpAccount, verifyMergeSmtp } from "@/lib/server/mail-merge-smtp";
+import { resolveMailMergeTemplateAttachments } from "@/lib/server/mail-merge-attachments";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ const PUBLIC_COLUMNS = "id,name,template,smtp_public,status,created_at";
 type StoredCampaign = { id: string; owner_email: string; template: MergeTemplate; smtp_public: Omit<SmtpAccount, "password">; smtp_secret: string; status: string };
 
 function databaseError(error: { code?: string; message?: string }) {
-  if (["42P01", "PGRST205", "PGRST202"].includes(error.code ?? "")) return "Chạy supabase/mail-merge.sql để khởi tạo tool gửi thư.";
+  if (["42P01", "42703", "PGRST205", "PGRST202"].includes(error.code ?? "")) return "Chạy supabase/mail-merge.sql để khởi tạo hoặc cập nhật tool gửi thư.";
   if (error.message?.includes("LOCKED_CAMPAIGN")) return "Chiến dịch đã bắt đầu. Tạo chiến dịch mới để đổi nội dung / danh sách.";
   if (error.message?.includes("UNCERTAIN_DELIVERY")) return "Có thư chưa rõ kết quả. Kiểm tra và xử lý các dòng này trước khi tiếp tục.";
   if (error.message?.includes("EMPTY_QUEUE")) return "Không còn thư đang chờ gửi.";
@@ -43,12 +44,14 @@ export async function GET(request: Request) {
   if (refreshed.error) return NextResponse.json({ ok: false, error: databaseError(refreshed.error) }, { status: 503 });
   const recipients = [];
   for (let start = 0; start < 5000; start += 500) {
-    const result = await auth.service.from("mail_merge_recipients").select("id,source_row,email,fields,status,last_error,sent_at").eq("campaign_id", id).order("source_row").range(start, start + 499);
+    const result = await auth.service.from("mail_merge_recipients").select("id,source_row,email,fields,status,last_error,sent_at,opened_at,open_count,last_opened_at").eq("campaign_id", id).order("source_row").range(start, start + 499);
     if (result.error) return NextResponse.json({ ok: false, error: databaseError(result.error) }, { status: 503 });
     recipients.push(...(result.data ?? []).map(({ source_row, ...row }) => ({ ...row, sourceRow: source_row })));
     if ((result.data?.length ?? 0) < 500) break;
   }
-  return NextResponse.json({ ok: true, campaign: { ...campaign, status: refreshed.data, hasPassword: true, recipients } });
+  const sent = recipients.filter((row) => row.status === "sent").length;
+  const opened = recipients.filter((row) => row.opened_at).length;
+  return NextResponse.json({ ok: true, campaign: { ...campaign, status: refreshed.data, hasPassword: true, recipients, tracking: { sent, opened } } });
 }
 
 export async function POST(request: Request) {
@@ -87,7 +90,8 @@ export async function POST(request: Request) {
         const template = body.template as MergeTemplate;
         const fields = prepareMergeRecipients(template, [body.row as MergeSourceRow])[0].fields;
         const message = renderMergeMail(template, fields);
-        const result = await sendMergeSmtp(account, { ...message, subject: `[Gửi thử] ${message.subject}`, to: body.to });
+        const attachments = await resolveMailMergeTemplateAttachments(template, fields, fields.checkin_url ?? "");
+        const result = await sendMergeSmtp(account, { ...message, subject: `[Gửi thử] ${message.subject}`, to: body.to, attachments });
         if (result.status !== "sent") throw new Error(result.error);
         return NextResponse.json({ ok: true });
       }
@@ -119,14 +123,25 @@ export async function POST(request: Request) {
     if (!claim) return NextResponse.json({ ok: true, processed: false });
     const job = claim.recipient;
     let result: { status: "sent" | "failed" | "uncertain"; messageId?: string; error?: string };
-    let prepared: { account: SmtpAccount; mail: ReturnType<typeof renderMergeMail> } | undefined;
+    let prepared: { account: SmtpAccount; mail: ReturnType<typeof renderMergeMail>; attachments: Awaited<ReturnType<typeof resolveMailMergeTemplateAttachments>> } | undefined;
+    let preparationError = "";
     try {
       const account = validateSmtpAccount({ ...claim.smtp_public, password: decryptSmtpPassword(claim.smtp_secret, auth.email) });
-      prepared = { account, mail: renderMergeMail(claim.template, job.fields) };
-    } catch { /* No SMTP request has been made. */ }
-    if (!prepared) result = { status: "failed", error: "Không mở được cấu hình SMTP hoặc nội dung thư. Kiểm tra cấu hình trước khi thử lại." };
+      const rawToken = typeof claim.open_token === "string" ? claim.open_token : "";
+      if (claim.template.trackingEnabled !== false && !rawToken) throw new Error("Chưa tạo được token theo dõi mở thư. Chạy supabase/mail-merge.sql rồi thử lại.");
+      const trackingUrl = claim.template.trackingEnabled === false || !rawToken
+        ? undefined
+        : `${new URL(request.url).origin}/api/mail-merge/open/${encodeURIComponent(job.id)}?token=${encodeURIComponent(rawToken)}`;
+      const attachments = await resolveMailMergeTemplateAttachments(claim.template, job.fields, job.fields.checkin_url ?? "");
+      prepared = { account, mail: renderMergeMail(claim.template, job.fields, { trackingPixelUrl: trackingUrl }), attachments };
+    } catch (error) {
+      // No SMTP request has been made. The messages here are already bounded
+      // and user-safe (including the migration hint), never raw provider data.
+      preparationError = error instanceof Error ? error.message : "";
+    }
+    if (!prepared) result = { status: "failed", error: preparationError || "Không mở được cấu hình SMTP hoặc nội dung thư. Kiểm tra cấu hình trước khi thử lại." };
     else {
-      try { result = await sendMergeSmtp(prepared.account, { ...prepared.mail, to: job.email }); }
+      try { result = await sendMergeSmtp(prepared.account, { ...prepared.mail, to: job.email, attachments: prepared.attachments }); }
       catch { result = { status: "uncertain", error: "Chưa xác nhận kết quả SMTP. Kiểm tra hộp thư trước khi gửi lại." }; }
     }
     const finish = await auth.service.rpc("finish_mail_merge", { p_id: job.id, p_owner: auth.email, p_attempt: job.attempt_id, p_status: result.status, p_message: result.messageId ?? null, p_error: result.error ?? null });
