@@ -13,6 +13,7 @@ export type MergeTemplate = {
   card?: EmailOverlay | null;
   cardAttachment?: "none" | "jpg" | "pdf" | "both";
   trackingEnabled?: boolean;
+  duplicateEmailPolicy?: "skip" | "allow";
 };
 export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string };
 export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null; opened_at?: string | null; open_count?: number; last_opened_at?: string | null };
@@ -139,6 +140,7 @@ export function validateMergeTemplate(input: unknown): string | null {
     keys.add(column.key);
   }
   if (!keys.has(template.emailColumn)) return "Chọn cột chứa địa chỉ Email.";
+  if (template.duplicateEmailPolicy !== undefined && !["skip", "allow"].includes(template.duplicateEmailPolicy)) return "Cách xử lý Email trùng không hợp lệ.";
   if (template.trackingEnabled !== undefined && typeof template.trackingEnabled !== "boolean") return "Cấu hình tracking không hợp lệ.";
   if (template.cardAttachment !== undefined && !["none", "jpg", "pdf", "both"].includes(template.cardAttachment)) return "Cấu hình thiệp đính kèm không hợp lệ.";
   if (template.attachments !== undefined) {
@@ -229,7 +231,7 @@ export function prepareMergeRecipients(template: MergeTemplate, rows: MergeSourc
       return [key, value];
     }));
     const email = (fields[template.emailColumn] ?? "").trim().toLowerCase();
-    let error = !isMergeEmail(email) ? "Email trống / không hợp lệ" : seen.has(email) ? "Email trùng trong danh sách" : null;
+    let error = !isMergeEmail(email) ? "Email trống / không hợp lệ" : template.duplicateEmailPolicy !== "allow" && seen.has(email) ? "Email trùng trong danh sách" : null;
     if (!error) { seen.add(email); try { renderMergeMail(template, fields); } catch (cause) { error = cause instanceof Error ? cause.message : "Không tạo được thư"; } }
     return { source_row: row.sourceRow, fields, email, status: error ? "skipped" : "pending", last_error: error };
   });

@@ -108,6 +108,12 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `{{ho_ten}}`, `{{truong}}`; duplicate column labels receive unique keys.
   Compose headings, paragraphs, images, buttons or dividers, then preview each
   row, configure a private SMTP account, verify the connection and send a test.
+- **Xử lý Email trùng** defaults to skipping duplicate addresses (also for old
+  templates without `duplicateEmailPolicy`). Drafts can select **Gửi riêng từng
+  dòng** (`duplicateEmailPolicy: "allow"`) so one speaker with multiple reports
+  gets a separate personalized email/card per row. Save after switching modes.
+  Invalid emails still skip; each row keeps its own send progress/open tracking.
+  The policy is locked after sending starts; SQL identity remains the source row.
 - The recipient section can edit each imported cell while the campaign is a
   draft; preview and email validation update immediately. Save edits before sending.
   The send button is always visible, and is enabled after saving valid data.

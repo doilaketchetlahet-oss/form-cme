@@ -22,6 +22,13 @@ const table = merge.mergeTable(merge.parseMergeText('Email\tHọ tên\tTrường
 const template = { columns: table.columns, emailColumn: table.emailColumn, subject: 'Gửi {{ho_ten}} tại {{truong}}', blocks: [{ id: 'body', type: 'text', text: 'Kính gửi {{ho_ten}}\n{{truong}}', url: '' }] };
 const account = { host: 'smtp.example.test', port: 587, secure: false, user: 'user', password: 'test-only-secret', fromEmail: 'sender@example.test', fromName: 'Ban tổ chức', replyTo: '' };
 const owner = 'owner@example.test';
+const reports = merge.mergeTable([
+  ['Email', 'Họ tên', 'Bài báo cáo'],
+  ['an@example.test', 'Nguyễn An', 'Nghiên cứu tim mạch'],
+  [' AN@EXAMPLE.TEST ', 'Nguyễn An', 'Nghiên cứu hô hấp'],
+  ['invalid', 'Nguyễn An', 'Không có Email hợp lệ'],
+]);
+const reportsTemplate = { columns: reports.columns, emailColumn: reports.emailColumn, subject: 'Báo cáo {{bai_bao_cao}}', blocks: [{ id: 'body', type: 'text', text: 'Kính gửi {{ho_ten}}\n{{bai_bao_cao}}', url: '' }] };
 
 test('CSV/TSV/semicolon and Excel matrices preserve formatted values and generate unique Vietnamese fields', () => {
   assert.deepEqual(table.columns.map((c) => c.key), ['email', 'ho_ten', 'truong']);
@@ -95,6 +102,29 @@ test('validation catches unknown fields, malformed templates and skips invalid/d
   assert.throws(() => merge.prepareMergeRecipients(template, [{ sourceRow: 2, fields: { email: ['x'] } }]), /văn bản/);
   assert.throws(() => merge.prepareMergeRecipients(template, [table.rows[0], table.rows[0]]), /số dòng bị trùng/);
   assert.throws(() => merge.prepareMergeRecipients(template, [{ ...table.rows[0], sourceRow: -1 }]), /không hợp lệ/);
+});
+
+test('duplicate Email policy preserves the legacy default and allows independent reports per row', () => {
+  for (const value of [reportsTemplate, { ...reportsTemplate, duplicateEmailPolicy: 'skip' }]) {
+    assert.equal(merge.validateMergeTemplate(value), null);
+    const prepared = merge.prepareMergeRecipients(value, reports.rows);
+    assert.deepEqual(prepared.map((row) => row.status), ['pending', 'skipped', 'skipped']);
+    assert.equal(prepared[1].email, 'an@example.test');
+    assert.match(prepared[1].last_error, /trùng/i);
+  }
+  const allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow' };
+  assert.equal(merge.validateMergeTemplate(allow), null);
+  const prepared = merge.prepareMergeRecipients(allow, reports.rows);
+  assert.deepEqual(prepared.map((row) => row.status), ['pending', 'pending', 'skipped']);
+  assert.deepEqual(prepared.slice(0, 2).map((row) => row.email), ['an@example.test', 'an@example.test']);
+  assert.equal(prepared[0].fields.ho_ten, prepared[1].fields.ho_ten);
+  assert.notEqual(prepared[0].fields.bai_bao_cao, prepared[1].fields.bai_bao_cao);
+  assert.equal(merge.renderMergeMail(allow, prepared[0].fields).subject, 'Báo cáo Nghiên cứu tim mạch');
+  assert.equal(merge.renderMergeMail(allow, prepared[1].fields).subject, 'Báo cáo Nghiên cứu hô hấp');
+  assert.throws(() => merge.prepareMergeRecipients(allow, [reports.rows[0], reports.rows[0]]), /số dòng bị trùng/);
+  for (const duplicateEmailPolicy of ['merge', '', null, true, 1, {}]) {
+    assert.match(merge.validateMergeTemplate({ ...reportsTemplate, duplicateEmailPolicy }), /không hợp lệ/);
+  }
 });
 
 test('bold formatting preserves old plain templates and styles merged values without interpreting recipient data', () => {
@@ -174,7 +204,8 @@ test('SMTP resolves only public addresses, requires TLS and treats an uncertain 
 function apiHarness() {
   const id = randomUUID(), recipient = randomUUID(), attempt = randomUUID();
   const stored = { id, owner_email: owner, name: 'Mail merge', template, smtp_public: { ...account, password: undefined }, smtp_secret: 'encrypted-test', status: 'running' };
-  let authError = null, sends = [], calls = [], attachmentCalls = [], claimed = false, reject = null, sendError = false;
+  let authError = null, sends = [], calls = [], attachmentCalls = [], reject = null, sendError = false;
+  let jobs = [{ id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields, open_token: 'a'.repeat(64) }];
   const service = {
     from(tableName) {
       const query = { select(columns) { query.columns = columns; return query; }, eq(key, value) { if (key === 'owner_email') assert.equal(value, owner); return query; }, order() { return query; }, limit() { return query; }, range() { return query; },
@@ -185,7 +216,7 @@ function apiHarness() {
     async rpc(name, args) {
       calls.push({ name, args });
       if (reject) return { data: null, error: reject };
-      if (name === 'claim_mail_merge') { if (claimed) return { data: null, error: null }; claimed = true; return { data: { recipient: { id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields }, open_token: 'a'.repeat(64), template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
+      if (name === 'claim_mail_merge') { const job = jobs.shift(); if (!job) return { data: null, error: null }; const { open_token, ...claimed } = job; return { data: { recipient: claimed, open_token, template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
       if (name === 'control_mail_merge') return { data: stored.status, error: null };
       return { data: name === 'save_mail_merge' ? id : true, error: null };
     },
@@ -195,9 +226,10 @@ function apiHarness() {
     '@/lib/server/admin-api': { authorizeAdminApi: async (_request, writable) => { assert.equal(writable, true); return authError || { email: owner, service }; } },
     '@/lib/server/mail-merge-smtp': { validateSmtpAccount: (value) => value, decryptSmtpPassword: () => account.password, encryptSmtpPassword: () => 'ciphertext-test', verifyMergeSmtp: async () => true,
       sendMergeSmtp: async (smtp, mail) => { sends.push({ smtp, mail }); if (sendError) throw new Error('test unexpected transport failure'); return { status: 'sent', messageId: 'test-id' }; } },
-    '@/lib/server/mail-merge-attachments': { resolveMailMergeTemplateAttachments: async (value, fields) => { attachmentCalls.push({ value, fields }); return [{ filename: 'invite.pdf', content: Buffer.from('pdf'), contentType: 'application/pdf' }]; } },
+    '@/lib/server/mail-merge-attachments': { resolveMailMergeTemplateAttachments: async (value, fields) => { attachmentCalls.push({ value, fields }); return [{ filename: 'invite.pdf', content: Buffer.from(fields.bai_bao_cao || 'pdf'), contentType: 'application/pdf' }]; } },
   });
   return { id, calls, sends, attachmentCalls, stored, deny: () => { authError = { error: 'Denied', status: 403 }; }, reject: (e) => { reject = e; }, failSend: () => { sendError = true; },
+    queue: (rows) => { jobs = rows.map((row, index) => ({ id: randomUUID(), attempt_id: randomUUID(), email: row.email, fields: row.fields, open_token: (index + 1).toString(16).repeat(64) })); },
     post: (data) => route.POST(new Request('https://example.test/api/admin/mail-merge', { method: 'POST', body: JSON.stringify({ id, ...data }) })),
     get: () => route.GET(new Request(`https://example.test/api/admin/mail-merge?id=${id}`)),
   };
@@ -216,6 +248,41 @@ test('mail API requires writable admins, omits stored passwords and validates be
   api.deny();
   assert.equal((await api.post({ action: 'process' })).status, 403);
   assert.equal((await api.get()).status, 403);
+});
+
+test('save API retains every report row and rejects unsupported duplicate Email policies', async () => {
+  const api = apiHarness();
+  const allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow' };
+  assert.equal((await api.post({ action: 'save', name: 'Hai bài báo cáo', smtp: account, template: allow, rows: reports.rows })).status, 200);
+  const saved = api.calls.find((call) => call.name === 'save_mail_merge').args;
+  assert.equal(saved.p_template.duplicateEmailPolicy, 'allow');
+  assert.deepEqual(saved.p_rows.map((row) => row.status), ['pending', 'pending', 'skipped']);
+  assert.deepEqual(saved.p_rows.map((row) => row.source_row), [2, 3, 4]);
+  assert.notEqual(saved.p_rows[0].fields.bai_bao_cao, saved.p_rows[1].fields.bai_bao_cao);
+  api.calls.length = 0;
+  assert.equal((await api.post({ action: 'save', name: 'Cấu hình cũ', smtp: account, template: reportsTemplate, rows: reports.rows })).status, 200);
+  assert.deepEqual(api.calls.find((call) => call.name === 'save_mail_merge').args.p_rows.map((row) => row.status), ['pending', 'skipped', 'skipped']);
+  api.calls.length = 0;
+  assert.equal((await api.post({ action: 'save', name: 'Sai cấu hình', smtp: account, template: { ...allow, duplicateEmailPolicy: 'merge' }, rows: reports.rows })).status, 400);
+  assert.equal(api.calls.length, 0);
+});
+
+test('same Email reports send separate personalized messages, cards and tracking URLs', async () => {
+  const api = apiHarness();
+  const allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow' };
+  api.stored.template = allow;
+  api.queue(merge.prepareMergeRecipients(allow, reports.rows).filter((row) => row.status === 'pending'));
+  assert.equal((await api.post({ action: 'process' })).status, 200);
+  assert.equal((await api.post({ action: 'process' })).status, 200);
+  assert.equal((await api.post({ action: 'process' })).status, 200);
+  assert.equal(api.sends.length, 2);
+  assert.deepEqual(api.sends.map((send) => send.mail.to), ['an@example.test', 'an@example.test']);
+  assert.deepEqual(api.sends.map((send) => send.mail.subject), ['Báo cáo Nghiên cứu tim mạch', 'Báo cáo Nghiên cứu hô hấp']);
+  assert.deepEqual(api.attachmentCalls.map((call) => call.fields.bai_bao_cao), ['Nghiên cứu tim mạch', 'Nghiên cứu hô hấp']);
+  assert.notEqual(api.sends[0].mail.attachments[0].content.toString(), api.sends[1].mail.attachments[0].content.toString());
+  const pixels = api.sends.map((send) => send.mail.html.match(/src="([^"]*\/api\/mail-merge\/open\/[^\"]+)"/)[1]);
+  assert.notEqual(pixels[0], pixels[1]);
+  assert.equal(api.calls.filter((call) => call.name === 'finish_mail_merge').length, 2);
 });
 
 test('sending API claims atomically, uses a single recipient and records acceptance with the claim token', async () => {
@@ -245,6 +312,41 @@ test('an unexpected error after SMTP starts cannot become an automatically retry
 });
 
 const extra = process.env.MAIL_MERGE_TEST_DEPS ? createRequire(path.join(process.env.MAIL_MERGE_TEST_DEPS, 'package.json')) : null;
+test('PostgreSQL keeps same Email reports as separate queue entries and open tracking records', { skip: !extra }, async () => {
+  const { PGlite } = extra('@electric-sql/pglite');
+  const db = new PGlite();
+  try {
+    await db.exec('create role anon; create role authenticated; create role service_role;');
+    await db.exec(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8'));
+    const id = randomUUID(), allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow' };
+    await db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [id, owner, 'Hai bài báo cáo', allow, account, 'ciphertext-only', merge.prepareMergeRecipients(allow, reports.rows)]);
+    const rows = (await db.query('select id,source_row,email,status,fields from mail_merge_recipients where campaign_id=$1 order by source_row', [id])).rows;
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.map((row) => row.status), ['pending', 'pending', 'skipped']);
+    assert.equal(rows[0].email, rows[1].email);
+    assert.notEqual(rows[0].id, rows[1].id);
+    assert.notEqual(rows[0].fields.bai_bao_cao, rows[1].fields.bai_bao_cao);
+    await db.query('select control_mail_merge($1,$2,$3)', [id, owner, 'start']);
+    const sent = [];
+    for (let index = 0; index < 2; index++) {
+      const job = (await db.query('select claim_mail_merge($1,$2) result', [id, owner])).rows[0].result;
+      assert.equal(job.recipient.id, rows[index].id);
+      assert.equal(job.recipient.email, 'an@example.test');
+      sent.push(job);
+      assert.equal((await db.query('select finish_mail_merge($1,$2,$3,$4,$5,$6) result', [job.recipient.id, owner, job.recipient.attempt_id, 'sent', 'test-' + index, null])).rows[0].result, true);
+    }
+    assert.notEqual(sent[0].open_token, sent[1].open_token);
+    const firstHash = tracking.hashMailMergeOpenToken(sent[0].open_token);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [rows[1].id, firstHash])).rows[0].result, false);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [rows[0].id, firstHash])).rows[0].result, true);
+    const beforeSecond = (await db.query('select open_count,opened_at is not null opened from mail_merge_recipients where campaign_id=$1 order by source_row', [id])).rows;
+    assert.deepEqual(beforeSecond, [{ open_count: 1, opened: true }, { open_count: 0, opened: false }, { open_count: 0, opened: false }]);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [rows[1].id, tracking.hashMailMergeOpenToken(sent[1].open_token)])).rows[0].result, true);
+    assert.equal((await db.query('select claim_mail_merge($1,$2) result', [id, owner])).rows[0].result, null);
+    assert.deepEqual((await db.query('select status,open_count from mail_merge_recipients where campaign_id=$1 order by source_row', [id])).rows, [{ status: 'sent', open_count: 1 }, { status: 'sent', open_count: 1 }, { status: 'skipped', open_count: 0 }]);
+  } finally { await db.close(); }
+});
+
 test('PostgreSQL queue is repeatable, owner isolated, atomic across tabs and never auto-retries ambiguous SMTP', { skip: !extra }, async () => {
   const { PGlite } = extra('@electric-sql/pglite');
   const db = new PGlite();

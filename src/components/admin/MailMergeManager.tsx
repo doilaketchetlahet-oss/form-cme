@@ -40,6 +40,7 @@ export function MailMergeManager() {
   const [columns, setColumns] = useState<MergeColumn[]>([]);
   const [rows, setRows] = useState<MergeSourceRow[]>([]);
   const [emailColumn, setEmailColumn] = useState("");
+  const [duplicateEmailPolicy, setDuplicateEmailPolicy] = useState<NonNullable<MergeTemplate["duplicateEmailPolicy"]>>("skip");
   const [subject, setSubject] = useState("Thư mời tham dự chương trình");
   const [blocks, setBlocks] = useState<MergeBlock[]>([]);
   const [card, setCard] = useState<EmailOverlay | null>(null);
@@ -68,7 +69,7 @@ export function MailMergeManager() {
   const dirtyRef = useRef(false);
   const mounted = useRef(true);
   const editable = (!campaign || campaign.status === "draft") && !busy && !running;
-  const template: MergeTemplate = useMemo(() => ({ columns, emailColumn, subject, blocks, card, cardAttachment, attachments, trackingEnabled }), [columns, emailColumn, subject, blocks, card, cardAttachment, attachments, trackingEnabled]);
+  const template: MergeTemplate = useMemo(() => ({ columns, emailColumn, duplicateEmailPolicy, subject, blocks, card, cardAttachment, attachments, trackingEnabled }), [columns, emailColumn, duplicateEmailPolicy, subject, blocks, card, cardAttachment, attachments, trackingEnabled]);
   const cardQuestions: EmailMergeQuestion[] = useMemo(() => columns.map((column) => ({ id: column.key, text: column.label, type: "text" })), [columns]);
   const cardBody = useMemo(() => serializeEmailTemplate({ v: 1, includeBlocks: false, includeOverlay: true, blocks: [], overlay: card, attachments: [] }), [card]);
   const attachmentBody = useMemo(() => serializeEmailTemplate({ v: 1, includeBlocks: true, includeOverlay: false, blocks: [], attachments }), [attachments]);
@@ -112,12 +113,14 @@ export function MailMergeManager() {
       const next = await load(id);
       setName(next.name); setColumns(next.template.columns); setEmailColumn(next.template.emailColumn); setSubject(next.template.subject); setBlocks(next.template.blocks); setCard(next.template.card ?? null); setCardAttachment(next.template.cardAttachment ?? "pdf"); setAttachments(next.template.attachments ?? []); setTrackingEnabled(next.template.trackingEnabled !== false); setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1);
       setRows((next.recipients ?? []).map(({ sourceRow, fields }) => ({ sourceRow, fields }))); setSmtp({ ...emptySmtp(), ...next.smtp_public, password: "" });
+      setDuplicateEmailPolicy(next.template.duplicateEmailPolicy ?? "skip");
       setFileName("Danh sách đã lưu"); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không mở được chiến dịch."); } finally { setBusy(false); }
   };
   const newCampaign = async () => {
     if (dirtyRef.current && !await confirm({ title: "Tạo chiến dịch mới?", description: "Các chỉnh sửa chưa lưu sẽ được bỏ qua.", confirmText: "Tạo mới" })) return;
     setCampaign(null); setName("Chiến dịch gửi thư mới"); setColumns([]); setRows([]); setEmailColumn(""); setSubject("Thư mời tham dự chương trình"); setBlocks([]); setCard(null); setCardAttachment("pdf"); setAttachments([]); setTrackingEnabled(true); setSmtp(emptySmtp()); setFileName(""); setPasted(""); setPreviewIndex(0); setError(""); setFocus("subject"); focusedInput.current = null; setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1); clearDirty();
+    setDuplicateEmailPolicy("skip");
   };
 
   const importMatrix = (matrix: string[][], label: string) => {
@@ -183,7 +186,7 @@ export function MailMergeManager() {
   const start = async () => {
     if (!campaign) return;
     if (dirtyRef.current) { toast.info("Lưu các chỉnh sửa trước khi gửi."); return; }
-    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua SMTP?`, description: `Chiến dịch “${campaign.name}”. Mỗi người nhận có một thư riêng với các trường của dòng tương ứng.`, confirmText: "Bắt đầu gửi" })) return;
+    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua SMTP?`, description: `Chiến dịch “${campaign.name}”. Mỗi dòng có một thư riêng với dữ liệu tương ứng.${campaign.template.duplicateEmailPolicy === "allow" ? " Email xuất hiện ở nhiều dòng sẽ nhận nhiều thư, mỗi thư có thiệp theo dòng đó." : ""}`, confirmText: "Bắt đầu gửi" })) return;
     stopRef.current = false; setRunning(true); setError("");
     try {
       await api({ action: "start", id: campaign.id });
@@ -228,6 +231,8 @@ export function MailMergeManager() {
     <div className={cardClass}>
       <h2 className="mb-3 flex items-center gap-2 font-semibold text-slate-900"><FileSpreadsheet size={18} className="text-sky-600" /> 1. Danh sách người nhận</h2>
       <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm text-slate-600">Tên chiến dịch<input className={`${fieldClass} mt-1`} value={name} disabled={!editable} onChange={(event) => { markDirty(); setName(event.target.value); }} /></label><label className="text-sm text-slate-600">Cột Email<select className={`${fieldClass} mt-1`} value={emailColumn} disabled={!editable || !columns.length} onChange={(event) => { markDirty(); setEmailColumn(event.target.value); if (campaign) setCampaign({ ...campaign, recipients: undefined }); }}>{columns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}</select></label></div>
+      <label className="mt-4 block max-w-xl text-sm text-slate-600">Xử lý Email trùng<select className={`${fieldClass} mt-1`} value={duplicateEmailPolicy} disabled={!editable} onChange={(event) => { setDuplicateEmailPolicy(event.target.value as NonNullable<MergeTemplate["duplicateEmailPolicy"]>); markDirty(); setCampaign((current) => current ? { ...current, recipients: undefined } : current); }}><option value="skip">Bỏ qua Email trùng (mỗi Email một thư)</option><option value="allow">Gửi riêng từng dòng (cho phép Email trùng)</option></select></label>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{duplicateEmailPolicy === "allow" ? "Một người có 2 bài báo cáo: nhập 2 dòng cùng tên và Email, mỗi dòng có thông tin bài riêng. Người đó sẽ nhận 2 thư và thiệp tương ứng; tracking được ghi nhận riêng từng thư. Lưu chiến dịch sau khi đổi lựa chọn." : "Chỉ dòng đầu của mỗi Email được xét gửi; các dòng trùng bị bỏ qua. Chọn gửi riêng từng dòng nếu một người có nhiều bài báo cáo."}</p>
       {(!campaign || campaign.status === "draft") && <div className="mt-4 space-y-3">
         <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void importFile(event.target.files[0]); }} />
         <button className={buttonClass} disabled={!editable} onClick={() => inputRef.current?.click()}><Upload size={15} /> Import Excel / CSV</button><span className="ml-3 text-xs text-slate-500">Dòng đầu là tên cột · Excel đọc sheet đầu tiên · Tối đa 5.000 dòng</span>
