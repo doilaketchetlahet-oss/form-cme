@@ -10,7 +10,7 @@
     "maxPlayers": 1,
     "isFree": true,
     "sort": 1,
-    "cover": "/games/covers/balloon.webp"
+    "cover": "/games/covers/balloon-b738a3cadab7.webp"
   },
   {
     "id": "bridgedash",
@@ -88,7 +88,7 @@
     "maxPlayers": 1,
     "isFree": false,
     "sort": 7,
-    "cover": "/games/covers/hidden.webp"
+    "cover": "/games/covers/hidden-688991128cf6.webp"
   },
   {
     "id": "jigsaw",
@@ -152,7 +152,8 @@
     "minPlayers": 1,
     "maxPlayers": 1,
     "isFree": false,
-    "sort": 12
+    "sort": 12,
+    "cover": "/games/covers/spotdiff-fe69d3f5a1d2.webp"
   },
   {
     "id": "trucxanh",

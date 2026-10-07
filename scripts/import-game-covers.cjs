@@ -3,6 +3,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const sharp = require("sharp");
+const { createHash } = require("node:crypto");
 
 const root = path.resolve(__dirname, "..");
 const source = path.resolve(process.argv[2] || "D:/Game Mới");
@@ -19,8 +20,9 @@ const covers = {
   pulsecourier: "src/modules/PulseCourier/demo.png",
   handslice: "chemhoaqua.png",
   catchdrop: "hungdo.png",
-  balloon: "shots/06-balloon.png",
-  hidden: "shots/09-hidden.png",
+  balloon: "balloon.png",
+  hidden: "hidden.png",
+  spotdiff: "spot.png",
   wheel: "shots/08-wheel.png",
 };
 
@@ -29,14 +31,27 @@ async function main() {
   for (const file of Object.values(covers)) await fs.access(path.join(source, file));
   const output = path.join(root, "public/games/covers");
   await fs.mkdir(output, { recursive: true });
+  const coverPaths = {};
   for (const [id, file] of Object.entries(covers)) {
-    await sharp(path.join(source, file)).resize({ width: 960, withoutEnlargement: true })
-      .webp({ quality: 85 }).toFile(path.join(output, `${id}.webp`));
+    const image = await sharp(path.join(source, file)).resize({ width: 960, withoutEnlargement: true })
+      .webp({ quality: 85 }).toBuffer();
+    // Replacement artwork gets a distinct URL so optimized-image caches refresh.
+    const versioned = ["balloon", "hidden", "spotdiff"].includes(id);
+    const hash = createHash("sha256").update(image).digest("hex").slice(0, 12);
+    const filename = versioned ? `${id}-${hash}.webp` : `${id}.webp`;
+    await fs.writeFile(path.join(output, filename), image);
+    coverPaths[id] = `/games/covers/${filename}`;
+    if (versioned) {
+      const stale = new RegExp(`^${id}(?:-[a-f0-9]{12})?\\.webp$`);
+      for (const existing of await fs.readdir(output)) {
+        if (existing !== filename && stale.test(existing)) await fs.unlink(path.join(output, existing));
+      }
+    }
   }
   const catalogPath = path.join(root, "src/config/gameModules.json");
   const modules = JSON.parse(await fs.readFile(catalogPath, "utf8"));
   for (const mod of modules) {
-    if (covers[mod.id]) mod.cover = `/games/covers/${mod.id}.webp`;
+    if (coverPaths[mod.id]) mod.cover = coverPaths[mod.id];
   }
   await fs.writeFile(catalogPath, JSON.stringify(modules, null, 2) + "\n");
   console.log(`Imported ${Object.keys(covers).length} game covers from ${source}.`);
