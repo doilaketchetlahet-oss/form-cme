@@ -223,19 +223,35 @@ exception when duplicate_object then
   null;
 end $$;
 
--- Storage bucket for uploads/signatures/theme/face photos.
+-- Storage bucket for uploads/signatures/theme/face photos/email attachments.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'survey-uploads',
   'survey-uploads',
   true,
   10485760,
-  array['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+  array[
+    'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  ]
 )
 on conflict (id) do update set
   public = excluded.public,
   file_size_limit = excluded.file_size_limit,
-  allowed_mime_types = excluded.allowed_mime_types;
+  allowed_mime_types = case
+    when storage.buckets.allowed_mime_types is null then null
+    else array(
+      select distinct mime
+      from unnest(storage.buckets.allowed_mime_types || excluded.allowed_mime_types) as accepted(mime)
+      order by mime
+    )
+  end;
 
 -- RLS
 alter table quizzes enable row level security;

@@ -115,6 +115,11 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   and can attach a personalized invitation card rendered from the existing
   overlay editor as a JPG, PDF, or both. Each row is rendered server-side before
   its SMTP request; the sender never passes remote URLs or file paths to Nodemailer.
+- `survey-uploads` accepts images, PDF, Word, Excel and PowerPoint attachments.
+  Existing installations run `supabase/email-attachments.sql` to add document
+  MIME types while preserving current limits, custom types and storage policies.
+  Regression: `node --test scripts/test-email-attachments.cjs` (optional SQL
+  runtime uses `MAIL_MERGE_TEST_DEPS`, like the mail-merge checks).
 - In text/heading/button blocks, select content and press **In đậm** or Ctrl+B
   (Cmd+B on Mac) to toggle bold; selections never split a merge placeholder.
   The block's optional `format: "markdown"` interprets only `**bold**` authored

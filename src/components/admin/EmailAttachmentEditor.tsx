@@ -80,7 +80,7 @@ export function EmailAttachmentEditor({ body, onBodyChange }: { body: string; on
           {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
           {attachments.length > 0 ? "Thêm file đính kèm" : "Tải file đính kèm"}
         </button>
-        <span className="text-xs text-slate-400">PDF, DOCX, hình ảnh… tối đa 10MB mỗi file.</span>
+        <span className="text-xs text-slate-400">PDF, Word, Excel, PowerPoint, hình ảnh… tối đa 10MB mỗi file.</span>
         <input
           ref={inputRef}
           type="file"
