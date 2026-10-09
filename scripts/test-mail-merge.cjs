@@ -155,6 +155,69 @@ test('fresh schema includes the same independent mail merge migration', () => {
   assert.ok(normalize(readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8')).includes(normalize(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8'))));
 });
 
+test('inline hyperlinks preserve legacy text, personalize author links and escape imported markup', () => {
+  const block = { id: 'body', type: 'text', format: 'markdown', text: 'Xem [**{{ho_ten}}**](<https://example.test/?school={{truong}}>) và [Email](mailto:reply@example.test).', url: '' };
+  const legacy = merge.renderMergeMail({ ...template, blocks: [block] }, table.rows[0].fields);
+  assert.ok(!legacy.html.includes('<a ')); assert.ok(legacy.text.includes('[Nguyễn An]'));
+  const linked = { ...template, blocks: [{ ...block, inlineLinks: true }] };
+  assert.equal(merge.validateMergeTemplate(linked), null);
+  const rendered = merge.renderMergeMail(linked, { ...table.rows[0].fields, ho_ten: '<img src=x> [fake](javascript:x)', truong: 'A&x=" onmouseover="x' });
+  assert.equal((rendered.html.match(/<a /g) || []).length, 2);
+  assert.ok(rendered.html.includes('<strong style="font-weight:700">&lt;img src=x&gt; [fake](javascript:x)</strong>'));
+  assert.ok(rendered.html.includes('school=A&amp;x=&quot; onmouseover=&quot;x'));
+  assert.ok(rendered.html.includes('href="mailto:reply@example.test"'));
+  assert.ok(rendered.text.includes('Email (mailto:reply@example.test)'));
+  assert.ok(!rendered.text.includes('**'));
+  const outer = merge.renderMergeMail({ ...template, blocks: [{ ...block, inlineLinks: true, text: '**Trước [Chữ đậm](https://example.test/path_(x)) sau**' }] }, table.rows[0].fields);
+  // Parentheses in URLs are represented by the editor with angle delimiters.
+  assert.ok(!outer.html.includes('<a '));
+  const parenthesized = merge.editMergeLink('', 0, 0, 'Chữ [đậm]', 'https://example.test/path_(x)');
+  const output = merge.renderMergeMail({ ...template, blocks: [{ ...block, inlineLinks: true, text: '**' + parenthesized.text + '**' }] }, table.rows[0].fields);
+  assert.ok(output.html.includes('href="https://example.test/path_(x)"')); assert.ok(output.text.includes('Chữ [đậm] (https://example.test/path_(x))'));
+});
+
+test('hyperlink validation rejects unsafe schemes and values before either mail provider can send', () => {
+  const make = (url) => ({ ...template, blocks: [{ id: 'body', type: 'text', text: `[Xem](<${url}>)`, url: '', inlineLinks: true }] });
+  for (const url of ['javascript:alert(1)', 'data:text/html,test', 'file:///secret', '/relative']) assert.match(merge.validateMergeTemplate(make(url)), /liên kết|Liên kết/);
+  assert.throws(() => merge.editMergeLink('Text', 0, 4, 'Text', 'https://example.test/\nattack'), /hợp lệ/);
+  const personalized = make('{{truong}}'); assert.equal(merge.validateMergeTemplate(personalized), null);
+  const rows = [{ ...table.rows[0], fields: { ...table.rows[0].fields, truong: 'javascript:alert(1)' } }];
+  assert.throws(() => merge.renderMergeMail(personalized, rows[0].fields), /HTTP/);
+  assert.equal(merge.prepareMergeRecipients(personalized, rows)[0].status, 'skipped');
+  assert.match(merge.validateMergeTemplate(make('{{missing}}')), /không có/);
+  assert.match(merge.validateMergeTemplate({ ...template, blocks: [{ ...make('https://example.test').blocks[0], type: 'button', url: 'https://example.test' }] }), /đoạn văn/);
+  assert.match(merge.validateMergeTemplate({ ...template, blocks: [{ ...make('https://example.test').blocks[0], inlineLinks: 'true' }] }), /không hợp lệ/);
+});
+
+test('hyperlink editing and bold preserve merge tokens, URLs, escaped labels and independent links', () => {
+  const source = 'Kính gửi {{ho_ten}}, xem thông tin.';
+  const selection = merge.selectMergeLink(source, source.indexOf('ho_ten'), source.indexOf('ho_ten') + 3);
+  assert.equal(selection.label, '{{ho_ten}}');
+  const added = merge.editMergeLink(source, selection.start, selection.end, selection.label, 'https://example.test/info');
+  const existing = merge.selectMergeLink(added.text, added.start + 3, added.start + 3, true);
+  assert.equal(existing.existing, true); assert.equal(existing.label, '{{ho_ten}}');
+  const updated = merge.editMergeLink(added.text, existing.start, existing.end, existing.label, 'mailto:reply@example.test', true);
+  assert.ok(updated.text.includes('mailto:reply@example.test'));
+  assert.equal(merge.editMergeLink(updated.text, updated.start, updated.end, existing.label, null, true).text, source);
+  const bold = merge.toggleMergeBold(added.text, added.start + 3, added.start + 6, true, true);
+  assert.ok(bold.text.includes('[**{{ho_ten}}**](<https://example.test/info>)'));
+  assert.equal(merge.toggleMergeBold(bold.text, bold.start, bold.end, true, true).text, added.text);
+  assert.equal(merge.toggleMergeBold(added.text, added.text.indexOf('https'), added.text.indexOf('https') + 5, true, true), null);
+  const all = merge.toggleMergeBold(added.text, 0, added.text.length, true, true);
+  assert.equal(merge.getMergeLinks(all.text)[0].url, 'https://example.test/info');
+  const escaped = merge.editMergeLink('', 0, 0, 'A [B]', 'https://example.test');
+  const bracket = escaped.text.indexOf('B') - 1;
+  const escapedBold = merge.toggleMergeBold(escaped.text, bracket, bracket + 1, true, true);
+  assert.equal(merge.getMergeLinks(escapedBold.text).length, 1);
+  const two = added.text + ' [Hai](https://example.test/two)';
+  assert.throws(() => merge.selectMergeLink(two, 0, two.length, true), /Chọn một/);
+  const boundary = merge.selectMergeLink('**foo** bar', 3, 9, false, true);
+  assert.equal(boundary.label, '**foo** b');
+  const crossing = merge.editMergeLink('**foo** bar', boundary.start, boundary.end, boundary.label, 'https://example.test', false, true);
+  const output = merge.renderMergeMail({ ...template, blocks: [{ id: 'body', type: 'text', text: crossing.text, url: '', inlineLinks: true, format: 'markdown' }] }, table.rows[0].fields);
+  assert.ok(output.html.includes('<strong style="font-weight:700">foo</strong> b</a>ar'));
+});
+
 function smtpHarness() {
   let options, sent, closes = 0, error = null, closeError = false, addresses = [{ address: '8.8.8.8', family: 4 }];
   const smtp = loadSource('src/lib/server/mail-merge-smtp.ts', {
@@ -237,7 +300,8 @@ test('sender config preserves legacy SMTP and keeps private Resend keys encrypte
 test('Resend sends one personalized message with buffers, tracking, reply-to and an idempotency key', async () => {
   const h = deliveryHarness();
   h.sender.account.fromName = 'Ban "tổ chức"'; h.sender.account.replyTo = 'reply@vsot.com.vn';
-  const mail = { ...merge.renderMergeMail(template, table.rows[0].fields, { trackingPixelUrl: 'https://example.test/api/mail-merge/open/id?token=opaque' }), to: 'an@example.test', attachments: [{ filename: 'invite.pdf', content: Buffer.from('personalized-pdf'), contentType: 'application/pdf' }, { filename: 'slides.pptx', content: Buffer.from('slides') }] };
+  const linkedTemplate = { ...template, blocks: [{ ...template.blocks[0], inlineLinks: true, text: '[{{ho_ten}}](<https://example.test/info>)' }] };
+  const mail = { ...merge.renderMergeMail(linkedTemplate, table.rows[0].fields, { trackingPixelUrl: 'https://example.test/api/mail-merge/open/id?token=opaque' }), to: 'an@example.test', attachments: [{ filename: 'invite.pdf', content: Buffer.from('personalized-pdf'), contentType: 'application/pdf' }, { filename: 'slides.pptx', content: Buffer.from('slides') }] };
   assert.deepEqual(await h.delivery.sendMergeMessage(h.sender, mail, 'row/attempt'), { status: 'sent', messageId: 'resend-test-message' });
   assert.equal(h.requests.length, 1);
   const { url, input } = h.requests[0], body = JSON.parse(input.body);
@@ -247,6 +311,7 @@ test('Resend sends one personalized message with buffers, tracking, reply-to and
   assert.equal(body.from, '"Ban \\"tổ chức\\"" <bantochuc@vsot.com.vn>');
   assert.deepEqual(body.to, ['an@example.test']); assert.equal(body.reply_to, 'reply@vsot.com.vn');
   assert.equal(body.subject, 'Gửi Nguyễn An tại Đại học A'); assert.ok(body.html.includes('/api/mail-merge/open/'));
+  assert.ok(body.html.includes('href="https://example.test/info"')); assert.equal(body.text, 'Nguyễn An (https://example.test/info)');
   assert.equal(body.attachments[0].content_type, 'application/pdf');
   assert.equal(Buffer.from(body.attachments[0].content, 'base64').toString(), 'personalized-pdf');
   assert.equal(body.attachments[1].filename, 'slides.pptx');
@@ -434,7 +499,7 @@ test('same Email reports send separate personalized messages, cards and tracking
 
 test('sending API claims atomically, uses a single recipient and records acceptance with the claim token', async () => {
   const api = apiHarness();
-  api.stored.template = { ...template, blocks: [{ ...template.blocks[0], format: 'markdown', text: 'Kính gửi **{{ho_ten}}**\n{{truong}}' }] };
+  api.stored.template = { ...template, blocks: [{ ...template.blocks[0], format: 'markdown', inlineLinks: true, text: 'Kính gửi **{{ho_ten}}**\n[{{truong}}](<https://example.test/info>)' }] };
   assert.equal((await api.post({ action: 'process' })).status, 200);
   assert.equal((await api.post({ action: 'process' })).status, 200);
   assert.equal(api.sends.length, 1);
@@ -444,7 +509,8 @@ test('sending API claims atomically, uses a single recipient and records accepta
   assert.equal(api.attachmentCalls.length, 1);
   assert.ok(api.sends[0].mail.html.includes('<strong style="font-weight:700">Nguyễn An</strong>'));
   assert.ok(api.sends[0].mail.html.includes('/api/mail-merge/open/'));
-  assert.equal(api.sends[0].mail.text, 'Kính gửi Nguyễn An\nĐại học A');
+  assert.ok(api.sends[0].mail.html.includes('href="https://example.test/info"'));
+  assert.equal(api.sends[0].mail.text, 'Kính gửi Nguyễn An\nĐại học A (https://example.test/info)');
   assert.ok(!api.sends[0].mail.html.includes('/checkin/'));
   const finish = api.calls.find((call) => call.name === 'finish_mail_merge');
   assert.equal(finish.args.p_owner, owner); assert.equal(finish.args.p_status, 'sent'); assert.ok(finish.args.p_attempt);

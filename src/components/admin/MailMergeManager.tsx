@@ -1,12 +1,13 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bold, Copy, Download, FileSpreadsheet, Image as ImageIcon, Loader2, Mail, Maximize2, Minimize2, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
+import { Bold, Copy, Download, FileSpreadsheet, Image as ImageIcon, Link as LinkIcon, Loader2, Mail, Maximize2, Minimize2, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { useConfirm } from "@/lib/ui/confirm";
 import { PageHeader } from "./PageHeader";
-import { DEFAULT_MERGE_RESEND_FROM, mergeTable, parseMergeText, prepareMergeRecipients, renderMergeMail, toggleMergeBold, validateMergeTemplate, type MergeAttachment, type MergeBlock, type MergeCampaign, type MergeColumn, type MergeProvider, type MergeRecipient, type MergeResendAccount, type MergeSourceRow, type MergeTemplate, type SmtpAccount } from "@/lib/mail-merge";
+import { DEFAULT_MERGE_RESEND_FROM, editMergeLink, mergeTable, parseMergeText, prepareMergeRecipients, renderMergeMail, selectMergeLink, toggleMergeBold, validateMergeTemplate, type MergeAttachment, type MergeBlock, type MergeCampaign, type MergeColumn, type MergeProvider, type MergeRecipient, type MergeResendAccount, type MergeSourceRow, type MergeTemplate, type SmtpAccount } from "@/lib/mail-merge";
 import { EmailAttachmentEditor } from "./EmailAttachmentEditor";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 import { parseEmailTemplate, serializeEmailTemplate, type EmailMergeQuestion, type EmailOverlay } from "@/lib/email-template";
@@ -92,6 +93,8 @@ export function MailMergeManager() {
   const [focus, setFocus] = useState<{ id: string; field: "text" | "url" } | "subject">("subject");
   const [testEmail, setTestEmail] = useState("");
   const [error, setError] = useState("");
+  const [linkEdit, setLinkEdit] = useState<(ReturnType<typeof selectMergeLink> & { id: string }) | null>(null);
+  const [linkError, setLinkError] = useState("");
   const [dirty, setDirty] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -200,10 +203,29 @@ export function MailMergeManager() {
     if (!editable) return;
     const target = blockInputs.current.get(id), item = blocks.find((entry) => entry.id === id);
     if (!target || !item) return;
-    const next = toggleMergeBold(target.value, target.selectionStart, target.selectionEnd, item.format === "markdown");
+    const next = toggleMergeBold(target.value, target.selectionStart, target.selectionEnd, item.format === "markdown", item.inlineLinks === true);
     if (!next) { toast.info("Bôi đen đoạn nội dung cần in đậm trước."); target.focus(); return; }
     restoreSelection.current = { target, start: next.start, end: next.end };
     patchBlock(id, { text: next.text, format: "markdown" });
+  };
+  const openLink = (id: string) => {
+    if (!editable) return;
+    const target = blockInputs.current.get(id), item = blocks.find((entry) => entry.id === id);
+    if (!target || !item || !["text", "heading"].includes(item.type)) return;
+    try {
+      const selection = selectMergeLink(target.value, target.selectionStart, target.selectionEnd, item.inlineLinks === true, item.format === "markdown");
+      setLinkEdit({ id, ...selection }); setLinkError(""); focusedInput.current = target;
+    } catch (cause) { toast.info((cause as Error).message); }
+  };
+  const saveLink = (remove = false) => {
+    if (!linkEdit || !editable) return;
+    const item = blocks.find((entry) => entry.id === linkEdit.id), target = blockInputs.current.get(linkEdit.id);
+    if (!item || !target) return;
+    try {
+      const next = editMergeLink(item.text, linkEdit.start, linkEdit.end, linkEdit.label, remove ? null : linkEdit.url, item.inlineLinks === true, item.format === "markdown");
+      restoreSelection.current = { target, start: next.start, end: next.end };
+      patchBlock(item.id, { text: next.text, inlineLinks: true }); setLinkEdit(null);
+    } catch (cause) { setLinkError((cause as Error).message); }
   };
   const patchRow = (sourceRow: number, key: string, value: string) => {
     if (!editable) return;
@@ -325,9 +347,9 @@ export function MailMergeManager() {
         <div className="mb-4 flex flex-wrap gap-2">{columns.map((column) => <button key={column.key} type="button" className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-50" disabled={!editable} onMouseDown={(event) => event.preventDefault()} onClick={() => insertField(column.key)}>{column.label} <span className="font-mono font-normal">{`{{${column.key}}}`}</span></button>)}</div>
         <label className="text-sm text-slate-600">Tiêu đề thư<input className={`${fieldClass} mt-1`} value={subject} disabled={!editable} onFocus={(event) => { setFocus("subject"); focusedInput.current = event.target; }} onChange={(event) => { markDirty(); setSubject(event.target.value); }} /></label>
         <div className="mt-4 space-y-3">{blocks.map((item, index) => <div key={item.id} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-          <div className="flex items-center gap-2"><select aria-label={`Loại khối ${index + 1}`} className={`${fieldClass} flex-1`} value={item.type} disabled={!editable} onChange={(event) => patchBlock(item.id, { type: event.target.value as MergeBlock["type"] })}><option value="text">Đoạn văn</option><option value="heading">Tiêu đề</option><option value="image">Hình ảnh</option><option value="button">Nút bấm</option><option value="divider">Đường kẻ</option></select><button className={buttonClass} title="Đưa lên" disabled={!editable || !index} onClick={() => { markDirty(); setBlocks((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; }); }}>↑</button><button className={buttonClass} title="Xóa khối" disabled={!editable} onClick={() => { markDirty(); setBlocks((current) => current.filter((entry) => entry.id !== item.id)); setFocus("subject"); focusedInput.current = null; }}><Trash2 size={14} /></button></div>
-          {!["divider", "image"].includes(item.type) && <div className="flex flex-wrap items-center gap-2"><button type="button" aria-label={`In đậm khối ${index + 1}`} className={buttonClass} disabled={!editable} title="Bôi đen đoạn cần nhấn mạnh, rồi bấm In đậm (Ctrl+B)" onMouseDown={(event) => event.preventDefault()} onClick={() => boldBlock(item.id)}><Bold size={14} /> In đậm</button><span className="text-xs text-slate-500">Chọn đoạn chữ hoặc trường cần nhấn mạnh. Bấm lại để bỏ in đậm.</span></div>}
-          {item.type !== "divider" && <textarea ref={(node) => { if (node) blockInputs.current.set(item.id, node); else blockInputs.current.delete(item.id); }} aria-label={`Nội dung khối ${index + 1}`} rows={item.type === "text" ? 10 : 2} className={`${fieldClass} resize-y leading-relaxed ${item.type === "text" ? "min-h-60" : "min-h-20"}`} value={item.text} placeholder={item.type === "image" ? "Mô tả ảnh" : item.type === "button" ? "Nhãn nút" : "Nội dung…"} disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "text" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { text: event.target.value })} onKeyDown={(event) => { if (item.type !== "image" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") { event.preventDefault(); boldBlock(item.id); } }} />}
+          <div className="flex items-center gap-2"><select aria-label={`Loại khối ${index + 1}`} className={`${fieldClass} flex-1`} value={item.type} disabled={!editable} onChange={(event) => patchBlock(item.id, { type: event.target.value as MergeBlock["type"], inlineLinks: ["text", "heading"].includes(event.target.value) && item.inlineLinks === true })}><option value="text">Đoạn văn</option><option value="heading">Tiêu đề</option><option value="image">Hình ảnh</option><option value="button">Nút bấm</option><option value="divider">Đường kẻ</option></select><button className={buttonClass} title="Đưa lên" disabled={!editable || !index} onClick={() => { markDirty(); setBlocks((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; }); }}>↑</button><button className={buttonClass} title="Xóa khối" disabled={!editable} onClick={() => { markDirty(); setBlocks((current) => current.filter((entry) => entry.id !== item.id)); setFocus("subject"); focusedInput.current = null; }}><Trash2 size={14} /></button></div>
+          {!["divider", "image"].includes(item.type) && <div className="flex flex-wrap items-center gap-2"><button type="button" aria-label={`In đậm khối ${index + 1}`} className={buttonClass} disabled={!editable} title="Bôi đen đoạn cần nhấn mạnh, rồi bấm In đậm (Ctrl+B)" onMouseDown={(event) => event.preventDefault()} onClick={() => boldBlock(item.id)}><Bold size={14} /> In đậm</button>{["text", "heading"].includes(item.type) && <button type="button" aria-label={`Chèn liên kết khối ${index + 1}`} className={buttonClass} disabled={!editable} title="Chọn chữ rồi chèn liên kết (Ctrl+K); chọn lại để sửa hoặc gỡ" onMouseDown={(event) => event.preventDefault()} onClick={() => openLink(item.id)}><LinkIcon size={14} /> Chèn liên kết</button>}<span className="text-xs text-slate-500">Chọn đoạn chữ để định dạng. Chọn lại liên kết để sửa hoặc gỡ.</span></div>}
+          {item.type !== "divider" && <textarea ref={(node) => { if (node) blockInputs.current.set(item.id, node); else blockInputs.current.delete(item.id); }} aria-label={`Nội dung khối ${index + 1}`} rows={item.type === "text" ? 10 : 2} className={`${fieldClass} resize-y leading-relaxed ${item.type === "text" ? "min-h-60" : "min-h-20"}`} value={item.text} placeholder={item.type === "image" ? "Mô tả ảnh" : item.type === "button" ? "Nhãn nút" : "Nội dung…"} disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "text" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { text: event.target.value })} onKeyDown={(event) => { if (item.type !== "image" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") { event.preventDefault(); boldBlock(item.id); } else if (["text", "heading"].includes(item.type) && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); event.stopPropagation(); openLink(item.id); } }} />}
           {["image", "button"].includes(item.type) && <input aria-label={`Liên kết khối ${index + 1}`} className={fieldClass} value={item.url} placeholder="https://… (có thể chèn trường)" disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "url" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { url: event.target.value })} />}
         </div>)}</div>
         <button className={`${buttonClass} mt-3`} disabled={!editable || blocks.length >= 50} onClick={() => { markDirty(); setBlocks((current) => [...current, block()]); }}><Plus size={14} /> Thêm khối</button>
@@ -377,5 +399,21 @@ export function MailMergeManager() {
       {recipients.length > 0 && <><div className="mt-4 flex flex-wrap items-center gap-2"><select aria-label="Lọc trạng thái gửi" className={`${fieldClass} max-w-xs`} value={recipientFilter} onChange={(event) => { setRecipientFilter(event.target.value); setRecipientPage(0); }}><option value="">Tất cả trạng thái</option>{Object.entries(STATUS).map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select><button className={buttonClass} disabled={!currentRecipientPage} onClick={() => setRecipientPage(currentRecipientPage - 1)}>Trước</button><span className="text-xs text-slate-500">Trang {currentRecipientPage + 1} / {Math.max(1, Math.ceil(filteredRecipients.length / 100))}</span><button className={buttonClass} disabled={(currentRecipientPage + 1) * 100 >= filteredRecipients.length} onClick={() => setRecipientPage(currentRecipientPage + 1)}>Sau</button></div><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-2">Dòng</th><th className="p-2">Email</th><th className="p-2">Trạng thái</th><th className="p-2">Mở</th><th className="p-2">Chi tiết</th>{columns.slice(0, 4).map((column) => <th key={column.key} className="p-2">{column.label}</th>)}</tr></thead><tbody>{filteredRecipients.slice(currentRecipientPage * 100, (currentRecipientPage + 1) * 100).map((recipient) => <tr key={recipient.id} className="border-t border-slate-100"><td className="p-2">{recipient.sourceRow}</td><td className="p-2">{recipient.email || "—"}</td><td className={`p-2 font-semibold ${recipient.status === "sent" ? "text-emerald-700" : recipient.status === "failed" || recipient.status === "uncertain" ? "text-red-700" : "text-slate-600"}`}>{STATUS[recipient.status]}</td><td className="p-2 text-slate-600">{recipient.opened_at ? `Có${recipient.open_count && recipient.open_count > 1 ? ` (${recipient.open_count})` : ""}` : "Chưa"}</td><td className="max-w-xs p-2">{recipient.last_error}{recipient.status === "uncertain" && campaign && <div className="mt-1 flex gap-2"><button className="text-sky-700 underline" disabled={busy || running || campaign.status === "running"} onClick={() => void resolve(recipient, "resolve_sent")}>Đã kiểm tra: đã gửi</button><button className="text-amber-700 underline" disabled={busy || running || campaign.status === "running"} onClick={() => void resolve(recipient, "resolve_retry")}>Đã kiểm tra: gửi lại</button></div>}</td>{columns.slice(0, 4).map((column) => <td key={column.key} className="max-w-xs p-2">{recipient.fields[column.key]}</td>)}</tr>)}</tbody></table></div></>}
       {busy && <p className="mt-3 flex items-center gap-2 text-xs text-sky-700"><Loader2 size={13} className="animate-spin" /> Đang xử lý…</p>}
     </div>
+    <Dialog.Root open={!!linkEdit} onOpenChange={(open) => { if (!open) setLinkEdit(null); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[100] bg-sky-900/40 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[100] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-sky-100 bg-white p-5 shadow-2xl" onCloseAutoFocus={(event) => { event.preventDefault(); focusedInput.current?.focus(); }}>
+          <Dialog.Title className="text-base font-semibold text-slate-900">{linkEdit?.existing ? "Sửa liên kết" : "Chèn liên kết"}</Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm text-slate-600">Nhập chữ hiển thị và địa chỉ mở khi người nhận bấm vào chữ đó.</Dialog.Description>
+          <form className="mt-4 space-y-3" onSubmit={(event) => { event.preventDefault(); saveLink(); }}>
+            <label className="block text-sm text-slate-600">Chữ hiển thị<input autoFocus className={`${fieldClass} mt-1`} value={linkEdit?.label ?? ""} onChange={(event) => setLinkEdit((current) => current ? { ...current, label: event.target.value } : current)} /></label>
+            <label className="block text-sm text-slate-600">Địa chỉ liên kết<input className={`${fieldClass} mt-1`} placeholder="https://… hoặc mailto:…" value={linkEdit?.url ?? ""} onChange={(event) => setLinkEdit((current) => current ? { ...current, url: event.target.value } : current)} /></label>
+            <p className="text-xs leading-5 text-slate-500">Có thể dùng trường cá nhân hóa trong chữ hoặc địa chỉ, ví dụ {"{{ho_ten}}"}.</p>
+            {linkError && <p role="alert" className="text-sm text-red-700">{linkError}</p>}
+            <div className="flex flex-wrap justify-end gap-2">{linkEdit?.existing && <button type="button" className={`${buttonClass} mr-auto`} disabled={!editable} onClick={() => saveLink(true)}>Gỡ liên kết</button>}<Dialog.Close asChild><button type="button" className={buttonClass}>Hủy</button></Dialog.Close><button type="submit" className="admin-primary rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50" disabled={!editable}>Áp dụng liên kết</button></div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   </div>;
 }

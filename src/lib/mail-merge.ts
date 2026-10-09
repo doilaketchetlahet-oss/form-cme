@@ -3,7 +3,7 @@ import type { EmailOverlay } from "@/lib/email-template";
 export type MergeColumn = { key: string; label: string };
 export type MergeSourceRow = { sourceRow: number; fields: Record<string, string> };
 export type MergeAttachment = { id: string; name: string; url: string; size?: number; type?: string };
-export type MergeBlock = { id: string; type: "heading" | "text" | "image" | "button" | "divider"; text: string; url: string; format?: "plain" | "markdown" };
+export type MergeBlock = { id: string; type: "heading" | "text" | "image" | "button" | "divider"; text: string; url: string; format?: "plain" | "markdown"; inlineLinks?: boolean };
 export type MergeTemplate = {
   columns: MergeColumn[];
   emailColumn: string;
@@ -86,52 +86,113 @@ export function replaceMergeTokens(template: string, fields: Record<string, stri
   return template.replace(tokenPattern, (token, key: string) => Object.hasOwn(fields, key) ? fields[key] : token);
 }
 
-/** Expand selections across a merge token so formatting never splits its key. */
-export function toggleMergeBold(source: string, start: number, end: number, formatted = false) {
+const inlineLinkPattern = /\[((?:\\.|[^\]\\\r\n])+)\]\((<[^<>\r\n]+>|[^()\s]+)\)/g;
+type InlineLink = { start: number; end: number; labelStart: number; label: string; url: string };
+export function getMergeLinks(source: string): InlineLink[] {
+  return Array.from(source.matchAll(inlineLinkPattern), (match) => ({ start: match.index, end: match.index + match[0].length, labelStart: match.index + 1, label: match[1], url: match[2].startsWith("<") ? match[2].slice(1, -1) : match[2] }));
+}
+
+function mergeSelection(source: string, start: number, end: number) {
   start = Math.max(0, Math.min(start, source.length)); end = Math.max(start, Math.min(end, source.length));
-  if (start === end) return null;
   for (const match of source.matchAll(tokenPattern)) {
     const tokenEnd = match.index + match[0].length;
-    if (start < tokenEnd && end > match.index) { start = Math.min(start, match.index); end = Math.max(end, tokenEnd); }
+    if (start < tokenEnd && end > match.index || start === end && start > match.index && start < tokenEnd) { start = Math.min(start, match.index); end = Math.max(end, tokenEnd); }
   }
-  const characters: { value: string; position: number; bold: boolean }[] = [];
-  const append = (value: string, position: number, bold: boolean) => {
-    for (let i = 0; i < value.length; i++) characters.push({ value: value[i], position: position + i, bold });
-  };
+  return { start, end };
+}
+
+export function validateMergeLink(url: string, allowTokens = false) {
+  if (!url.trim() || url.length > 4000 || /[\u0000-\u001f\u007f<>]/.test(url)) throw new Error("Nhập liên kết HTTP/HTTPS hoặc mailto hợp lệ.");
+  const sample = allowTokens ? url.replace(tokenPattern, "https://example.test/field") : url;
+  let parsed: URL;
+  try { parsed = new URL(sample); } catch { throw new Error("Nhập liên kết HTTP/HTTPS hoặc mailto hợp lệ."); }
+  if (!["http:", "https:", "mailto:"].includes(parsed.protocol)) throw new Error("Liên kết chỉ dùng HTTP/HTTPS hoặc mailto.");
+  return url.trim();
+}
+
+/** Link syntax is enabled explicitly, preserving literal links in old blocks. */
+export function selectMergeLink(source: string, start: number, end: number, linksEnabled = false, formatted = false) {
+  ({ start, end } = mergeSelection(source, start, end));
+  const touched = linksEnabled ? getMergeLinks(source).filter((link) => start < link.end && end > link.start || start === end && start >= link.start && start <= link.end) : [];
+  if (touched.length > 1 || touched.some((link) => start < link.start || end > link.end)) throw new Error("Chọn một đoạn chữ hoặc một liên kết để chỉnh sửa.");
+  if (touched[0]) { start = touched[0].start; end = touched[0].end; }
+  else if (formatted) {
+    // Include complete bold spans when a selection crosses their markers.
+    // A selection wholly inside a bold label keeps its existing outer markers.
+    for (const match of source.matchAll(/\*\*([\s\S]+?)\*\*/g)) {
+      const boldEnd = match.index + match[0].length;
+      if (start < boldEnd && end > match.index && (start < match.index + 2 || end > boldEnd - 2)) {
+        start = Math.min(start, match.index); end = Math.max(end, boldEnd);
+      }
+    }
+    if (linksEnabled && getMergeLinks(source).some((link) => start < link.end && end > link.start)) throw new Error("Chọn một đoạn chữ hoặc một liên kết để chỉnh sửa.");
+  }
+  return { start, end, label: touched[0] ? touched[0].label.replace(/\\([\\\[\]])/g, "$1") : source.slice(start, end), url: touched[0]?.url ?? "", existing: !!touched[0] };
+}
+
+export function editMergeLink(source: string, start: number, end: number, label: string, url: string | null, linksEnabled = false, formatted = false) {
+  ({ start, end } = selectMergeLink(source, start, end, linksEnabled, formatted));
+  if (!label.trim() || /[\r\n]/.test(label)) throw new Error("Nhập chữ hiển thị trên một dòng.");
+  // Escaped brackets keep arbitrary labels from changing the link structure.
+  const escaped = label.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
+  const value = url === null ? label : `[${escaped}](<${validateMergeLink(url, true)}>)`;
+  const text = source.slice(0, start) + value + source.slice(end);
+  if (text.length > 20000) throw new Error("Nội dung khối tối đa 20.000 ký tự.");
+  return { text, start: start + (url === null ? 0 : 1), end: start + (url === null ? label.length : 1 + escaped.length) };
+}
+
+type InlinePart = { text: string; position: number; bold: boolean; link?: InlineLink };
+function mergeTextParts(source: string, formatted: boolean, linksEnabled = false, offset = 0, bold = false, link?: InlineLink): InlinePart[] {
+  const pattern = new RegExp([...(formatted ? ["\\*\\*([\\s\\S]+?)\\*\\*"] : []), ...(linksEnabled ? [inlineLinkPattern.source] : [])].join("|"), "g");
+  if (!formatted && !linksEnabled) return [{ text: source, position: offset, bold, link }];
+  const parts: InlinePart[] = [];
   let position = 0;
-  if (formatted) for (const match of source.matchAll(/\*\*([\s\S]+?)\*\*/g)) {
-    append(source.slice(position, match.index), position, false);
-    append(match[1], match.index + 2, true);
+  for (const match of source.matchAll(pattern)) {
+    parts.push({ text: source.slice(position, match.index), position: offset + position, bold, link });
+    if (formatted && match[0].startsWith("**")) parts.push(...mergeTextParts(match[1], false, linksEnabled, offset + match.index + 2, true, link));
+    else {
+      const label = match[formatted ? 2 : 1], rawUrl = match[formatted ? 3 : 2];
+      const nextLink = { start: offset + match.index, end: offset + match.index + match[0].length, labelStart: offset + match.index + 1, label, url: rawUrl.startsWith("<") ? rawUrl.slice(1, -1) : rawUrl };
+      parts.push(...mergeTextParts(label, formatted, false, nextLink.labelStart, bold, nextLink));
+    }
     position = match.index + match[0].length;
   }
-  append(source.slice(position), position, false);
+  parts.push({ text: source.slice(position), position: offset + position, bold, link });
+  return parts.filter((part) => part.text);
+}
+
+/** Format visible label characters, never a hyperlink's URL or merge key. */
+export function toggleMergeBold(source: string, start: number, end: number, formatted = false, linksEnabled = false) {
+  if (start === end) return null;
+  ({ start, end } = mergeSelection(source, start, end));
+  if (linksEnabled) for (const link of getMergeLinks(source)) for (const match of link.label.matchAll(/\\[\\\[\]]/g)) {
+    const escapedStart = link.labelStart + match.index;
+    if (start < escapedStart + 2 && end > escapedStart) { start = Math.min(start, escapedStart); end = Math.max(end, escapedStart + 2); }
+  }
+  const characters = mergeTextParts(source, formatted, linksEnabled).flatMap((part) => Array.from({ length: part.text.length }, (_, i) => ({ value: part.text[i], position: part.position + i, bold: part.bold, link: part.link })));
   const selected = characters.filter((char) => char.position >= start && char.position < end);
   if (!selected.length) return null;
   const bold = !selected.every((char) => char.bold);
   // Flatten overlapping selections instead of producing nested ** markers.
   let text = "", activeBold = false, selectionStart = -1, selectionEnd = -1;
+  let activeLink: InlineLink | undefined;
   for (const char of characters) {
     const chosen = char.position >= start && char.position < end;
     const nextBold = chosen ? bold : char.bold;
+    if (activeLink !== char.link) {
+      if (activeBold) { text += "**"; activeBold = false; }
+      if (activeLink) text += `](<${activeLink.url}>)`;
+      activeLink = char.link;
+      if (activeLink) text += "[";
+    }
     if (activeBold !== nextBold) { text += "**"; activeBold = nextBold; }
     if (chosen && selectionStart === -1) selectionStart = text.length;
     text += char.value;
     if (chosen) selectionEnd = text.length;
   }
   if (activeBold) text += "**";
+  if (activeLink) text += `](<${activeLink.url}>)`;
   return { text, start: selectionStart, end: selectionEnd };
-}
-
-function mergeTextParts(source: string, formatted: boolean) {
-  if (!formatted) return [{ text: source, bold: false }];
-  const parts: { text: string; bold: boolean }[] = [];
-  let position = 0;
-  for (const match of source.matchAll(/\*\*([\s\S]+?)\*\*/g)) {
-    parts.push({ text: source.slice(position, match.index), bold: false }, { text: match[1], bold: true });
-    position = match.index + match[0].length;
-  }
-  parts.push({ text: source.slice(position), bold: false });
-  return parts;
 }
 
 export function validateMergeTemplate(input: unknown): string | null {
@@ -177,9 +238,14 @@ export function validateMergeTemplate(input: unknown): string | null {
   for (const block of template.blocks) {
     if (!block || typeof block.id !== "string" || !block.id || ids.has(block.id) || !["heading", "text", "image", "button", "divider"].includes(block.type)
       || typeof block.text !== "string" || block.text.length > 20000 || typeof block.url !== "string" || block.url.length > 4000
-      || block.format !== undefined && !["plain", "markdown"].includes(block.format)) return "Khối nội dung không hợp lệ.";
+      || block.format !== undefined && !["plain", "markdown"].includes(block.format)
+      || block.inlineLinks !== undefined && typeof block.inlineLinks !== "boolean") return "Khối nội dung không hợp lệ.";
     ids.add(block.id);
     if ((block.type === "button" || block.type === "image") && !block.url.trim()) return "Nhập liên kết cho hình ảnh / nút bấm.";
+    if (block.inlineLinks && !["text", "heading"].includes(block.type)) return "Liên kết trong chữ chỉ dùng cho đoạn văn / tiêu đề.";
+    if (block.inlineLinks) for (const link of getMergeLinks(block.text)) {
+      try { validateMergeLink(link.url, true); } catch (error) { return (error as Error).message; }
+    }
   }
   const sources = [template.subject, ...template.blocks.flatMap((block) => [block.text, block.url])];
   for (const source of sources) {
@@ -196,13 +262,25 @@ export function renderMergeMail(template: MergeTemplate, fields: Record<string, 
   const paragraphs: string[] = [];
   const parts = template.blocks.map((block) => {
     // Interpret only the author's formatting, before substituting spreadsheet data.
-    const segments = mergeTextParts(block.text, block.format === "markdown").map((part) => ({ ...part, text: replaceMergeTokens(part.text, fields) }));
-    const text = segments.map((part) => part.text).join("");
+    const segments = mergeTextParts(block.text, block.format === "markdown", block.inlineLinks === true);
+    let text = "", safeText = "", activeLink: InlineLink | undefined, activeUrl = "";
+    for (const part of segments) {
+      if (activeLink !== part.link) {
+        if (activeLink) { safeText += "</a>"; text += ` (${activeUrl})`; }
+        activeLink = part.link;
+        if (activeLink) {
+          activeUrl = validateMergeLink(replaceMergeTokens(activeLink.url, fields));
+          safeText += `<a href="${htmlEscape(activeUrl)}" style="color:#0284c7;text-decoration:underline">`;
+        }
+      }
+      const authoredText = part.link ? part.text.replace(/\\([\\\[\]])/g, "$1") : part.text;
+      const value = replaceMergeTokens(authoredText, fields);
+      text += value;
+      const escaped = htmlEscape(value).replace(/\r?\n/g, "<br />");
+      safeText += part.bold ? `<strong style="font-weight:700">${escaped}</strong>` : escaped;
+    }
+    if (activeLink) { safeText += "</a>"; text += ` (${activeUrl})`; }
     const url = replaceMergeTokens(block.url, fields).trim();
-    const safeText = segments.map((part) => {
-      const escaped = htmlEscape(part.text).replace(/\r?\n/g, "<br />");
-      return part.bold ? `<strong style="font-weight:700">${escaped}</strong>` : escaped;
-    }).join("");
     if (block.type === "divider") return '<hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0" />';
     if (block.type === "image" || block.type === "button") {
       let parsed: URL;

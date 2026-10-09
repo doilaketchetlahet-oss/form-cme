@@ -149,6 +149,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   in the template, before inserting escaped cell values. Older blocks without
   this flag retain their plain text, including literal asterisks. Both preview
   and both providers use the same renderer; plain-text mail omits formatting markers.
+- In paragraph/heading blocks, **Chèn liên kết** or Ctrl+K (Cmd+K on Mac)
+  opens a dialog to insert, edit or remove a hyperlink on selected text. Merge
+  fields and bold labels are supported; link targets allow HTTP/HTTPS/mailto only.
+  `inlineLinks: true` enables author-written `[label](<url>)` before substituting
+  escaped cell values, keeping older plain/markdown blocks literal. Bold changes
+  format label characters and never URLs. Both providers and preview share this
+  renderer; plain-text mail includes the destination in parentheses.
 - `/api/admin/mail-merge` requires a writable admin. Campaigns are scoped to the
   creating account and use separate `mail_merge_campaigns` / `mail_merge_recipients`
   tables, with no survey/registration/check-in links. Private keys/passwords use AES-256-GCM
