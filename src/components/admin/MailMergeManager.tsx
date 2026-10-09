@@ -31,6 +31,33 @@ async function api(body?: Record<string, unknown>, id?: string) {
   return result;
 }
 
+function MergeMailPreview({ html }: { html: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [contentHeight, setContentHeight] = useState(440);
+  useEffect(() => {
+    let frame = 0;
+    let cleanup: (() => void) | undefined;
+    const connect = () => {
+      if (!frameRef.current) return;
+      const document = frameRef.current.contentDocument;
+      const content = document?.getElementById("merge-preview-content");
+      // Measure as soon as srcDoc is parsed, without waiting for remote images.
+      if (!document || !content) { frame = requestAnimationFrame(connect); return; }
+      const measure = () => setContentHeight(Math.ceil(Math.max(content.scrollHeight, content.getBoundingClientRect().height)) + 2);
+      const observer = new ResizeObserver(measure);
+      observer.observe(content);
+      const preventNavigation = (event: MouseEvent) => { if ((event.target as Element | null)?.closest?.("a")) event.preventDefault(); };
+      document.addEventListener("click", preventNavigation);
+      cleanup = () => { observer.disconnect(); document.removeEventListener("click", preventNavigation); };
+      measure();
+    };
+    frame = requestAnimationFrame(connect);
+    return () => { cancelAnimationFrame(frame); cleanup?.(); };
+  }, [html]);
+  // Same-origin access is needed only for measuring; scripts remain sandboxed.
+  return <iframe key={html} ref={frameRef} title="Xem trước thư cá nhân hóa" sandbox="allow-same-origin" referrerPolicy="no-referrer" scrolling="no" className="w-full grow rounded-xl border border-slate-200 bg-white" style={{ height: Math.max(440, contentHeight), minHeight: Math.max(440, contentHeight) }} srcDoc={`<!doctype html><html style="overflow:hidden"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0"><main id="merge-preview-content" style="display:flow-root">${html}</main></body></html>`} />;
+}
+
 export function MailMergeManager() {
   const { canManageForms } = useAdminAccess();
   const confirm = useConfirm();
@@ -56,6 +83,7 @@ export function MailMergeManager() {
   const [running, setRunning] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [wideComposer, setWideComposer] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(0);
   const [recipientPage, setRecipientPage] = useState(0);
   const [recipientFilter, setRecipientFilter] = useState("");
   const [focus, setFocus] = useState<{ id: string; field: "text" | "url" } | "subject">("subject");
@@ -63,6 +91,7 @@ export function MailMergeManager() {
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const focusedInput = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const blockInputs = useRef(new Map<string, HTMLTextAreaElement>());
   const restoreSelection = useRef<{ target: HTMLInputElement | HTMLTextAreaElement; start: number; end: number } | null>(null);
@@ -90,6 +119,13 @@ export function MailMergeManager() {
     restoreSelection.current = null;
     if (selection?.target.isConnected) { selection.target.focus(); selection.target.setSelectionRange(selection.start, selection.end); }
   }, [blocks, subject]);
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    const observer = new ResizeObserver(() => setComposerHeight(Math.ceil(composer.getBoundingClientRect().height)));
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [canManageForms]);
 
   const refreshList = useCallback(async () => { const result = await api(); if (mounted.current) setCampaigns(result.campaigns); }, []);
   useEffect(() => {
@@ -272,7 +308,7 @@ export function MailMergeManager() {
       </details>
     </div>
     <div className={`grid items-start gap-5 ${wideComposer ? "" : "xl:grid-cols-2"}`}>
-      <div className={`${cardClass} min-w-0`}>
+      <div ref={composerRef} className={`${cardClass} min-w-0`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 font-semibold text-slate-900"><Mail size={18} className="text-sky-600" /> 2. Soạn nội dung</h2><button type="button" className={`${buttonClass} hidden xl:inline-flex`} aria-expanded={wideComposer} onClick={() => setWideComposer((value) => !value)}>{wideComposer ? <Minimize2 size={14} /> : <Maximize2 size={14} />}{wideComposer ? "Thu gọn vùng soạn" : "Mở rộng vùng soạn"}</button></div>
         <p className="mb-3 text-xs text-slate-500">Đặt con trỏ trong tiêu đề / nội dung / liên kết, rồi bấm trường để chèn. Kéo góc dưới bên phải ô nội dung để tăng chiều cao.</p>
         <div className="mb-4 flex flex-wrap gap-2">{columns.map((column) => <button key={column.key} type="button" className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-50" disabled={!editable} onMouseDown={(event) => event.preventDefault()} onClick={() => insertField(column.key)}>{column.label} <span className="font-mono font-normal">{`{{${column.key}}}`}</span></button>)}</div>
@@ -286,9 +322,9 @@ export function MailMergeManager() {
         <button className={`${buttonClass} mt-3`} disabled={!editable || blocks.length >= 50} onClick={() => { markDirty(); setBlocks((current) => [...current, block()]); }}><Plus size={14} /> Thêm khối</button>
         {issue && rows.length > 0 && <p className="mt-3 text-xs text-amber-700">{issue}</p>}
       </div>
-      <div className={`${cardClass} min-w-0`}>
+      <div className={`${cardClass} flex min-w-0 flex-col`} style={{ minHeight: composerHeight || undefined }}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold text-slate-900">Xem trước từng người nhận</h2><select aria-label="Người nhận xem trước" className={`${fieldClass} max-w-xs`} value={previewIndex} disabled={!rows.length} onChange={(event) => setPreviewIndex(Number(event.target.value))}>{rows.map((row, index) => <option key={row.sourceRow} value={index}>Dòng {row.sourceRow} · {row.fields[emailColumn] || "Chưa có Email"}</option>)}</select></div>
-        {preview ? <><p className="mb-3 text-sm font-semibold text-slate-800">{preview.subject}</p><iframe title="Xem trước thư cá nhân hóa" sandbox="" referrerPolicy="no-referrer" className="h-[440px] w-full rounded-xl border border-slate-200 bg-white" srcDoc={`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0">${preview.html}</body></html>`} /></> : <p className="rounded-xl bg-slate-50 p-8 text-sm text-slate-500">Import danh sách và thêm nội dung để xem thư sẽ gửi.</p>}
+        {preview ? <><p className="mb-3 text-sm font-semibold text-slate-800">{preview.subject}</p><MergeMailPreview html={preview.html} /></> : <p className="rounded-xl bg-slate-50 p-8 text-sm text-slate-500">Import danh sách và thêm nội dung để xem thư sẽ gửi.</p>}
       </div>
     </div>
     <div className={cardClass}>
