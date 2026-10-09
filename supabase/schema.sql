@@ -1115,6 +1115,7 @@ alter table public.mail_merge_recipients add column if not exists open_token_has
 alter table public.mail_merge_recipients add column if not exists opened_at timestamptz;
 alter table public.mail_merge_recipients add column if not exists open_count integer not null default 0;
 alter table public.mail_merge_recipients add column if not exists last_opened_at timestamptz;
+alter table public.mail_merge_campaigns add column if not exists previous_campaign_id uuid references public.mail_merge_campaigns(id) on delete set null;
 update public.mail_merge_recipients set open_count=case when opened_at is null then 0 else 1 end where open_count is null or open_count not in (0,1);
 alter table public.mail_merge_recipients drop constraint if exists mail_merge_recipients_open_count_check;
 alter table public.mail_merge_recipients add constraint mail_merge_recipients_open_count_check check (open_count >= 0 and open_count <= 1);
@@ -1145,6 +1146,33 @@ begin
   insert into mail_merge_recipients(campaign_id,source_row,email,fields,status,last_error)
     select p_id, source_row,email,fields,status,last_error from jsonb_to_recordset(p_rows)
       as r(source_row integer,email text,fields jsonb,status text,last_error text);
+  return p_id;
+end; $$;
+
+-- Each edited sending campaign becomes a separate draft. Old recipient IDs,
+-- tracking tokens and SMTP results stay attached to their original campaign.
+create or replace function public.revise_mail_merge(p_source uuid,p_owner text,p_id uuid)
+returns uuid language plpgsql security definer set search_path=public as $$
+declare c mail_merge_campaigns%rowtype; existing mail_merge_campaigns%rowtype;
+begin
+  if p_id is null or p_id=p_source then raise exception 'INVALID_ID'; end if;
+  select * into c from mail_merge_campaigns where id=p_source and owner_email=p_owner for update;
+  if not found then raise exception 'NOT_FOUND'; end if;
+  -- Retrying the same request must never make another batch or reset its rows.
+  select * into existing from mail_merge_campaigns where id=p_id;
+  if found then
+    if existing.owner_email <> p_owner or existing.previous_campaign_id is distinct from p_source then raise exception 'NOT_FOUND'; end if;
+    return p_id;
+  end if;
+  if c.status='running' or exists(select 1 from mail_merge_recipients where campaign_id=p_source and status='sending') then
+    raise exception 'ACTIVE_DELIVERY';
+  end if;
+  insert into mail_merge_campaigns(id,owner_email,name,template,smtp_public,smtp_secret,previous_campaign_id)
+    values(p_id,p_owner,left(c.name,145) || ' · Đợt mới',c.template,c.smtp_public,c.smtp_secret,p_source);
+  insert into mail_merge_recipients(campaign_id,source_row,email,fields,status,last_error)
+    select p_id,source_row,email,fields,case when status='skipped' then 'skipped' else 'pending' end,
+      case when status='skipped' then last_error else null end
+    from mail_merge_recipients where campaign_id=p_source;
   return p_id;
 end; $$;
 
@@ -1252,9 +1280,11 @@ begin
 end; $$;
 
 revoke all on function public.save_mail_merge(uuid,text,text,jsonb,jsonb,text,jsonb),
+  public.revise_mail_merge(uuid,text,uuid),
   public.control_mail_merge(uuid,text,text,uuid),public.claim_mail_merge(uuid,text),
   public.finish_mail_merge(uuid,text,uuid,text,text,text),public.record_mail_merge_open(uuid,text) from public,anon,authenticated;
 grant execute on function public.save_mail_merge(uuid,text,text,jsonb,jsonb,text,jsonb),
+  public.revise_mail_merge(uuid,text,uuid),
   public.control_mail_merge(uuid,text,text,uuid),public.claim_mail_merge(uuid,text),
   public.finish_mail_merge(uuid,text,uuid,text,text,text),public.record_mail_merge_open(uuid,text) to service_role;
 notify pgrst,'reload schema';

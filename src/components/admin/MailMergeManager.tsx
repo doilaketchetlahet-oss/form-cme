@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bold, Download, FileSpreadsheet, Image as ImageIcon, Loader2, Mail, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
+import { Bold, Copy, Download, FileSpreadsheet, Image as ImageIcon, Loader2, Mail, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
@@ -106,15 +106,18 @@ export function MailMergeManager() {
     if (mounted.current) setCampaign(next);
     return next;
   };
+  const populate = (next: MergeCampaign) => {
+    setName(next.name); setColumns(next.template.columns); setEmailColumn(next.template.emailColumn); setSubject(next.template.subject); setBlocks(next.template.blocks); setCard(next.template.card ?? null); setCardAttachment(next.template.cardAttachment ?? "pdf"); setAttachments(next.template.attachments ?? []); setTrackingEnabled(next.template.trackingEnabled !== false); setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1);
+    setRows((next.recipients ?? []).map(({ sourceRow, fields }) => ({ sourceRow, fields }))); setSmtp({ ...emptySmtp(), ...next.smtp_public, password: "" });
+    setDuplicateEmailPolicy(next.template.duplicateEmailPolicy ?? "skip");
+    setFileName("Danh sách đã lưu"); setPasted(""); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
+    setCampaigns((current) => current.some((item) => item.id === next.id) ? current : [next, ...current]);
+  };
   const open = async (id: string) => {
     if (dirtyRef.current && !await confirm({ title: "Mở chiến dịch khác?", description: "Các chỉnh sửa chưa lưu sẽ được bỏ qua.", confirmText: "Mở chiến dịch" })) return;
     setBusy(true); setError("");
     try {
-      const next = await load(id);
-      setName(next.name); setColumns(next.template.columns); setEmailColumn(next.template.emailColumn); setSubject(next.template.subject); setBlocks(next.template.blocks); setCard(next.template.card ?? null); setCardAttachment(next.template.cardAttachment ?? "pdf"); setAttachments(next.template.attachments ?? []); setTrackingEnabled(next.template.trackingEnabled !== false); setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1);
-      setRows((next.recipients ?? []).map(({ sourceRow, fields }) => ({ sourceRow, fields }))); setSmtp({ ...emptySmtp(), ...next.smtp_public, password: "" });
-      setDuplicateEmailPolicy(next.template.duplicateEmailPolicy ?? "skip");
-      setFileName("Danh sách đã lưu"); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
+      populate(await load(id));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không mở được chiến dịch."); } finally { setBusy(false); }
   };
   const newCampaign = async () => {
@@ -173,6 +176,15 @@ export function MailMergeManager() {
     setBusy(true); setError("");
     try { await task(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Thao tác chưa hoàn tất."); } finally { setBusy(false); }
   };
+  const revise = async () => {
+    if (!campaign || busy || running || campaign.status === "running") return;
+    if (dirtyRef.current && !await confirm({ title: "Tạo bản chỉnh sửa từ dữ liệu đã lưu?", description: "Các thay đổi SMTP chưa lưu sẽ được bỏ qua. Tracking đợt cũ vẫn được giữ.", confirmText: "Tạo bản chỉnh sửa" })) return;
+    await act(async () => {
+      const result = await api({ action: "revise", id: campaign.id, newId: crypto.randomUUID() });
+      populate(await load(result.id)); await refreshList();
+      toast.success("Đã tạo bản nháp để chỉnh sửa. Tracking đợt trước vẫn được giữ.");
+    });
+  };
   const save = () => act(async () => {
     if (issue) throw new Error(issue);
     const id = campaign?.id ?? crypto.randomUUID();
@@ -186,7 +198,7 @@ export function MailMergeManager() {
   const start = async () => {
     if (!campaign) return;
     if (dirtyRef.current) { toast.info("Lưu các chỉnh sửa trước khi gửi."); return; }
-    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua SMTP?`, description: `Chiến dịch “${campaign.name}”. Mỗi dòng có một thư riêng với dữ liệu tương ứng.${campaign.template.duplicateEmailPolicy === "allow" ? " Email xuất hiện ở nhiều dòng sẽ nhận nhiều thư, mỗi thư có thiệp theo dòng đó." : ""}`, confirmText: "Bắt đầu gửi" })) return;
+    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua SMTP?`, description: `Chiến dịch “${campaign.name}”. Mỗi dòng có một thư riêng với dữ liệu tương ứng.${campaign.previous_campaign_id ? " Đây là đợt mới: người đã nhận thư ở đợt trước sẽ nhận thêm thư nếu còn trong danh sách này." : ""}${campaign.template.duplicateEmailPolicy === "allow" ? " Email xuất hiện ở nhiều dòng sẽ nhận nhiều thư, mỗi thư có thiệp theo dòng đó." : ""}`, confirmText: "Bắt đầu gửi" })) return;
     stopRef.current = false; setRunning(true); setError("");
     try {
       await api({ action: "start", id: campaign.id });
@@ -223,10 +235,14 @@ export function MailMergeManager() {
   return <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-8 sm:px-8 sm:py-10">
     <PageHeader title="Gửi mail theo trường" subtitle="Nhập danh sách, chèn trường và gửi từng thư qua tài khoản SMTP của bạn." action={<button className={buttonClass} disabled={busy || running} onClick={() => void newCampaign()}><Plus size={16} /> Chiến dịch mới</button>} />
     <div className="flex flex-wrap items-center gap-3">
-      <select aria-label="Chiến dịch đã lưu" className={`${fieldClass} max-w-lg`} value={campaign?.id ?? ""} disabled={busy || running} onChange={(event) => event.target.value && void open(event.target.value)}><option value="">Mở chiến dịch đã lưu…</option>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.name} · {CAMPAIGN_STATUS[item.status]}</option>)}</select>
+      <select aria-label="Chiến dịch đã lưu" className={`${fieldClass} max-w-lg`} value={campaign?.id ?? ""} disabled={busy || running} onChange={(event) => event.target.value && void open(event.target.value)}><option value="">Mở chiến dịch đã lưu…</option>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.name} · {CAMPAIGN_STATUS[item.status]} · {new Date(item.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</option>)}</select>
       {campaign && <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">{CAMPAIGN_STATUS[campaign.status]}</span>}
       {campaign && <button className={buttonClass} disabled={busy || running} onClick={() => void act(async () => { await load(campaign.id); await refreshList(); })}>Cập nhật trạng thái</button>}
+      {campaign && campaign.status !== "draft" && <button className={buttonClass} disabled={busy || running || campaign.status === "running" || !!counts.sending} onClick={() => void revise()}><Copy size={15} /> Chỉnh sửa / tạo đợt mới</button>}
+      {campaign?.previous_campaign_id && <button className={buttonClass} disabled={busy || running} onClick={() => void open(campaign.previous_campaign_id!)}>Xem tracking đợt trước</button>}
     </div>
+    {campaign?.previous_campaign_id && <p className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-violet-800">Đây là bản chỉnh sửa cho một đợt gửi mới. Bạn có thể sửa dữ liệu, thay Excel, nội dung và thiệp khi còn là bản nháp. Tracking đợt trước được giữ riêng. Khi gửi đợt này, mọi dòng hợp lệ trong danh sách sẽ nhận một thư mới, kể cả người đã nhận ở đợt trước.</p>}
+    {campaign && campaign.status !== "draft" && <p className="text-sm leading-6 text-slate-600">Chọn <strong>Chỉnh sửa / tạo đợt mới</strong> để sửa danh sách hoặc nội dung và giữ lịch sử gửi hiện tại.{campaign.status === "running" || counts.sending ? " Tạm dừng và chờ thư đang xử lý hoàn tất trước khi chỉnh sửa." : ""}</p>}
     {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
     <div className={cardClass}>
       <h2 className="mb-3 flex items-center gap-2 font-semibold text-slate-900"><FileSpreadsheet size={18} className="text-sky-600" /> 1. Danh sách người nhận</h2>
@@ -243,13 +259,13 @@ export function MailMergeManager() {
         <summary className="cursor-pointer text-sm font-semibold text-sky-700">{!campaign || campaign.status === "draft" ? "Sửa dữ liệu đã nhập" : "Xem dữ liệu đã nhập (đã khóa)"}</summary>
         <label className="mt-3 block text-sm text-slate-600">Dòng cần chỉnh sửa<select className={`${fieldClass} mt-1 max-w-lg`} value={Math.min(previewIndex, rows.length - 1)} onChange={(event) => setPreviewIndex(Number(event.target.value))}>{rows.map((row, index) => <option key={row.sourceRow} value={index}>Dòng {row.sourceRow} · {row.fields[emailColumn] || "Chưa có Email"}</option>)}</select></label>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{columns.map((column) => <label key={column.key} className="text-sm text-slate-600">{column.label}<input aria-label={`Dữ liệu ${column.label}`} className={`${fieldClass} mt-1`} maxLength={4000} value={selectedRow.fields[column.key] ?? ""} disabled={!editable} onChange={(event) => patchRow(selectedRow.sourceRow, column.key, event.target.value)} /></label>)}</div>
-        <p className="mt-3 text-xs text-slate-500">{!campaign || campaign.status === "draft" ? "Sửa từng ô tại đây; bản xem trước và kiểm tra Email cập nhật ngay. Bấm Lưu chiến dịch để lưu các thay đổi trước khi gửi." : "Danh sách và nội dung đã khóa sau khi bắt đầu gửi. Tạo chiến dịch mới nếu cần đổi dữ liệu."}</p>
+        <p className="mt-3 text-xs text-slate-500">{!campaign || campaign.status === "draft" ? "Sửa từng ô tại đây; bản xem trước và kiểm tra Email cập nhật ngay. Bấm Lưu chiến dịch để lưu các thay đổi trước khi gửi." : "Đây là dữ liệu của đợt đã bắt đầu gửi. Chọn Chỉnh sửa / tạo đợt mới để thay dữ liệu và giữ tracking đợt này."}</p>
       </details>}
       <details className="mt-4 rounded-xl border border-sky-100 bg-sky-50/50 p-3 sm:p-4">
         <summary className="cursor-pointer text-sm font-semibold text-sky-700"><ImageIcon size={15} className="mr-1 inline" /> Thiệp cá nhân hóa đính kèm</summary>
         <div className="mt-3 space-y-3">
           <p className="text-xs leading-5 text-slate-600">Tải ảnh nền thiệp, kéo các trường vào vị trí tương ứng. Mỗi người sẽ nhận thiệp đã chèn dữ liệu của dòng đó.</p>
-          <EmailOverlayEditor key={cardEditorKey} body={cardBody} surveyTitle={name} questions={cardQuestions} onBodyChange={(value) => { const next = parseEmailTemplate(value).overlay ?? null; setCard(next); markDirty(); }} />
+          <fieldset disabled={!editable} className="min-w-0"><div inert={!editable}><EmailOverlayEditor key={cardEditorKey} body={cardBody} surveyTitle={name} questions={cardQuestions} onBodyChange={(value) => { if (!editable) return; const next = parseEmailTemplate(value).overlay ?? null; setCard(next); markDirty(); }} /></div></fieldset>
           {card && <label className="block max-w-sm text-sm text-slate-600">Định dạng thiệp gửi kèm<select className={`${fieldClass} mt-1`} value={cardAttachment} disabled={!editable} onChange={(event) => { setCardAttachment(event.target.value as MergeTemplate["cardAttachment"]); markDirty(); }}><option value="pdf">PDF cá nhân hóa</option><option value="jpg">Ảnh JPG cá nhân hóa</option><option value="both">PDF + ảnh JPG</option><option value="none">Chỉ hiển thị trong email</option></select></label>}
         </div>
       </details>
@@ -276,7 +292,7 @@ export function MailMergeManager() {
     </div>
     <div className={cardClass}>
       <h2 className="mb-3 flex items-center gap-2 font-semibold text-slate-900"><Paperclip size={18} className="text-sky-600" /> File dùng chung đính kèm</h2>
-      <EmailAttachmentEditor key={attachmentEditorKey} body={attachmentBody} onBodyChange={(value) => { setAttachments(parseEmailTemplate(value).attachments as MergeAttachment[]); markDirty(); }} />
+      <fieldset disabled={!editable} className="min-w-0"><div inert={!editable}><EmailAttachmentEditor key={attachmentEditorKey} body={attachmentBody} onBodyChange={(value) => { if (!editable) return; setAttachments(parseEmailTemplate(value).attachments as MergeAttachment[]); markDirty(); }} /></div></fieldset>
     </div>
     <div className={cardClass}>
       <h2 className="mb-3 font-semibold text-slate-900">3. Tài khoản SMTP</h2>

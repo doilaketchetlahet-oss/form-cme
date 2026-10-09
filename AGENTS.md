@@ -113,10 +113,17 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   dòng** (`duplicateEmailPolicy: "allow"`) so one speaker with multiple reports
   gets a separate personalized email/card per row. Save after switching modes.
   Invalid emails still skip; each row keeps its own send progress/open tracking.
-  The policy is locked after sending starts; SQL identity remains the source row.
+  Each sending batch keeps its policy; SQL identity remains the source row.
 - The recipient section can edit each imported cell while the campaign is a
   draft; preview and email validation update immediately. Save edits before sending.
   The send button is always visible, and is enabled after saving valid data.
+- After sending starts, **Chỉnh sửa / tạo đợt mới** copies the saved list,
+  template, attachments, card and private SMTP account into a separate draft.
+  Pause and wait for any in-flight message first. Edit cells or replace Excel,
+  save, then explicitly send the new batch; all valid rows receive a new email,
+  including recipients of the previous batch. No email is sent when copying.
+  `previous_campaign_id` links back through **Xem tracking đợt trước**; the
+  original recipient IDs, tokens and results stay intact and old pixels still work.
 - A campaign can upload shared files (up to 10 files, 10MB each and 20MB total)
   and can attach a personalized invitation card rendered from the existing
   overlay editor as a JPG, PDF, or both. Each row is rendered server-side before
@@ -137,7 +144,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   tables, with no survey/registration/check-in links. Passwords use AES-256-GCM
   encryption with owner binding; API responses never return encrypted/plain secrets.
 - Save before sending. Keep the tab open; it drains one SMTP message per request.
-  SQL claims serialize across tabs/devices, freeze lists after sending begins,
+  SQL claims serialize across tabs/devices, freeze each batch after sending begins,
   and preserve per-recipient progress. SMTP acceptance means `sent`, not delivery.
   Connection loss with unclear acceptance pauses for operator review; stale claims
   become `uncertain` after 3 minutes and are never automatically resent.

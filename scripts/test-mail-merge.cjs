@@ -218,7 +218,7 @@ function apiHarness() {
       if (reject) return { data: null, error: reject };
       if (name === 'claim_mail_merge') { const job = jobs.shift(); if (!job) return { data: null, error: null }; const { open_token, ...claimed } = job; return { data: { recipient: claimed, open_token, template: stored.template, smtp_public: stored.smtp_public, smtp_secret: stored.smtp_secret }, error: null }; }
       if (name === 'control_mail_merge') return { data: stored.status, error: null };
-      return { data: name === 'save_mail_merge' ? id : true, error: null };
+      return { data: name === 'revise_mail_merge' ? args.p_id : name === 'save_mail_merge' ? id : true, error: null };
     },
   };
   const route = loadSource('src/app/api/admin/mail-merge/route.ts', {
@@ -267,6 +267,22 @@ test('save API retains every report row and rejects unsupported duplicate Email 
   assert.equal(api.calls.length, 0);
 });
 
+test('revision API uses an owner-scoped atomic copy without sending or exposing SMTP credentials', async () => {
+  const api = apiHarness(), newId = randomUUID();
+  const response = await api.post({ action: 'revise', newId });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, id: newId });
+  assert.deepEqual(api.calls, [{ name: 'revise_mail_merge', args: { p_source: api.id, p_owner: owner, p_id: newId } }]);
+  assert.equal(api.sends.length, 0);
+  api.calls.length = 0;
+  for (const invalid of [null, 'invalid', api.id]) assert.equal((await api.post({ action: 'revise', newId: invalid })).status, 400);
+  assert.equal(api.calls.length, 0);
+  api.reject({ message: 'ACTIVE_DELIVERY' });
+  assert.match((await (await api.post({ action: 'revise', newId })).json()).error, /Tạm dừng/);
+  api.deny();
+  assert.equal((await api.post({ action: 'revise', newId })).status, 403);
+});
+
 test('same Email reports send separate personalized messages, cards and tracking URLs', async () => {
   const api = apiHarness();
   const allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow' };
@@ -312,6 +328,67 @@ test('an unexpected error after SMTP starts cannot become an automatically retry
 });
 
 const extra = process.env.MAIL_MERGE_TEST_DEPS ? createRequire(path.join(process.env.MAIL_MERGE_TEST_DEPS, 'package.json')) : null;
+test('PostgreSQL revisions preserve old tracking, credentials and rows while making independently editable drafts', { skip: !extra }, async () => {
+  const { PGlite } = extra('@electric-sql/pglite');
+  const db = new PGlite();
+  try {
+    await db.exec('create role anon; create role authenticated; create role service_role;');
+    const sql = readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8');
+    await db.exec(sql);
+    const source = randomUUID(), next = randomUUID(), allow = { ...reportsTemplate, duplicateEmailPolicy: 'allow', attachments: [{ id: 'file', name: 'slides.pptx', url: 'https://example.test/slides.pptx' }], cardAttachment: 'both' };
+    const rows = merge.prepareMergeRecipients(allow, reports.rows);
+    await db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [source, owner, 'Hai bài', allow, account, 'ciphertext-only', rows]);
+    const revise = async (id = next, who = owner) => (await db.query('select revise_mail_merge($1,$2,$3) result', [source, who, id])).rows[0].result;
+    await assert.rejects(revise(next, 'other@example.test'), /NOT_FOUND/);
+    await assert.rejects(revise(source), /INVALID_ID/);
+    await db.query('select control_mail_merge($1,$2,$3)', [source, owner, 'start']);
+    await assert.rejects(revise(), /ACTIVE_DELIVERY/);
+    const job = (await db.query('select claim_mail_merge($1,$2) result', [source, owner])).rows[0].result;
+    await db.query('select control_mail_merge($1,$2,$3)', [source, owner, 'pause']);
+    await assert.rejects(revise(), /ACTIVE_DELIVERY/); // A paused campaign can still have SMTP in flight.
+    await db.query('select finish_mail_merge($1,$2,$3,$4,$5,$6)', [job.recipient.id, owner, job.recipient.attempt_id, 'sent', 'old-message', null]);
+    const hash = tracking.hashMailMergeOpenToken(job.open_token);
+    await db.query('select record_mail_merge_open($1,$2)', [job.recipient.id, hash]);
+    const before = (await db.query('select * from mail_merge_recipients where campaign_id=$1 order by source_row', [source])).rows;
+    assert.equal(await revise(), next);
+    const copied = (await db.query('select * from mail_merge_campaigns where id=$1', [next])).rows[0];
+    assert.equal(copied.status, 'draft'); assert.equal(copied.previous_campaign_id, source);
+    assert.equal(copied.smtp_secret, 'ciphertext-only'); assert.deepEqual(copied.template, allow);
+    const newRows = (await db.query('select * from mail_merge_recipients where campaign_id=$1 order by source_row', [next])).rows;
+    assert.deepEqual(newRows.map((row) => row.status), ['pending', 'pending', 'skipped']);
+    assert.equal(newRows[0].email, newRows[1].email);
+    for (let index = 0; index < newRows.length; index++) {
+      assert.notEqual(newRows[index].id, before[index].id);
+      assert.deepEqual(newRows[index].fields, before[index].fields);
+      assert.equal(newRows[index].open_token_hash, null); assert.equal(newRows[index].sent_at, null);
+      assert.equal(newRows[index].opened_at, null); assert.equal(newRows[index].open_count, 0);
+    }
+    assert.deepEqual((await db.query('select * from mail_merge_recipients where campaign_id=$1 order by source_row', [source])).rows, before);
+    const replacement = merge.prepareMergeRecipients(allow, [reports.rows[1]]);
+    await db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [next, owner, 'Đợt đã sửa', allow, account, 'ciphertext-only', replacement]);
+    assert.equal(await revise(), next); // Same request id is idempotent even after editing.
+    assert.equal((await db.query('select count(*)::int n from mail_merge_recipients where campaign_id=$1', [next])).rows[0].n, 1);
+    assert.equal((await db.query('select previous_campaign_id from mail_merge_campaigns where id=$1', [next])).rows[0].previous_campaign_id, source);
+    assert.deepEqual((await db.query('select * from mail_merge_recipients where campaign_id=$1 order by source_row', [source])).rows, before);
+    await db.query('update mail_merge_recipients set opened_at=null,open_count=0 where id=$1', [job.recipient.id]);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [job.recipient.id, hash])).rows[0].result, true); // Old pixel still works after the new draft is saved.
+    await db.query('select control_mail_merge($1,$2,$3)', [next, owner, 'start']);
+    const newJob = (await db.query('select claim_mail_merge($1,$2) result', [next, owner])).rows[0].result;
+    assert.notEqual(newJob.open_token, job.open_token);
+    assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [newJob.recipient.id, hash])).rows[0].result, false);
+    await db.query('select finish_mail_merge($1,$2,$3,$4,$5,$6)', [newJob.recipient.id, owner, newJob.recipient.attempt_id, 'sent', 'new-message', null]);
+    await db.query('select claim_mail_merge($1,$2)', [next, owner]);
+    const third = randomUUID();
+    await db.query('select revise_mail_merge($1,$2,$3)', [next, owner, third]);
+    assert.equal((await db.query('select previous_campaign_id from mail_merge_campaigns where id=$1', [third])).rows[0].previous_campaign_id, next);
+    await assert.rejects(revise(third), /NOT_FOUND/); // Cannot reuse a revision ID belonging to another source.
+    await db.exec(sql); // Re-running the migration keeps both tracking histories and links.
+    assert.equal((await db.query('select count(*)::int n from mail_merge_campaigns')).rows[0].n, 3);
+    assert.equal((await db.query('select open_count from mail_merge_recipients where id=$1', [job.recipient.id])).rows[0].open_count, 1);
+    assert.equal((await db.query("select has_function_privilege('authenticated','revise_mail_merge(uuid,text,uuid)','execute') a,has_function_privilege('service_role','revise_mail_merge(uuid,text,uuid)','execute') s")).rows[0].a, false);
+  } finally { await db.close(); }
+});
+
 test('PostgreSQL keeps same Email reports as separate queue entries and open tracking records', { skip: !extra }, async () => {
   const { PGlite } = extra('@electric-sql/pglite');
   const db = new PGlite();

@@ -8,12 +8,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PUBLIC_COLUMNS = "id,name,template,smtp_public,status,created_at";
+const PUBLIC_COLUMNS = "id,previous_campaign_id,name,template,smtp_public,status,created_at";
 type StoredCampaign = { id: string; owner_email: string; template: MergeTemplate; smtp_public: Omit<SmtpAccount, "password">; smtp_secret: string; status: string };
 
 function databaseError(error: { code?: string; message?: string }) {
   if (["42P01", "42703", "PGRST205", "PGRST202"].includes(error.code ?? "")) return "Chạy supabase/mail-merge.sql để khởi tạo hoặc cập nhật tool gửi thư.";
-  if (error.message?.includes("LOCKED_CAMPAIGN")) return "Chiến dịch đã bắt đầu. Tạo chiến dịch mới để đổi nội dung / danh sách.";
+  if (error.message?.includes("ACTIVE_DELIVERY")) return "Tạm dừng và chờ thư đang xử lý hoàn tất trước khi tạo đợt mới.";
+  if (error.message?.includes("LOCKED_CAMPAIGN")) return "Chọn Chỉnh sửa / tạo đợt mới để đổi nội dung hoặc danh sách và giữ tracking đợt cũ.";
   if (error.message?.includes("UNCERTAIN_DELIVERY")) return "Có thư chưa rõ kết quả. Kiểm tra và xử lý các dòng này trước khi tiếp tục.";
   if (error.message?.includes("EMPTY_QUEUE")) return "Không còn thư đang chờ gửi.";
   if (error.message?.includes("NOT_FOUND")) return "Không tìm thấy chiến dịch.";
@@ -63,10 +64,16 @@ export async function POST(request: Request) {
   try { body = JSON.parse(rawBody); } catch { return NextResponse.json({ ok: false, error: "Dữ liệu không hợp lệ." }, { status: 400 }); }
   if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.action !== "string") return NextResponse.json({ ok: false, error: "Dữ liệu không hợp lệ." }, { status: 400 });
   const action = body.action;
-  if (!["save", "account", "verify", "test", "start", "pause", "process", "retry_failed", "resolve_sent", "resolve_retry"].includes(action)) return NextResponse.json({ ok: false, error: "Thao tác không hợp lệ." }, { status: 400 });
+  if (!["save", "revise", "account", "verify", "test", "start", "pause", "process", "retry_failed", "resolve_sent", "resolve_retry"].includes(action)) return NextResponse.json({ ok: false, error: "Thao tác không hợp lệ." }, { status: 400 });
   const id = typeof body.id === "string" ? body.id : "";
   if ((id && !UUID.test(id)) || (!["verify", "test"].includes(action) && !id)) return NextResponse.json({ ok: false, error: "Mã chiến dịch không hợp lệ." }, { status: 400 });
   try {
+    if (action === "revise") {
+      if (typeof body.newId !== "string" || !UUID.test(body.newId) || body.newId === id) throw new Error("Mã đợt gửi mới không hợp lệ.");
+      const result = await auth.service.rpc("revise_mail_merge", { p_source: id, p_owner: auth.email, p_id: body.newId });
+      if (result.error) throw new Error(databaseError(result.error));
+      return NextResponse.json({ ok: true, id: result.data });
+    }
     if (["save", "account", "verify", "test"].includes(action)) {
       const account = validateSmtpAccount(body.smtp);
       let stored: StoredCampaign | null = null;
