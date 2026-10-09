@@ -52,8 +52,8 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`,
   `SMTP_FROM` (when `EMAIL_PROVIDER=smtp`)
 - `MAIL_MERGE_ENCRYPTION_KEY` (optional stable secret for standalone SMTP
-  accounts; defaults to the server-only service-role key. Changing the selected
-  encryption key requires re-entering saved SMTP passwords.)
+  passwords and private Resend keys; defaults to the server-only service-role key.
+  Changing the selected encryption key requires re-entering saved credentials.)
 - `CRON_SECRET` (optional; protects `/api/cron/email-campaigns`)
 - `SUPABASE_DB_URL` (optional after setup; needed by `/admin/permissions` to
   bootstrap role tables and policies from the UI)
@@ -99,7 +99,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - Regression: `node --test scripts/test-checkin-sessions.cjs`; optional real
   PostgreSQL/React checks are documented at the top of that script.
 
-## Standalone SMTP mail merge
+## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
   separated list. The first row supplies column names; Excel reads the first
@@ -107,7 +107,17 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - Select the email column. Other columns become insertion fields such as
   `{{ho_ten}}`, `{{truong}}`; duplicate column labels receive unique keys.
   Compose headings, paragraphs, images, buttons or dividers, then preview each
-  row, configure a private SMTP account, verify the connection and send a test.
+  row, select Resend or a private SMTP account, verify and send a test.
+- **Cách gửi thư → Kênh gửi thư** defaults to Resend for new campaigns, with
+  `bantochuc@vsot.com.vn` as the suggested sender. Resend can use server
+  `RESEND_API_KEY` or a private API key entered in the UI and encrypted for the
+  campaign owner. It does not change `RESEND_FROM` or the check-in mail settings.
+  Saved configs use `smtp_public.provider: "resend"` with `keySource`, sender
+  and reply-to fields; the existing `smtp_secret` holds only the encrypted private
+  key (empty for the server key). Old configs without `provider` remain SMTP.
+  A sending-only Resend key cannot list domains: **Kiểm tra Resend** reports
+  this limitation instead of calling the key invalid or claiming verification.
+  Full-access keys can check the sender domain. Neither check sends an email.
 - **Xử lý Email trùng** defaults to skipping duplicate addresses (also for old
   templates without `duplicateEmailPolicy`). Drafts can select **Gửi riêng từng
   dòng** (`duplicateEmailPolicy: "allow"`) so one speaker with multiple reports
@@ -118,7 +128,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   draft; preview and email validation update immediately. Save edits before sending.
   The send button is always visible, and is enabled after saving valid data.
 - After sending starts, **Chỉnh sửa / tạo đợt mới** copies the saved list,
-  template, attachments, card and private SMTP account into a separate draft.
+  template, attachments, card and saved sender account into a separate draft.
   Pause and wait for any in-flight message first. Edit cells or replace Excel,
   save, then explicitly send the new batch; all valid rows receive a new email,
   including recipients of the previous batch. No email is sent when copying.
@@ -127,7 +137,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - A campaign can upload shared files (up to 10 files, 10MB each and 20MB total)
   and can attach a personalized invitation card rendered from the existing
   overlay editor as a JPG, PDF, or both. Each row is rendered server-side before
-  its SMTP request; the sender never passes remote URLs or file paths to Nodemailer.
+  its delivery request; both providers accept only server-prepared buffers.
 - `survey-uploads` accepts images, PDF, Word, Excel and PowerPoint attachments.
   Existing installations run `supabase/email-attachments.sql` to add document
   MIME types while preserving current limits, custom types and storage policies.
@@ -138,16 +148,22 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   The block's optional `format: "markdown"` interprets only `**bold**` authored
   in the template, before inserting escaped cell values. Older blocks without
   this flag retain their plain text, including literal asterisks. Both preview
-  and SMTP use the same renderer; plain-text mail omits formatting markers.
+  and both providers use the same renderer; plain-text mail omits formatting markers.
 - `/api/admin/mail-merge` requires a writable admin. Campaigns are scoped to the
   creating account and use separate `mail_merge_campaigns` / `mail_merge_recipients`
-  tables, with no survey/registration/check-in links. Passwords use AES-256-GCM
+  tables, with no survey/registration/check-in links. Private keys/passwords use AES-256-GCM
   encryption with owner binding; API responses never return encrypted/plain secrets.
-- Save before sending. Keep the tab open; it drains one SMTP message per request.
+- Save before sending. Keep the tab open; it drains one message per request.
   SQL claims serialize across tabs/devices, freeze each batch after sending begins,
-  and preserve per-recipient progress. SMTP acceptance means `sent`, not delivery.
+  and preserve per-recipient progress. Provider acceptance means `sent`, not delivery.
   Connection loss with unclear acceptance pauses for operator review; stale claims
   become `uncertain` after 3 minutes and are never automatically resent.
+- Resend sends through the fixed HTTPS API with an idempotency key per claimed
+  recipient/attempt, no automatic retries, and the same attachments/cards/open
+  tracking as SMTP. Network errors, 5xx, timeouts or ambiguous responses require
+  operator review; explicit rejections become failed rows. Provider changes require
+  a draft/new batch; paused campaigns can update credentials in their saved provider.
+  No additional SQL migration is needed for Resend on an initialized mail-merge DB.
 - SMTP uses the entered account (TLS or mandatory STARTTLS), independently of
   `EMAIL_PROVIDER` and the existing check-in sender. Public DNS/IP checks prevent
   the custom host from accessing LAN/metadata endpoints. No real test messages
@@ -161,7 +177,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   the same tables/RPCs. RLS and revoked browser privileges keep credentials private.
 - Regression: `node --test scripts/test-mail-merge.cjs`; optional SQL dependency
   setup is documented there. `node scripts/test-mail-merge-ui.cjs` exercises XLSX,
-  field insertion, preview, SMTP form and mobile layout against mocked APIs
+  field insertion, preview, Resend/SMTP forms and mobile layout against mocked APIs
   (requires Playwright; its dependency directory can be set via `MAIL_MERGE_UI_DEPS`).
 
 ## Tools & mini-games (added)

@@ -8,12 +8,12 @@ const { createRequire } = require('node:module');
 const { randomUUID } = require('node:crypto');
 const { test } = require('node:test');
 const ts = require('typescript');
-function loadSource(file, mocks = {}) {
+function loadSource(file, mocks = {}, globals = {}) {
   const { outputText } = ts.transpileModule(readFileSync(path.join(__dirname, '..', file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true }, fileName: file,
   });
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', outputText)((name) => Object.hasOwn(mocks, name) ? mocks[name] : require(name), module, module.exports);
+  new Function('require', 'module', 'exports', ...Object.keys(globals), outputText)((name) => Object.hasOwn(mocks, name) ? mocks[name] : require(name), module, module.exports, ...Object.values(globals));
   return module.exports;
 }
 const merge = loadSource('src/lib/mail-merge.ts');
@@ -201,6 +201,89 @@ test('SMTP resolves only public addresses, requires TLS and treats an uncertain 
   assert.equal((await h.smtp.sendMergeSmtp(account, mail)).status, 'failed');
 });
 
+const resendAccount = { keySource: 'server', apiKey: '', fromEmail: 'bantochuc@vsot.com.vn', fromName: 'Ban tổ chức', replyTo: '' };
+function deliveryHarness(fetchResponse = async () => new Response(JSON.stringify({ id: 'resend-test-message' }), { status: 200 }), smtpOverrides = {}) {
+  const { smtp } = smtpHarness(), requests = [];
+  const delivery = loadSource('src/lib/server/mail-merge-delivery.ts', {
+    '@/lib/mail-merge': merge, './mail-merge-smtp': { ...smtp, ...smtpOverrides },
+  }, { process: { env: { RESEND_API_KEY: 're_test_server_key' } }, fetch: async (url, input) => { requests.push({ url, input }); return fetchResponse(url, input); } });
+  return { delivery, smtp, requests, sender: delivery.prepareMergeSender({ provider: 'resend', resend: resendAccount }, null, owner).sender };
+}
+
+test('sender config preserves legacy SMTP and keeps private Resend keys encrypted and owner-bound', () => {
+  const { delivery, smtp } = deliveryHarness();
+  const legacy = delivery.prepareMergeSender({ smtp: account }, null, owner);
+  assert.equal(legacy.publicAccount.provider, 'smtp');
+  assert.equal(smtp.decryptSmtpPassword(legacy.secret, owner), account.password);
+  const oldPublic = { ...legacy.publicAccount }; delete oldPublic.provider;
+  assert.equal(delivery.restoreMergeSender({ smtp_public: oldPublic, smtp_secret: legacy.secret }, owner).account.password, account.password);
+  const server = delivery.prepareMergeSender({ provider: 'resend', resend: { ...resendAccount, apiKey: 're_browser_key_is_ignored' } }, null, owner);
+  assert.equal(server.sender.account.apiKey, 're_test_server_key'); assert.equal(server.secret, '');
+  assert.equal(Object.hasOwn(server.publicAccount, 'apiKey'), false);
+  const privateConfig = { ...resendAccount, keySource: 'private', apiKey: 're_test_private_key' };
+  const saved = delivery.prepareMergeSender({ provider: 'resend', resend: privateConfig }, null, owner);
+  assert.ok(!JSON.stringify({ public: saved.publicAccount, secret: saved.secret }).includes(privateConfig.apiKey));
+  const stored = { smtp_public: saved.publicAccount, smtp_secret: saved.secret };
+  assert.equal(delivery.restoreMergeSender(stored, owner).account.apiKey, privateConfig.apiKey);
+  assert.throws(() => delivery.restoreMergeSender(stored, 'other@example.test'), /Nhập lại/);
+  assert.throws(() => delivery.prepareMergeSender({ smtp: { ...account, password: '' } }, stored, owner), /mật khẩu SMTP/);
+  assert.throws(() => delivery.prepareMergeSender({ provider: 'resend', resend: { ...privateConfig, apiKey: '' } }, { smtp_public: legacy.publicAccount, smtp_secret: legacy.secret }, owner), /API key Resend hợp lệ/);
+  assert.throws(() => delivery.prepareMergeSender({ provider: 'other', resend: privateConfig }, null, owner), /Kênh/);
+  for (const patch of [{ fromEmail: 'x@vsot.com.vn\r\nBcc:x@example.test' }, { fromName: '<x>' }, { replyTo: 'two@example.test,one@example.test' }, { keySource: 'other' }, { apiKey: 're_secret\n' }]) {
+    assert.throws(() => delivery.prepareMergeSender({ provider: 'resend', resend: { ...privateConfig, ...patch } }, null, owner));
+  }
+});
+
+test('Resend sends one personalized message with buffers, tracking, reply-to and an idempotency key', async () => {
+  const h = deliveryHarness();
+  h.sender.account.fromName = 'Ban "tổ chức"'; h.sender.account.replyTo = 'reply@vsot.com.vn';
+  const mail = { ...merge.renderMergeMail(template, table.rows[0].fields, { trackingPixelUrl: 'https://example.test/api/mail-merge/open/id?token=opaque' }), to: 'an@example.test', attachments: [{ filename: 'invite.pdf', content: Buffer.from('personalized-pdf'), contentType: 'application/pdf' }, { filename: 'slides.pptx', content: Buffer.from('slides') }] };
+  assert.deepEqual(await h.delivery.sendMergeMessage(h.sender, mail, 'row/attempt'), { status: 'sent', messageId: 'resend-test-message' });
+  assert.equal(h.requests.length, 1);
+  const { url, input } = h.requests[0], body = JSON.parse(input.body);
+  assert.equal(url, 'https://api.resend.com/emails'); assert.equal(input.method, 'POST');
+  assert.equal(input.headers['Idempotency-Key'], 'mail-merge/row/attempt');
+  assert.equal(input.headers.Authorization, 'Bearer re_test_server_key');
+  assert.equal(body.from, '"Ban \\"tổ chức\\"" <bantochuc@vsot.com.vn>');
+  assert.deepEqual(body.to, ['an@example.test']); assert.equal(body.reply_to, 'reply@vsot.com.vn');
+  assert.equal(body.subject, 'Gửi Nguyễn An tại Đại học A'); assert.ok(body.html.includes('/api/mail-merge/open/'));
+  assert.equal(body.attachments[0].content_type, 'application/pdf');
+  assert.equal(Buffer.from(body.attachments[0].content, 'base64').toString(), 'personalized-pdf');
+  assert.equal(body.attachments[1].filename, 'slides.pptx');
+  assert.ok(body.attachments.every((file) => !Object.hasOwn(file, 'path')));
+});
+
+test('Resend failures are safe, ambiguous outcomes need review and no request is automatically retried', async () => {
+  const mail = { to: 'an@example.test', subject: 'Test', html: '<p>Test</p>', text: 'Test' };
+  for (const [status, expected] of [[400,'failed'],[401,'failed'],[403,'failed'],[429,'failed'],[408,'uncertain'],[409,'uncertain'],[500,'uncertain'],[503,'uncertain']]) {
+    const h = deliveryHarness(async () => new Response(JSON.stringify({ name: 'daily_quota_exceeded', message: 'provider-secret-data' }), { status }));
+    const outcome = await h.delivery.sendMergeMessage(h.sender, mail, 'row/attempt');
+    assert.equal(outcome.status, expected, String(status)); assert.ok(!outcome.error.includes('provider-secret-data'));
+    assert.equal(h.requests.length, 1);
+  }
+  for (const response of [async () => { throw new Error('network-secret'); }, async () => new Response('not-json'), async () => new Response(JSON.stringify({ accepted: true }))]) {
+    const h = deliveryHarness(response);
+    assert.equal((await h.delivery.sendMergeMessage(h.sender, mail, 'row/attempt')).status, 'uncertain'); assert.equal(h.requests.length, 1);
+  }
+  const h = deliveryHarness();
+  assert.equal((await h.delivery.sendMergeMessage(h.sender, { ...mail, attachments: [{ filename: 'x', content: 'https://example.test/file' }] }, 'row/attempt')).status, 'failed');
+  assert.equal(h.requests.length, 0);
+});
+
+test('Resend checks sending-only keys honestly and verifies full-key domain status without sending mail', async () => {
+  const restricted = deliveryHarness(async () => new Response(JSON.stringify({ name: 'restricted_api_key', message: 'This API key is restricted to only send emails' }), { status: 401 }));
+  assert.equal((await restricted.delivery.verifyMergeSender(restricted.sender)).limited, true);
+  assert.ok(restricted.requests.every((call) => call.url.startsWith('https://api.resend.com/domains')));
+  const verified = deliveryHarness(async (url) => new Response(JSON.stringify(url.includes('&after=') ? { data: [{ name: 'VSOT.COM.VN', status: 'verified', capabilities: { sending: 'enabled' } }] } : { data: [{ id: 'domain1', name: 'other.test' }], has_more: true })));
+  assert.match((await verified.delivery.verifyMergeSender(verified.sender)).message, /vsot.com.vn/); assert.equal(verified.requests.length, 2);
+  for (const body of [{ data: [{ name: 'vsot.com.vn', status: 'pending' }] }, { data: [{ name: 'vsot.com.vn', status: 'verified', capabilities: { sending: 'disabled' } }] }, { data: [{ name: 123 }] }, { invalid: true }]) {
+    const h = deliveryHarness(async () => new Response(JSON.stringify(body)));
+    await assert.rejects(h.delivery.verifyMergeSender(h.sender));
+  }
+  const invalid = deliveryHarness(async () => new Response(JSON.stringify({ name: 'restricted_api_key', message: 'inactive' }), { status: 403 }));
+  await assert.rejects(invalid.delivery.verifyMergeSender(invalid.sender), /từ chối quyền gửi/);
+});
+
 function apiHarness() {
   const id = randomUUID(), recipient = randomUUID(), attempt = randomUUID();
   const stored = { id, owner_email: owner, name: 'Mail merge', template, smtp_public: { ...account, password: undefined }, smtp_secret: 'encrypted-test', status: 'running' };
@@ -208,7 +291,7 @@ function apiHarness() {
   let jobs = [{ id: recipient, attempt_id: attempt, email: 'an@example.test', fields: table.rows[0].fields, open_token: 'a'.repeat(64) }];
   const service = {
     from(tableName) {
-      const query = { select(columns) { query.columns = columns; return query; }, eq(key, value) { if (key === 'owner_email') assert.equal(value, owner); return query; }, order() { return query; }, limit() { return query; }, range() { return query; },
+      const query = { update(value) { calls.push({ name: 'update_account', args: value }); return query; }, select(columns) { query.columns = columns; return query; }, eq(key, value) { if (key === 'owner_email') assert.equal(value, owner); return query; }, order() { return query; }, limit() { return query; }, range() { return query; },
         async maybeSingle() { const publicResult = query.columns === '*' ? stored : Object.fromEntries(query.columns.split(',').map((key) => [key, stored[key]])); return { data: publicResult, error: null }; },
         then(resolve) { return Promise.resolve({ data: tableName === 'mail_merge_recipients' ? [{ id: recipient, source_row: 2, fields: table.rows[0].fields, status: 'sent' }] : [], error: null }).then(resolve); },
       }; return query;
@@ -221,11 +304,14 @@ function apiHarness() {
       return { data: name === 'revise_mail_merge' ? args.p_id : name === 'save_mail_merge' ? id : true, error: null };
     },
   };
+  const transport = deliveryHarness(async (_url, input) => { sends.push({ provider: 'resend', mail: JSON.parse(input.body), headers: input.headers }); if (sendError) throw new Error('test unexpected transport failure'); return new Response(JSON.stringify({ id: 'test-id' })); }, {
+    decryptSmtpPassword: () => account.password, encryptSmtpPassword: () => 'ciphertext-test', verifyMergeSmtp: async () => true,
+    sendMergeSmtp: async (smtp, mail) => { sends.push({ smtp, mail }); if (sendError) throw new Error('test unexpected transport failure'); return { status: 'sent', messageId: 'test-id' }; },
+  });
   const route = loadSource('src/app/api/admin/mail-merge/route.ts', {
     '@/lib/mail-merge': merge,
     '@/lib/server/admin-api': { authorizeAdminApi: async (_request, writable) => { assert.equal(writable, true); return authError || { email: owner, service }; } },
-    '@/lib/server/mail-merge-smtp': { validateSmtpAccount: (value) => value, decryptSmtpPassword: () => account.password, encryptSmtpPassword: () => 'ciphertext-test', verifyMergeSmtp: async () => true,
-      sendMergeSmtp: async (smtp, mail) => { sends.push({ smtp, mail }); if (sendError) throw new Error('test unexpected transport failure'); return { status: 'sent', messageId: 'test-id' }; } },
+    '@/lib/server/mail-merge-delivery': transport.delivery,
     '@/lib/server/mail-merge-attachments': { resolveMailMergeTemplateAttachments: async (value, fields) => { attachmentCalls.push({ value, fields }); return [{ filename: 'invite.pdf', content: Buffer.from(fields.bai_bao_cao || 'pdf'), contentType: 'application/pdf' }]; } },
   });
   return { id, calls, sends, attachmentCalls, stored, deny: () => { authError = { error: 'Denied', status: 403 }; }, reject: (e) => { reject = e; }, failSend: () => { sendError = true; },
@@ -265,6 +351,51 @@ test('save API retains every report row and rejects unsupported duplicate Email 
   api.calls.length = 0;
   assert.equal((await api.post({ action: 'save', name: 'Sai cấu hình', smtp: account, template: { ...allow, duplicateEmailPolicy: 'merge' }, rows: reports.rows })).status, 400);
   assert.equal(api.calls.length, 0);
+});
+
+test('Resend API saves secret-free public config and sends tests and claimed rows through the saved provider', async () => {
+  const api = apiHarness(); api.stored.status = 'draft';
+  const input = { provider: 'resend', resend: resendAccount };
+  assert.equal((await api.post({ action: 'save', name: 'Resend', template, rows: table.rows, ...input })).status, 200);
+  const saved = api.calls.find((call) => call.name === 'save_mail_merge').args;
+  assert.deepEqual(saved.p_smtp, { provider: 'resend', keySource: 'server', fromEmail: 'bantochuc@vsot.com.vn', fromName: 'Ban tổ chức', replyTo: '' });
+  assert.equal(saved.p_secret, ''); assert.equal(api.sends.length, 0);
+  api.stored.smtp_public = saved.p_smtp; api.stored.smtp_secret = saved.p_secret;
+  const view = await (await api.get()).json(); assert.equal(view.campaign.hasPassword, false);
+  assert.ok(!JSON.stringify(view).includes('re_test_server_key'));
+  assert.equal((await api.post({ action: 'test', template, row: table.rows[0], to: 'qa@example.test', ...input })).status, 200);
+  assert.equal(api.sends.length, 1); assert.deepEqual(api.sends[0].mail.to, ['qa@example.test']);
+  assert.equal(api.sends[0].mail.subject, '[Gửi thử] Gửi Nguyễn An tại Đại học A');
+  assert.ok(!api.sends[0].mail.html.includes('/api/mail-merge/open/'));
+  assert.match(api.sends[0].headers['Idempotency-Key'], /^mail-merge\/test\//);
+  api.stored.status = 'running';
+  assert.equal((await api.post({ action: 'process', provider: 'smtp' })).status, 200); // Claimed config wins over client input.
+  assert.equal(api.sends[1].provider, 'resend'); assert.ok(api.sends[1].mail.html.includes('/api/mail-merge/open/'));
+  assert.equal(Buffer.from(api.sends[1].mail.attachments[0].content, 'base64').toString(), 'pdf');
+  assert.equal(api.calls.find((call) => call.name === 'finish_mail_merge').args.p_status, 'sent');
+  assert.equal((await api.post({ action: 'account', smtp: account })).status, 400); // Cannot change providers on an active batch.
+  api.stored.status = 'paused';
+  assert.equal((await api.post({ action: 'account', smtp: account })).status, 400);
+  assert.equal((await api.post({ action: 'account', ...input })).status, 200);
+  const privateInput = { provider: 'resend', resend: { ...resendAccount, keySource: 'private', apiKey: 're_test_private_key' } };
+  api.calls.length = 0; api.stored.status = 'draft';
+  const response = await api.post({ action: 'save', name: 'Private Resend', template, rows: table.rows, ...privateInput });
+  assert.equal(response.status, 200); assert.ok(!(await response.text()).includes(privateInput.resend.apiKey));
+  const privateSaved = api.calls.find((call) => call.name === 'save_mail_merge').args;
+  assert.equal(privateSaved.p_secret, 'ciphertext-test'); assert.equal(Object.hasOwn(privateSaved.p_smtp, 'apiKey'), false);
+  api.stored.smtp_public = privateSaved.p_smtp; api.stored.smtp_secret = privateSaved.p_secret;
+  const privateView = await (await api.get()).json(); assert.equal(privateView.campaign.hasPassword, true);
+  assert.ok(!JSON.stringify(privateView).includes('ciphertext-test')); assert.ok(!JSON.stringify(privateView).includes(privateInput.resend.apiKey));
+  assert.equal((await api.post({ action: 'verify', provider: 'resend', resend: { ...resendAccount, fromEmail: 'bad-address' } })).status, 400);
+});
+
+test('an ambiguous Resend response is persisted as uncertain using the existing review flow', async () => {
+  const api = apiHarness();
+  api.stored.smtp_public = { ...resendAccount, apiKey: undefined, provider: 'resend' }; api.stored.smtp_secret = '';
+  api.failSend();
+  const result = await (await api.post({ action: 'process' })).json();
+  assert.equal(result.status, 'uncertain'); assert.equal(api.sends.length, 1);
+  assert.equal(api.calls.find((call) => call.name === 'finish_mail_merge').args.p_status, 'uncertain');
 });
 
 test('revision API uses an owner-scoped atomic copy without sending or exposing SMTP credentials', async () => {
@@ -328,6 +459,33 @@ test('an unexpected error after SMTP starts cannot become an automatically retry
 });
 
 const extra = process.env.MAIL_MERGE_TEST_DEPS ? createRequire(path.join(process.env.MAIL_MERGE_TEST_DEPS, 'package.json')) : null;
+test('existing PostgreSQL schema stores, claims and copies Resend configs without changing historical SMTP records', { skip: !extra }, async () => {
+  const { PGlite } = extra('@electric-sql/pglite'), db = new PGlite();
+  try {
+    await db.exec('create role anon; create role authenticated; create role service_role;');
+    await db.exec(readFileSync(path.join(__dirname, '../supabase/mail-merge.sql'), 'utf8'));
+    const oldId = randomUUID();
+    await db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [oldId, owner, 'Legacy', template, account, 'old-ciphertext', merge.prepareMergeRecipients(template, table.rows)]);
+    const before = (await db.query('select * from mail_merge_campaigns where id=$1', [oldId])).rows[0];
+    for (const keySource of ['server', 'private']) {
+      const id = randomUUID(), next = randomUUID();
+      const config = { provider: 'resend', keySource, fromEmail: resendAccount.fromEmail, fromName: resendAccount.fromName, replyTo: '' }, secret = keySource === 'server' ? '' : 'resend-encrypted-key';
+      await db.query('select save_mail_merge($1,$2,$3,$4,$5,$6,$7)', [id, owner, 'Resend', template, config, secret, merge.prepareMergeRecipients(template, table.rows)]);
+      await db.query('select control_mail_merge($1,$2,$3)', [id, owner, 'start']);
+      const claim = (await db.query('select claim_mail_merge($1,$2) result', [id, owner])).rows[0].result;
+      assert.deepEqual(claim.smtp_public, config); assert.equal(claim.smtp_secret, secret);
+      await db.query('select finish_mail_merge($1,$2,$3,$4,$5,$6)', [claim.recipient.id, owner, claim.recipient.attempt_id, 'sent', 'resend-test', null]);
+      await db.query('select control_mail_merge($1,$2,$3)', [id, owner, 'pause']);
+      await db.query('select revise_mail_merge($1,$2,$3)', [id, owner, next]);
+      const copied = (await db.query('select * from mail_merge_campaigns where id=$1', [next])).rows[0];
+      assert.deepEqual(copied.smtp_public, config); assert.equal(copied.smtp_secret, secret); assert.equal(copied.previous_campaign_id, id);
+      const hash = tracking.hashMailMergeOpenToken(claim.open_token);
+      assert.equal((await db.query('select record_mail_merge_open($1,$2) result', [claim.recipient.id, hash])).rows[0].result, true);
+    }
+    assert.deepEqual((await db.query('select * from mail_merge_campaigns where id=$1', [oldId])).rows[0], before);
+  } finally { await db.close(); }
+});
+
 test('PostgreSQL revisions preserve old tracking, credentials and rows while making independently editable drafts', { skip: !extra }, async () => {
   const { PGlite } = extra('@electric-sql/pglite');
   const db = new PGlite();

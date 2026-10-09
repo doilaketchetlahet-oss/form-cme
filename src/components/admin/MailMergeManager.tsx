@@ -6,14 +6,15 @@ import { supabase } from "@/lib/supabase";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { useConfirm } from "@/lib/ui/confirm";
 import { PageHeader } from "./PageHeader";
-import { mergeTable, parseMergeText, prepareMergeRecipients, renderMergeMail, toggleMergeBold, validateMergeTemplate, type MergeAttachment, type MergeBlock, type MergeCampaign, type MergeColumn, type MergeRecipient, type MergeSourceRow, type MergeTemplate, type SmtpAccount } from "@/lib/mail-merge";
+import { DEFAULT_MERGE_RESEND_FROM, mergeTable, parseMergeText, prepareMergeRecipients, renderMergeMail, toggleMergeBold, validateMergeTemplate, type MergeAttachment, type MergeBlock, type MergeCampaign, type MergeColumn, type MergeProvider, type MergeRecipient, type MergeResendAccount, type MergeSourceRow, type MergeTemplate, type SmtpAccount } from "@/lib/mail-merge";
 import { EmailAttachmentEditor } from "./EmailAttachmentEditor";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 import { parseEmailTemplate, serializeEmailTemplate, type EmailMergeQuestion, type EmailOverlay } from "@/lib/email-template";
 
 const emptySmtp = (): SmtpAccount => ({ host: "", port: 587, secure: false, user: "", password: "", fromEmail: "", fromName: "", replyTo: "" });
+const emptyResend = (): MergeResendAccount => ({ keySource: "server", apiKey: "", fromEmail: DEFAULT_MERGE_RESEND_FROM, fromName: "Ban tổ chức", replyTo: "" });
 const block = (type: MergeBlock["type"] = "text"): MergeBlock => ({ id: crypto.randomUUID(), type, text: type === "heading" ? "Thư mời" : type === "text" ? "Kính gửi Quý khách,\n\nTrân trọng kính mời Quý khách tham dự chương trình." : "", url: "" });
-const STATUS: Record<MergeRecipient["status"], string> = { pending: "Chờ gửi", sending: "Đang gửi", sent: "SMTP đã nhận", failed: "Lỗi", uncertain: "Cần kiểm tra", skipped: "Bỏ qua" };
+const STATUS: Record<MergeRecipient["status"], string> = { pending: "Chờ gửi", sending: "Đang gửi", sent: "Đã gửi", failed: "Lỗi", uncertain: "Cần kiểm tra", skipped: "Bỏ qua" };
 const CAMPAIGN_STATUS: Record<MergeCampaign["status"], string> = { draft: "Bản nháp", running: "Đang gửi", paused: "Tạm dừng", completed: "Hoàn tất" };
 const fieldClass = "admin-field w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none disabled:opacity-60";
 const cardClass = "glass-strong rounded-2xl border border-slate-200 p-5";
@@ -77,6 +78,8 @@ export function MailMergeManager() {
   const [cardEditorKey, setCardEditorKey] = useState(0);
   const [attachmentEditorKey, setAttachmentEditorKey] = useState(0);
   const [smtp, setSmtp] = useState<SmtpAccount>(emptySmtp);
+  const [provider, setProvider] = useState<MergeProvider>("resend");
+  const [resend, setResend] = useState<MergeResendAccount>(emptyResend);
   const [pasted, setPasted] = useState("");
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -99,6 +102,10 @@ export function MailMergeManager() {
   const dirtyRef = useRef(false);
   const mounted = useRef(true);
   const editable = (!campaign || campaign.status === "draft") && !busy && !running;
+  const accountEditable = !busy && !running && campaign?.status !== "running";
+  const senderInput = provider === "resend" ? { provider, resend } : { provider, smtp };
+  const hasPrivateResendKey = campaign?.smtp_public?.provider === "resend" && campaign.smtp_public.keySource === "private" && campaign.hasPassword;
+  const hasSmtpPassword = campaign?.smtp_public?.provider !== "resend" && campaign?.hasPassword;
   const template: MergeTemplate = useMemo(() => ({ columns, emailColumn, duplicateEmailPolicy, subject, blocks, card, cardAttachment, attachments, trackingEnabled }), [columns, emailColumn, duplicateEmailPolicy, subject, blocks, card, cardAttachment, attachments, trackingEnabled]);
   const cardQuestions: EmailMergeQuestion[] = useMemo(() => columns.map((column) => ({ id: column.key, text: column.label, type: "text" })), [columns]);
   const cardBody = useMemo(() => serializeEmailTemplate({ v: 1, includeBlocks: false, includeOverlay: true, blocks: [], overlay: card, attachments: [] }), [card]);
@@ -136,6 +143,7 @@ export function MailMergeManager() {
   const markDirty = () => { dirtyRef.current = true; setDirty(true); };
   const clearDirty = () => { dirtyRef.current = false; setDirty(false); };
   const patchSmtp = (patch: Partial<SmtpAccount>) => { markDirty(); setSmtp((current) => ({ ...current, ...patch })); };
+  const patchResend = (patch: Partial<MergeResendAccount>) => { markDirty(); setResend((current) => ({ ...current, ...patch })); };
 
   const load = async (id: string) => {
     const result = await api(undefined, id);
@@ -145,7 +153,9 @@ export function MailMergeManager() {
   };
   const populate = (next: MergeCampaign) => {
     setName(next.name); setColumns(next.template.columns); setEmailColumn(next.template.emailColumn); setSubject(next.template.subject); setBlocks(next.template.blocks); setCard(next.template.card ?? null); setCardAttachment(next.template.cardAttachment ?? "pdf"); setAttachments(next.template.attachments ?? []); setTrackingEnabled(next.template.trackingEnabled !== false); setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1);
-    setRows((next.recipients ?? []).map(({ sourceRow, fields }) => ({ sourceRow, fields }))); setSmtp({ ...emptySmtp(), ...next.smtp_public, password: "" });
+    setRows((next.recipients ?? []).map(({ sourceRow, fields }) => ({ sourceRow, fields }))); setSmtp(next.smtp_public?.provider === "resend" ? emptySmtp() : { ...emptySmtp(), ...next.smtp_public, password: "" });
+    setProvider(next.smtp_public?.provider === "resend" ? "resend" : "smtp");
+    setResend(next.smtp_public?.provider === "resend" ? { ...emptyResend(), ...next.smtp_public, apiKey: "" } : emptyResend());
     setDuplicateEmailPolicy(next.template.duplicateEmailPolicy ?? "skip");
     setFileName("Danh sách đã lưu"); setPasted(""); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
     setCampaigns((current) => current.some((item) => item.id === next.id) ? current : [next, ...current]);
@@ -161,6 +171,7 @@ export function MailMergeManager() {
     if (dirtyRef.current && !await confirm({ title: "Tạo chiến dịch mới?", description: "Các chỉnh sửa chưa lưu sẽ được bỏ qua.", confirmText: "Tạo mới" })) return;
     setCampaign(null); setName("Chiến dịch gửi thư mới"); setColumns([]); setRows([]); setEmailColumn(""); setSubject("Thư mời tham dự chương trình"); setBlocks([]); setCard(null); setCardAttachment("pdf"); setAttachments([]); setTrackingEnabled(true); setSmtp(emptySmtp()); setFileName(""); setPasted(""); setPreviewIndex(0); setError(""); setFocus("subject"); focusedInput.current = null; setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1); clearDirty();
     setDuplicateEmailPolicy("skip");
+    setProvider("resend"); setResend(emptyResend());
   };
 
   const importMatrix = (matrix: string[][], label: string) => {
@@ -215,7 +226,7 @@ export function MailMergeManager() {
   };
   const revise = async () => {
     if (!campaign || busy || running || campaign.status === "running") return;
-    if (dirtyRef.current && !await confirm({ title: "Tạo bản chỉnh sửa từ dữ liệu đã lưu?", description: "Các thay đổi SMTP chưa lưu sẽ được bỏ qua. Tracking đợt cũ vẫn được giữ.", confirmText: "Tạo bản chỉnh sửa" })) return;
+    if (dirtyRef.current && !await confirm({ title: "Tạo bản chỉnh sửa từ dữ liệu đã lưu?", description: "Các thay đổi tài khoản gửi chưa lưu sẽ được bỏ qua. Tracking đợt cũ vẫn được giữ.", confirmText: "Tạo bản chỉnh sửa" })) return;
     await act(async () => {
       const result = await api({ action: "revise", id: campaign.id, newId: crypto.randomUUID() });
       populate(await load(result.id)); await refreshList();
@@ -225,17 +236,17 @@ export function MailMergeManager() {
   const save = () => act(async () => {
     if (issue) throw new Error(issue);
     const id = campaign?.id ?? crypto.randomUUID();
-    await api({ action: "save", id, name, template, rows, smtp });
-    await load(id); setSmtp((value) => ({ ...value, password: "" })); clearDirty(); await refreshList(); toast.success("Đã lưu danh sách, mẫu thư và SMTP.");
+    await api({ action: "save", id, name, template, rows, ...senderInput });
+    await load(id); setSmtp((value) => ({ ...value, password: "" })); setResend((value) => ({ ...value, apiKey: "" })); clearDirty(); await refreshList(); toast.success("Đã lưu danh sách, mẫu thư và tài khoản gửi.");
   });
   const saveAccount = () => act(async () => {
-    await api({ action: "account", id: campaign?.id, smtp }); setSmtp((value) => ({ ...value, password: "" })); clearDirty(); toast.success("Đã cập nhật SMTP.");
+    await api({ action: "account", id: campaign?.id, ...senderInput }); await load(campaign!.id); setSmtp((value) => ({ ...value, password: "" })); setResend((value) => ({ ...value, apiKey: "" })); clearDirty(); toast.success("Đã cập nhật tài khoản gửi.");
   });
 
   const start = async () => {
     if (!campaign) return;
     if (dirtyRef.current) { toast.info("Lưu các chỉnh sửa trước khi gửi."); return; }
-    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua SMTP?`, description: `Chiến dịch “${campaign.name}”. Mỗi dòng có một thư riêng với dữ liệu tương ứng.${campaign.previous_campaign_id ? " Đây là đợt mới: người đã nhận thư ở đợt trước sẽ nhận thêm thư nếu còn trong danh sách này." : ""}${campaign.template.duplicateEmailPolicy === "allow" ? " Email xuất hiện ở nhiều dòng sẽ nhận nhiều thư, mỗi thư có thiệp theo dòng đó." : ""}`, confirmText: "Bắt đầu gửi" })) return;
+    if (!await confirm({ title: `Gửi ${counts.pending ?? 0} thư qua ${provider === "resend" ? "Resend" : "SMTP"}?`, description: `Chiến dịch “${campaign.name}”. Mỗi dòng có một thư riêng với dữ liệu tương ứng.${campaign.previous_campaign_id ? " Đây là đợt mới: người đã nhận thư ở đợt trước sẽ nhận thêm thư nếu còn trong danh sách này." : ""}${campaign.template.duplicateEmailPolicy === "allow" ? " Email xuất hiện ở nhiều dòng sẽ nhận nhiều thư, mỗi thư có thiệp theo dòng đó." : ""}`, confirmText: "Bắt đầu gửi" })) return;
     stopRef.current = false; setRunning(true); setError("");
     try {
       await api({ action: "start", id: campaign.id });
@@ -244,7 +255,7 @@ export function MailMergeManager() {
         const result = await api({ action: "process", id: campaign.id });
         if (result.processed) {
           setCampaign((value) => value ? { ...value, status: result.status === "sent" ? value.status : "paused", recipients: value.recipients?.map((row) => row.id === result.recipientId ? { ...row, status: result.status, last_error: result.error ?? null, sent_at: result.status === "sent" ? new Date().toISOString() : null } : row) } : value);
-          if (result.status !== "sent") { setError(result.error ?? "SMTP chưa xác nhận thư."); break; }
+          if (result.status !== "sent") { setError(result.error ?? "Chưa xác nhận kết quả gửi thư."); break; }
         } else {
           const next = await load(campaign.id);
           if (next.status !== "running") break;
@@ -259,7 +270,7 @@ export function MailMergeManager() {
     await act(async () => { await api({ action: "pause", id: campaign?.id }); await load(campaign!.id); toast.info("Đã tạm dừng. Thư đang xử lý sẽ hoàn tất trước khi dừng."); });
   };
   const resolve = async (recipient: MergeRecipient, action: "resolve_sent" | "resolve_retry") => {
-    if (!await confirm({ title: action === "resolve_sent" ? "Đánh dấu đã gửi?" : "Gửi lại dòng này?", description: action === "resolve_sent" ? "Chọn khi đã kiểm tra SMTP / hộp thư và xác nhận thư đã được gửi." : "Chỉ chọn khi đã kiểm tra thư chưa được gửi. Nếu SMTP đã nhận, người nhận có thể nhận thêm một thư.", confirmText: action === "resolve_sent" ? "Đã kiểm tra, đánh dấu" : "Đã kiểm tra, cho gửi lại" })) return;
+    if (!await confirm({ title: action === "resolve_sent" ? "Đánh dấu đã gửi?" : "Gửi lại dòng này?", description: action === "resolve_sent" ? "Chọn khi đã kiểm tra dịch vụ gửi / hộp thư và xác nhận thư đã được gửi." : "Chỉ chọn khi đã kiểm tra thư chưa được gửi. Nếu dịch vụ đã nhận, người nhận có thể nhận thêm một thư.", confirmText: action === "resolve_sent" ? "Đã kiểm tra, đánh dấu" : "Đã kiểm tra, cho gửi lại" })) return;
     await act(async () => { await api({ action, id: campaign?.id, recipientId: recipient.id }); await load(campaign!.id); });
   };
   const exportResults = () => {
@@ -270,7 +281,7 @@ export function MailMergeManager() {
 
   if (!canManageForms) return <p className="mx-4 my-8 rounded-xl bg-slate-100 p-5 text-slate-600 sm:mx-8 sm:my-10">Tool dành cho tài khoản quản trị có quyền chỉnh sửa.</p>;
   return <div className="mx-auto w-full max-w-[1600px] space-y-5 px-4 py-8 sm:px-8 sm:py-10">
-    <PageHeader title="Gửi mail theo trường" subtitle="Nhập danh sách, chèn trường và gửi từng thư qua tài khoản SMTP của bạn." action={<button className={buttonClass} disabled={busy || running} onClick={() => void newCampaign()}><Plus size={16} /> Chiến dịch mới</button>} />
+    <PageHeader title="Gửi mail theo trường" subtitle="Nhập danh sách, chèn trường và gửi từng thư qua Resend hoặc SMTP." action={<button className={buttonClass} disabled={busy || running} onClick={() => void newCampaign()}><Plus size={16} /> Chiến dịch mới</button>} />
     <div className="flex flex-wrap items-center gap-3">
       <select aria-label="Chiến dịch đã lưu" className={`${fieldClass} max-w-lg`} value={campaign?.id ?? ""} disabled={busy || running} onChange={(event) => event.target.value && void open(event.target.value)}><option value="">Mở chiến dịch đã lưu…</option>{campaigns.map((item) => <option key={item.id} value={item.id}>{item.name} · {CAMPAIGN_STATUS[item.status]} · {new Date(item.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</option>)}</select>
       {campaign && <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">{CAMPAIGN_STATUS[campaign.status]}</span>}
@@ -332,27 +343,36 @@ export function MailMergeManager() {
       <fieldset disabled={!editable} className="min-w-0"><div inert={!editable}><EmailAttachmentEditor key={attachmentEditorKey} body={attachmentBody} onBodyChange={(value) => { if (!editable) return; setAttachments(parseEmailTemplate(value).attachments as MergeAttachment[]); markDirty(); }} /></div></fieldset>
     </div>
     <div className={cardClass}>
-      <h2 className="mb-3 font-semibold text-slate-900">3. Tài khoản SMTP</h2>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {([{ key: "host", label: "Máy chủ SMTP", placeholder: "smtp.gmail.com" }, { key: "user", label: "Tài khoản đăng nhập", placeholder: "ten@example.com" }, { key: "password", label: campaign?.hasPassword ? "Mật khẩu (để trống để giữ mật khẩu đã lưu)" : "Mật khẩu / mật khẩu ứng dụng", placeholder: "Mật khẩu SMTP" }, { key: "fromEmail", label: "Địa chỉ Email gửi", placeholder: "ten@example.com" }, { key: "fromName", label: "Tên hiển thị người gửi", placeholder: "Ban tổ chức" }, { key: "replyTo", label: "Email nhận trả lời (tùy chọn)", placeholder: "lienhe@example.com" }] as const).map(({ key, label, placeholder }) => <label key={key} className="text-sm text-slate-600">{label}<input className={`${fieldClass} mt-1`} type={key === "password" ? "password" : "text"} autoComplete={key === "password" ? "new-password" : "off"} placeholder={placeholder} value={smtp[key]} disabled={busy || running || campaign?.status === "running"} onChange={(event) => patchSmtp({ [key]: event.target.value })} /></label>)}
+      <h2 className="mb-3 font-semibold text-slate-900">3. Cách gửi thư</h2>
+      <label className="mb-4 block max-w-sm text-sm text-slate-600">Kênh gửi thư<select aria-label="Kênh gửi thư" className={`${fieldClass} mt-1`} value={provider} disabled={!editable} onChange={(event) => { setProvider(event.target.value as MergeProvider); markDirty(); }}><option value="resend">Resend · Email theo tên miền riêng</option><option value="smtp">SMTP · Tài khoản riêng</option></select></label>
+      {provider === "resend" ? <div className="space-y-3">
+        <p className="text-sm leading-6 text-slate-600">Gửi qua tên miền đã xác minh trong tài khoản Resend. Địa chỉ gợi ý: <strong>{DEFAULT_MERGE_RESEND_FROM}</strong>. Thiệp, file đính kèm và tracking được giữ nguyên.</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="text-sm text-slate-600">Nguồn API key Resend<select aria-label="Nguồn API key Resend" className={`${fieldClass} mt-1`} value={resend.keySource} disabled={!accountEditable} onChange={(event) => patchResend({ keySource: event.target.value as MergeResendAccount["keySource"], apiKey: "" })}><option value="server">Dùng khóa hệ thống</option><option value="private">Nhập khóa riêng cho chiến dịch</option></select></label>
+          {resend.keySource === "private" && <label className="text-sm text-slate-600">{hasPrivateResendKey ? "API key Resend (để trống để giữ khóa đã lưu)" : "API key Resend"}<input type="password" autoComplete="new-password" className={`${fieldClass} mt-1`} value={resend.apiKey} disabled={!accountEditable} placeholder="re_…" onChange={(event) => patchResend({ apiKey: event.target.value })} /></label>}
+          {([{ key: "fromEmail", label: "Địa chỉ Email gửi qua Resend" }, { key: "fromName", label: "Tên hiển thị người gửi qua Resend" }, { key: "replyTo", label: "Email nhận trả lời qua Resend (tùy chọn)" }] as const).map(({ key, label }) => <label key={key} className="text-sm text-slate-600">{label}<input className={`${fieldClass} mt-1`} value={resend[key]} disabled={!accountEditable} onChange={(event) => patchResend({ [key]: event.target.value })} /></label>)}
+        </div>
+        <p className="text-xs leading-5 text-slate-500">{resend.keySource === "server" ? "Dùng API key đã cấu hình trên hệ thống. Nếu tên miền thuộc tài khoản Resend khác, hãy chọn Nhập khóa riêng cho chiến dịch." : "API key được mã hóa trên server và không được trả về trình duyệt sau khi lưu. Không cần mật khẩu hộp thư hay cấu hình SMTP."}</p>
+      </div> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {([{ key: "host", label: "Máy chủ SMTP", placeholder: "smtp.gmail.com" }, { key: "user", label: "Tài khoản đăng nhập", placeholder: "ten@example.com" }, { key: "password", label: hasSmtpPassword ? "Mật khẩu (để trống để giữ mật khẩu đã lưu)" : "Mật khẩu / mật khẩu ứng dụng", placeholder: "Mật khẩu SMTP" }, { key: "fromEmail", label: "Địa chỉ Email gửi", placeholder: "ten@example.com" }, { key: "fromName", label: "Tên hiển thị người gửi", placeholder: "Ban tổ chức" }, { key: "replyTo", label: "Email nhận trả lời (tùy chọn)", placeholder: "lienhe@example.com" }] as const).map(({ key, label, placeholder }) => <label key={key} className="text-sm text-slate-600">{label}<input className={`${fieldClass} mt-1`} type={key === "password" ? "password" : "text"} autoComplete={key === "password" ? "new-password" : "off"} placeholder={placeholder} value={smtp[key]} disabled={busy || running || campaign?.status === "running"} onChange={(event) => patchSmtp({ [key]: event.target.value })} /></label>)}
         <label className="text-sm text-slate-600">Cổng SMTP<input type="number" className={`${fieldClass} mt-1`} value={smtp.port} disabled={busy || running || campaign?.status === "running"} onChange={(event) => patchSmtp({ port: Number(event.target.value) })} /></label>
         <label className="text-sm text-slate-600">Mã hóa kết nối<select className={`${fieldClass} mt-1`} value={smtp.secure ? "tls" : "starttls"} disabled={busy || running || campaign?.status === "running"} onChange={(event) => patchSmtp({ secure: event.target.value === "tls", port: event.target.value === "tls" ? 465 : 587 })}><option value="starttls">STARTTLS (thường dùng cổng 587)</option><option value="tls">TLS trực tiếp (thường dùng cổng 465)</option></select></label>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2"><button className={buttonClass} disabled={busy || running} onClick={() => void act(async () => { await api({ action: "verify", ...(campaign ? { id: campaign.id } : {}), smtp }); toast.success("SMTP kết nối và đăng nhập thành công."); })}>Kiểm tra SMTP</button>{campaign && campaign.status !== "draft" && <button className={buttonClass} disabled={busy || running || campaign.status === "running"} onClick={() => void saveAccount()}>Lưu SMTP</button>}</div>
-      <p className="mt-2 text-xs text-slate-500">Mật khẩu được mã hóa phía server. Chỉ tài khoản tạo chiến dịch có thể mở danh sách và dùng cấu hình này.</p>
+      </div>}
+      <div className="mt-4 flex flex-wrap gap-2"><button className={buttonClass} disabled={!accountEditable} onClick={() => void act(async () => { const result = await api({ action: "verify", ...(campaign ? { id: campaign.id } : {}), ...senderInput }); if (result.limited) toast.info(result.message); else toast.success(result.message || "Đã kiểm tra kết nối gửi thư."); })}>Kiểm tra {provider === "resend" ? "Resend" : "SMTP"}</button>{campaign && campaign.status !== "draft" && <button className={buttonClass} disabled={!accountEditable} onClick={() => void saveAccount()}>Lưu tài khoản gửi</button>}</div>
+      <p className="mt-2 text-xs text-slate-500">Mật khẩu và API key riêng được mã hóa phía server. Chỉ tài khoản tạo chiến dịch có thể mở danh sách và dùng cấu hình này.</p>
       <label className="mt-4 flex items-start gap-2 text-sm text-slate-700"><input type="checkbox" checked={trackingEnabled} disabled={!editable} onChange={(event) => { setTrackingEnabled(event.target.checked); markDirty(); }} className="mt-0.5 h-4 w-4 accent-sky-600" /><span><strong>Theo dõi mở thư</strong><span className="mt-0.5 block text-xs text-slate-500">Chèn ảnh theo dõi 1px. Một số ứng dụng email chặn ảnh nên số liệu chỉ là lượt mở được ghi nhận.</span></span></label>
     </div>
     <div className={cardClass}>
       <h2 className="mb-3 font-semibold text-slate-900">4. Gửi thử và gửi danh sách</h2>
-      <div className="flex flex-wrap gap-2"><input aria-label="Email nhận thư thử" className={`${fieldClass} max-w-sm`} value={testEmail} onChange={(event) => setTestEmail(event.target.value)} placeholder="Email nhận thư thử" /><button className={buttonClass} disabled={busy || running || !!issue || !selectedRow || !testEmail} onClick={() => void act(async () => { await api({ action: "test", ...(campaign ? { id: campaign.id } : {}), smtp, template, row: selectedRow, to: testEmail }); toast.success("SMTP đã nhận thư thử. Kiểm tra hộp thư của bạn."); })}><Send size={14} /> Gửi thử dòng đang xem</button></div>
+      <div className="flex flex-wrap gap-2"><input aria-label="Email nhận thư thử" className={`${fieldClass} max-w-sm`} value={testEmail} onChange={(event) => setTestEmail(event.target.value)} placeholder="Email nhận thư thử" /><button className={buttonClass} disabled={busy || running || !!issue || !selectedRow || !testEmail} onClick={() => void act(async () => { await api({ action: "test", ...(campaign ? { id: campaign.id } : {}), ...senderInput, template, row: selectedRow, to: testEmail }); toast.success(`${provider === "resend" ? "Resend" : "SMTP"} đã nhận thư thử. Kiểm tra hộp thư của bạn.`); })}><Send size={14} /> Gửi thử dòng đang xem</button></div>
       <div className="mt-4 flex flex-wrap items-center gap-2">{(!campaign || campaign.status === "draft") && <button className="admin-primary rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50" disabled={!editable || !!issue || !rows.length} onClick={() => void save()}>Lưu chiến dịch</button>}
         <button className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" disabled={!campaign || dirty || busy || running || !(counts.pending || counts.sending)} onClick={() => void start()}>{running ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} {running ? "Đang gửi…" : "Gửi / tiếp tục"}</button>
         {campaign && (running || campaign.status === "running") && <button className={buttonClass} disabled={busy} onClick={() => void pause()}><Pause size={14} /> Tạm dừng</button>}
         {campaign && counts.failed > 0 && <button className={buttonClass} disabled={busy || running || campaign.status === "running"} onClick={() => void act(async () => { await api({ action: "retry_failed", id: campaign.id }); await load(campaign.id); })}>Đưa thư lỗi vào hàng chờ</button>}
         <button className={buttonClass} disabled={!recipients.length} onClick={exportResults}><Download size={14} /> Xuất kết quả CSV</button>
       </div>
-      {(!campaign || campaign.status === "draft") && <p className="mt-3 text-xs text-sky-700">Bấm Lưu chiến dịch để lưu danh sách, nội dung và SMTP, rồi bấm Gửi / tiếp tục. Khi chỉnh sửa, cần lưu lại trước khi gửi.</p>}
-      <p className="mt-3 text-xs text-slate-500">Giữ tab mở khi gửi. Mỗi lần gửi một thư riêng; có thể tạm dừng và mở lại chiến dịch để tiếp tục. “SMTP đã nhận” chưa phải xác nhận người nhận đã đọc thư.</p>
+      {(!campaign || campaign.status === "draft") && <p className="mt-3 text-xs text-sky-700">Bấm Lưu chiến dịch để lưu danh sách, nội dung và tài khoản gửi, rồi bấm Gửi / tiếp tục. Khi chỉnh sửa, cần lưu lại trước khi gửi.</p>}
+      <p className="mt-3 text-xs text-slate-500">Giữ tab mở khi gửi. Mỗi lần gửi một thư riêng; có thể tạm dừng và mở lại chiến dịch để tiếp tục. “Đã gửi” nghĩa là dịch vụ gửi đã nhận thư, chưa phải xác nhận người nhận đã đọc thư.</p>
       <div className="mt-4 flex flex-wrap gap-2">{Object.entries(STATUS).map(([status, label]) => <span key={status} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">{label}: {counts[status] ?? 0}</span>)}{campaign?.template.trackingEnabled !== false && <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">Đã mở: {openedCount}{counts.sent ? ` / ${counts.sent}` : ""}</span>}</div>
       {recipients.length > 0 && <><div className="mt-4 flex flex-wrap items-center gap-2"><select aria-label="Lọc trạng thái gửi" className={`${fieldClass} max-w-xs`} value={recipientFilter} onChange={(event) => { setRecipientFilter(event.target.value); setRecipientPage(0); }}><option value="">Tất cả trạng thái</option>{Object.entries(STATUS).map(([status, label]) => <option key={status} value={status}>{label}</option>)}</select><button className={buttonClass} disabled={!currentRecipientPage} onClick={() => setRecipientPage(currentRecipientPage - 1)}>Trước</button><span className="text-xs text-slate-500">Trang {currentRecipientPage + 1} / {Math.max(1, Math.ceil(filteredRecipients.length / 100))}</span><button className={buttonClass} disabled={(currentRecipientPage + 1) * 100 >= filteredRecipients.length} onClick={() => setRecipientPage(currentRecipientPage + 1)}>Sau</button></div><div className="mt-3 overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-2">Dòng</th><th className="p-2">Email</th><th className="p-2">Trạng thái</th><th className="p-2">Mở</th><th className="p-2">Chi tiết</th>{columns.slice(0, 4).map((column) => <th key={column.key} className="p-2">{column.label}</th>)}</tr></thead><tbody>{filteredRecipients.slice(currentRecipientPage * 100, (currentRecipientPage + 1) * 100).map((recipient) => <tr key={recipient.id} className="border-t border-slate-100"><td className="p-2">{recipient.sourceRow}</td><td className="p-2">{recipient.email || "—"}</td><td className={`p-2 font-semibold ${recipient.status === "sent" ? "text-emerald-700" : recipient.status === "failed" || recipient.status === "uncertain" ? "text-red-700" : "text-slate-600"}`}>{STATUS[recipient.status]}</td><td className="p-2 text-slate-600">{recipient.opened_at ? `Có${recipient.open_count && recipient.open_count > 1 ? ` (${recipient.open_count})` : ""}` : "Chưa"}</td><td className="max-w-xs p-2">{recipient.last_error}{recipient.status === "uncertain" && campaign && <div className="mt-1 flex gap-2"><button className="text-sky-700 underline" disabled={busy || running || campaign.status === "running"} onClick={() => void resolve(recipient, "resolve_sent")}>Đã kiểm tra: đã gửi</button><button className="text-amber-700 underline" disabled={busy || running || campaign.status === "running"} onClick={() => void resolve(recipient, "resolve_retry")}>Đã kiểm tra: gửi lại</button></div>}</td>{columns.slice(0, 4).map((column) => <td key={column.key} className="max-w-xs p-2">{recipient.fields[column.key]}</td>)}</tr>)}</tbody></table></div></>}
       {busy && <p className="mt-3 flex items-center gap-2 text-xs text-sky-700"><Loader2 size={13} className="animate-spin" /> Đang xử lý…</p>}

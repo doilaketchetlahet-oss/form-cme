@@ -16,8 +16,12 @@ export type MergeTemplate = {
   duplicateEmailPolicy?: "skip" | "allow";
 };
 export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string };
+export type MergeProvider = "smtp" | "resend";
+export type MergeResendAccount = { keySource: "server" | "private"; apiKey: string; fromEmail: string; fromName: string; replyTo: string };
+export type MergeSenderPublic = (Omit<SmtpAccount, "password"> & { provider?: "smtp" }) | (Omit<MergeResendAccount, "apiKey"> & { provider: "resend" });
+export const DEFAULT_MERGE_RESEND_FROM = "bantochuc@vsot.com.vn";
 export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null; opened_at?: string | null; open_count?: number; last_opened_at?: string | null };
-export type MergeCampaign = { id: string; previous_campaign_id?: string | null; name: string; template: MergeTemplate; smtp_public: Omit<SmtpAccount, "password"> | null; hasPassword: boolean; status: "draft" | "running" | "paused" | "completed"; created_at: string; recipients?: MergeRecipient[]; tracking?: { sent: number; opened: number } };
+export type MergeCampaign = { id: string; previous_campaign_id?: string | null; name: string; template: MergeTemplate; smtp_public: MergeSenderPublic | null; hasPassword: boolean; status: "draft" | "running" | "paused" | "completed"; created_at: string; recipients?: MergeRecipient[]; tracking?: { sent: number; opened: number } };
 
 export const MAX_MERGE_ROWS = 5000;
 export const MAX_MERGE_COLUMNS = 60;
