@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bold, Copy, Download, FileSpreadsheet, Image as ImageIcon, Loader2, Mail, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
+import { Bold, Copy, Download, FileSpreadsheet, Image as ImageIcon, Loader2, Mail, Maximize2, Minimize2, Paperclip, Pause, Plus, Send, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
@@ -55,6 +55,7 @@ export function MailMergeManager() {
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [wideComposer, setWideComposer] = useState(false);
   const [recipientPage, setRecipientPage] = useState(0);
   const [recipientFilter, setRecipientFilter] = useState("");
   const [focus, setFocus] = useState<{ id: string; field: "text" | "url" } | "subject">("subject");
@@ -270,22 +271,22 @@ export function MailMergeManager() {
         </div>
       </details>
     </div>
-    <div className="grid items-start gap-5 xl:grid-cols-2">
-      <div className={cardClass}>
-        <h2 className="mb-3 flex items-center gap-2 font-semibold text-slate-900"><Mail size={18} className="text-sky-600" /> 2. Soạn nội dung</h2>
-        <p className="mb-3 text-xs text-slate-500">Đặt con trỏ trong tiêu đề / nội dung / liên kết, rồi bấm trường để chèn.</p>
+    <div className={`grid items-start gap-5 ${wideComposer ? "" : "xl:grid-cols-2"}`}>
+      <div className={`${cardClass} min-w-0`}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 font-semibold text-slate-900"><Mail size={18} className="text-sky-600" /> 2. Soạn nội dung</h2><button type="button" className={`${buttonClass} hidden xl:inline-flex`} aria-expanded={wideComposer} onClick={() => setWideComposer((value) => !value)}>{wideComposer ? <Minimize2 size={14} /> : <Maximize2 size={14} />}{wideComposer ? "Thu gọn vùng soạn" : "Mở rộng vùng soạn"}</button></div>
+        <p className="mb-3 text-xs text-slate-500">Đặt con trỏ trong tiêu đề / nội dung / liên kết, rồi bấm trường để chèn. Kéo góc dưới bên phải ô nội dung để tăng chiều cao.</p>
         <div className="mb-4 flex flex-wrap gap-2">{columns.map((column) => <button key={column.key} type="button" className="rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 disabled:opacity-50" disabled={!editable} onMouseDown={(event) => event.preventDefault()} onClick={() => insertField(column.key)}>{column.label} <span className="font-mono font-normal">{`{{${column.key}}}`}</span></button>)}</div>
         <label className="text-sm text-slate-600">Tiêu đề thư<input className={`${fieldClass} mt-1`} value={subject} disabled={!editable} onFocus={(event) => { setFocus("subject"); focusedInput.current = event.target; }} onChange={(event) => { markDirty(); setSubject(event.target.value); }} /></label>
         <div className="mt-4 space-y-3">{blocks.map((item, index) => <div key={item.id} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
           <div className="flex items-center gap-2"><select aria-label={`Loại khối ${index + 1}`} className={`${fieldClass} flex-1`} value={item.type} disabled={!editable} onChange={(event) => patchBlock(item.id, { type: event.target.value as MergeBlock["type"] })}><option value="text">Đoạn văn</option><option value="heading">Tiêu đề</option><option value="image">Hình ảnh</option><option value="button">Nút bấm</option><option value="divider">Đường kẻ</option></select><button className={buttonClass} title="Đưa lên" disabled={!editable || !index} onClick={() => { markDirty(); setBlocks((current) => { const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; }); }}>↑</button><button className={buttonClass} title="Xóa khối" disabled={!editable} onClick={() => { markDirty(); setBlocks((current) => current.filter((entry) => entry.id !== item.id)); setFocus("subject"); focusedInput.current = null; }}><Trash2 size={14} /></button></div>
           {!["divider", "image"].includes(item.type) && <div className="flex flex-wrap items-center gap-2"><button type="button" aria-label={`In đậm khối ${index + 1}`} className={buttonClass} disabled={!editable} title="Bôi đen đoạn cần nhấn mạnh, rồi bấm In đậm (Ctrl+B)" onMouseDown={(event) => event.preventDefault()} onClick={() => boldBlock(item.id)}><Bold size={14} /> In đậm</button><span className="text-xs text-slate-500">Chọn đoạn chữ hoặc trường cần nhấn mạnh. Bấm lại để bỏ in đậm.</span></div>}
-          {item.type !== "divider" && <textarea ref={(node) => { if (node) blockInputs.current.set(item.id, node); else blockInputs.current.delete(item.id); }} aria-label={`Nội dung khối ${index + 1}`} rows={item.type === "text" ? 5 : 2} className={fieldClass} value={item.text} placeholder={item.type === "image" ? "Mô tả ảnh" : item.type === "button" ? "Nhãn nút" : "Nội dung…"} disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "text" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { text: event.target.value })} onKeyDown={(event) => { if (item.type !== "image" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") { event.preventDefault(); boldBlock(item.id); } }} />}
+          {item.type !== "divider" && <textarea ref={(node) => { if (node) blockInputs.current.set(item.id, node); else blockInputs.current.delete(item.id); }} aria-label={`Nội dung khối ${index + 1}`} rows={item.type === "text" ? 10 : 2} className={`${fieldClass} resize-y leading-relaxed ${item.type === "text" ? "min-h-60" : "min-h-20"}`} value={item.text} placeholder={item.type === "image" ? "Mô tả ảnh" : item.type === "button" ? "Nhãn nút" : "Nội dung…"} disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "text" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { text: event.target.value })} onKeyDown={(event) => { if (item.type !== "image" && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") { event.preventDefault(); boldBlock(item.id); } }} />}
           {["image", "button"].includes(item.type) && <input aria-label={`Liên kết khối ${index + 1}`} className={fieldClass} value={item.url} placeholder="https://… (có thể chèn trường)" disabled={!editable} onFocus={(event) => { setFocus({ id: item.id, field: "url" }); focusedInput.current = event.target; }} onChange={(event) => patchBlock(item.id, { url: event.target.value })} />}
         </div>)}</div>
         <button className={`${buttonClass} mt-3`} disabled={!editable || blocks.length >= 50} onClick={() => { markDirty(); setBlocks((current) => [...current, block()]); }}><Plus size={14} /> Thêm khối</button>
         {issue && rows.length > 0 && <p className="mt-3 text-xs text-amber-700">{issue}</p>}
       </div>
-      <div className={cardClass}>
+      <div className={`${cardClass} min-w-0`}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold text-slate-900">Xem trước từng người nhận</h2><select aria-label="Người nhận xem trước" className={`${fieldClass} max-w-xs`} value={previewIndex} disabled={!rows.length} onChange={(event) => setPreviewIndex(Number(event.target.value))}>{rows.map((row, index) => <option key={row.sourceRow} value={index}>Dòng {row.sourceRow} · {row.fields[emailColumn] || "Chưa có Email"}</option>)}</select></div>
         {preview ? <><p className="mb-3 text-sm font-semibold text-slate-800">{preview.subject}</p><iframe title="Xem trước thư cá nhân hóa" sandbox="" referrerPolicy="no-referrer" className="h-[440px] w-full rounded-xl border border-slate-200 bg-white" srcDoc={`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0">${preview.html}</body></html>`} /></> : <p className="rounded-xl bg-slate-50 p-8 text-sm text-slate-500">Import danh sách và thêm nội dung để xem thư sẽ gửi.</p>}
       </div>
