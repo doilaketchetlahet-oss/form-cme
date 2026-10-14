@@ -25,7 +25,7 @@ step({ type: 'choose', index: 0, seconds: 15 });
 const answer = { type: 'answer', selected: 'A', correct: 'A', points: 100 };
 step(answer); step(answer);
 assert.equal(state.score, 100, 'Repeated clicks award points once');
-step({ type: 'picture' });
+step({ type: 'picture', total: 4 });
 step({ type: 'continue' });
 assert.equal(state.phase, 'picture', 'Must spend the reveal before leaving');
 step({ type: 'open', index: 3, total: 4 });

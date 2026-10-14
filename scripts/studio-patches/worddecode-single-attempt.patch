@@ -1,0 +1,162 @@
+diff --git a/src/modules/WordDecode/flow.ts b/src/modules/WordDecode/flow.ts
+--- a/src/modules/WordDecode/flow.ts
++++ b/src/modules/WordDecode/flow.ts
+@@ -11,7 +11,8 @@
+   score: number;
+ }
+ export type Action =
+-  | { type: "start" | "back" | "tick" | "picture" | "continue" }
++  | { type: "start" | "back" | "tick" | "continue" }
++  | { type: "picture"; total: number }
+   | { type: "choose"; index: number; seconds: number }
+   | { type: "answer"; selected: string | null; correct: string; points: number }
+   | { type: "open"; index: number; total: number };
+@@ -21,26 +22,26 @@
+ export const grantsReveal = (state: Flow, index: number): boolean => Boolean(state.answers[index]) && (state.allowOpenOnWrong || state.answers[index] === "correct");
+ export const revealCount = (state: Flow): number => Object.keys(state.answers).filter(index => grantsReveal(state, Number(index))).length;
+
+-/** By default the clip awards a reveal even on wrong/timeout; strict mode allows retry.
++/** Each question gets one attempt; the policy only controls its reveal reward.
+  * Atomic transitions prevent double taps from awarding extra points or reveals. */
+ export function reduceFlow(state: Flow, action: Action): Flow {
+   switch (action.type) {
+     case "start": return state.phase === "intro" ? { ...state, phase: "board" } : state;
+-    case "choose": return state.phase === "board" && !grantsReveal(state, action.index)
++    case "choose": return state.phase === "board" && !state.answers[action.index]
+       ? { ...state, phase: "question", active: action.index, selected: null, remaining: action.seconds } : state;
+     case "back": return state.phase === "question" ? { ...state, phase: "board", active: null } : state;
+     case "tick": return state.phase === "question" ? { ...state, remaining: Math.max(0, state.remaining - 1) } : state;
+     case "answer": {
+-      if (state.phase !== "question" || state.active === null || grantsReveal(state, state.active)) return state;
++      if (state.phase !== "question" || state.active === null || state.answers[state.active]) return state;
+       const outcome = action.selected === null ? "timeout" : action.selected === action.correct ? "correct" : "wrong";
+       return { ...state, phase: "feedback", selected: action.selected, answers: { ...state.answers, [state.active]: outcome }, score: state.score + (outcome === "correct" ? Math.max(0, action.points) : 0) };
+     }
+     case "picture": return state.phase === "feedback" ? state.active !== null && grantsReveal(state, state.active)
+-      ? { ...state, phase: "picture" } : { ...state, phase: "board", active: null, selected: null } : state;
++      ? { ...state, phase: "picture" } : { ...state, phase: Object.keys(state.answers).length === action.total ? "complete" : "board", active: null, selected: null } : state;
+     case "open": {
+       if (state.phase !== "picture" || state.opened.includes(action.index) || action.index < 0 || action.index >= action.total || state.opened.length >= revealCount(state)) return state;
+       const opened = [...state.opened, action.index];
+-      return { ...state, opened, phase: opened.length === action.total ? "complete" : "picture" };
++      return { ...state, opened, phase: Object.keys(state.answers).length === action.total && opened.length === revealCount(state) ? "complete" : "picture" };
+     }
+     case "continue": return state.phase === "picture" && state.opened.length === revealCount(state) ? { ...state, phase: "board", active: null, selected: null } : state;
+   }
+diff --git a/src/modules/WordDecode/Runtime.tsx b/src/modules/WordDecode/Runtime.tsx
+--- a/src/modules/WordDecode/Runtime.tsx
++++ b/src/modules/WordDecode/Runtime.tsx
+@@ -51,20 +51,20 @@
+   }, [flow.phase]);
+   useEffect(() => {
+     if (!playing || flow.phase !== "feedback") return;
+-    const timer = window.setTimeout(() => dispatch({ type: "picture" }), 2000);
++    const timer = window.setTimeout(() => dispatch({ type: "picture", total }), 2000);
+     return () => window.clearTimeout(timer);
+-  }, [playing, flow.phase]);
++  }, [playing, flow.phase, total]);
+   useEffect(() => {
+     if (!playing || flow.phase !== "complete") return;
+     const timer = window.setTimeout(() => {
+       if (wonRef.current) return;
+       wonRef.current = true;
+       engine.setResultImage(config.revealImage);
+-      engine.setResultStats([{ label: "Từ khoá", value: config.secret }]);
++      engine.setResultStats([{ label: "Từ khoá", value: config.secret }, { label: "Mảnh đã mở", value: String(flow.opened.length) }]);
+       engine.win(flow.score);
+     }, 650);
+     return () => window.clearTimeout(timer);
+-  }, [playing, flow.phase, flow.score, config.revealImage, config.secret, engine.setResultImage, engine.setResultStats, engine.win]);
++  }, [playing, flow.phase, flow.score, flow.opened.length, config.revealImage, config.secret, engine.setResultImage, engine.setResultStats, engine.win]);
+
+   const choose = (index: number) => {
+     if (!playing) return;
+@@ -91,20 +91,20 @@
+               <Play size={22} fill="currentColor" /> Chơi ngay
+             </button>
+             {!total && <p role="alert">Hãy thêm câu hỏi trong trình chỉnh sửa để bắt đầu.</p>}
+-            <details className="wd-help"><summary>Cách chơi</summary><p>Chọn một dòng, trả lời câu hỏi rồi chạm một mảnh ảnh để mở. {flow.allowOpenOnWrong ? "Đúng được cộng điểm; sai hoặc hết giờ vẫn được mở một mảnh." : "Chỉ trả lời đúng mới được cộng điểm và mở mảnh ảnh. Sai hoặc hết giờ: chọn lại câu hỏi để thử lại."} Mở đủ {total} mảnh để hoàn thành.</p></details>
++            <details className="wd-help"><summary>Cách chơi</summary><p>Chọn một dòng và trả lời câu hỏi. Mỗi câu chỉ có một lượt trả lời. {flow.allowOpenOnWrong ? "Đúng được cộng điểm; sai hoặc hết giờ vẫn được mở một mảnh." : "Chỉ trả lời đúng mới được cộng điểm và mở mảnh ảnh. Sai hoặc hết giờ sẽ mất lượt mở ảnh, không được trả lời lại."} Đi hết {total} câu để kết thúc.</p></details>
+           </div>
+         )}
+         {flow.phase === "board" && (
+           <div className="wd-board-content">
+             <header className="wd-board-heading">
+               <div><span className="wd-eyebrow">CHỌN CÂU HỎI</span><h1>Chạm để mở mảnh ghép</h1></div>
+-              <div className="wd-progress"><span>ĐÃ HOÀN THÀNH</span><strong>{granted}/{total}</strong></div>
++              <div className="wd-progress"><span>ĐÃ HOÀN THÀNH</span><strong>{Object.keys(flow.answers).length}/{total}</strong></div>
+             </header>
+             <div className="wd-letter-rows">
+               {questions.map((q, index) => {
+                 const outcome = flow.answers[index];
+-                const completed = grantsReveal(flow, index);
+-                const show = completed && !config.hideLetters;
++                const completed = Boolean(outcome);
++                const show = grantsReveal(flow, index) && !config.hideLetters;
+                 return (
+                   <button key={index} className={`wd-letter-row ${outcome ? `wd-row-${outcome}` : ""}`}
+                     aria-label={`Câu ${index + 1}${outcome ? outcome === "correct" ? " — Chính xác" : " — Chưa đúng" : ""}`}
+@@ -113,7 +113,7 @@
+                       {Array.from(questionPhrase(q)).map((letter, i) => /\s/.test(letter)
+                         ? <span key={i} className="wd-letter-space" />
+                         : <span key={i} className={`wd-letter ${show ? "wd-letter-open" : ""}`}>{show ? letter : "•"}</span>)}
+-                      {outcome && <span className={`wd-outcome wd-outcome-${outcome}`}>{outcome === "correct" ? "✓ Chính xác" : outcome === "timeout" ? "Hết giờ" : "✕ Chưa đúng"}{!completed && " · Thử lại"}</span>}
++                      {outcome && <span className={`wd-outcome wd-outcome-${outcome}`}>{outcome === "correct" ? "✓ Chính xác" : outcome === "timeout" ? "Hết giờ" : "✕ Chưa đúng"}</span>}
+                     </span>
+                     <span className="wd-row-number">{outcome === "correct" ? <Check /> : index + 1}</span>
+                   </button>
+@@ -138,7 +138,7 @@
+                     </button>
+                   ))}
+                 </div>
+-                {feedback && <div role="status" className="wd-feedback-message">{correct ? "✓ Chính xác! Bạn được mở 1 mảnh ghép." : `${flow.selected === null ? "Hết giờ" : "✕ Chưa đúng"}. Đáp án đúng: ${correctText}. ${flow.allowOpenOnWrong ? "Bạn vẫn được mở 1 mảnh ghép." : "Chưa được mở mảnh ảnh. Chọn lại câu hỏi để thử lại."}`}</div>}
++                {feedback && <div role="status" className="wd-feedback-message">{correct ? "✓ Chính xác! Bạn được mở 1 mảnh ghép." : `${flow.selected === null ? "Hết giờ" : "✕ Chưa đúng"}. Đáp án đúng: ${correctText}. ${flow.allowOpenOnWrong ? "Bạn vẫn được mở 1 mảnh ghép." : "Lượt này không được mở mảnh ảnh. Câu hỏi đã kết thúc."}`}</div>}
+               </div>
+             </div>
+             <aside className="wd-question-tools">
+diff --git a/src/modules/WordDecode/Editor.tsx b/src/modules/WordDecode/Editor.tsx
+--- a/src/modules/WordDecode/Editor.tsx
++++ b/src/modules/WordDecode/Editor.tsx
+@@ -74,7 +74,7 @@
+                   <span><span className="font-bold">Cho mở mảnh ảnh khi trả lời sai</span>
+                     <span className="mt-1 block text-sm text-muted">{config.allowOpenOnWrong !== false
+                       ? "Đang bật: sai hoặc hết giờ vẫn được mở một mảnh ảnh."
+-                      : "Đang tắt: chỉ câu đúng được mở ảnh. Sai hoặc hết giờ phải chọn lại câu hỏi để thử lại."}</span></span>
++                      : "Đang tắt: chỉ câu đúng được mở ảnh. Sai hoặc hết giờ mất lượt mở ảnh, không được trả lời lại."}</span></span>
+                 </label>
+                 <Field label="Tiêu đề">
+                   <TextInput
+diff --git a/src/modules/WordDecode/Result.tsx b/src/modules/WordDecode/Result.tsx
+--- a/src/modules/WordDecode/Result.tsx
++++ b/src/modules/WordDecode/Result.tsx
+@@ -3,8 +3,8 @@
+ import { WordDecodeBackdrop } from "./Visuals";
+ import "./worddecode.css";
+
+-export function WordDecodeResult({ config, score, onReplay, onExit, onNext, nextLabel }: {
+-  config: WordDecodeConfig; score: number; onReplay: () => void; onExit?: () => void; onNext?: () => void; nextLabel?: string;
++export function WordDecodeResult({ config, score, openedCount, onReplay, onExit, onNext, nextLabel }: {
++  config: WordDecodeConfig; score: number; openedCount: number; onReplay: () => void; onExit?: () => void; onNext?: () => void; nextLabel?: string;
+ }) {
+   return <div className="wd-game wd-result" data-worddecode-screen="result">
+     <WordDecodeBackdrop background={config.background} />
+@@ -14,7 +14,7 @@
+         <div className="wd-picture wd-finished-picture">
+           {config.revealImage ? <img className="wd-reveal-image" src={config.revealImage} alt="Ảnh bí mật đã được mở hoàn chỉnh" /> : <div className="wd-picture-placeholder"><span>✦</span><strong>{config.secret || config.title}</strong></div>}
+         </div>
+-        <p className="wd-result-score">Đã mở {config.questions.length}/{config.questions.length} mảnh · {score} điểm</p>
++        <p className="wd-result-score">Đã mở trong lượt: {openedCount}/{config.questions.length} mảnh · {score} điểm</p>
+         <div className="wd-result-actions">
+           <button autoFocus className="wd-primary" onClick={onReplay}><RotateCcw size={20} /> Chơi lại</button>
+           {onNext && <button className="wd-primary" onClick={onNext}>{nextLabel || "Game tiếp theo"}<ArrowRight size={20} /></button>}
+diff --git a/src/engine/GameShell.tsx b/src/engine/GameShell.tsx
+--- a/src/engine/GameShell.tsx
++++ b/src/engine/GameShell.tsx
+@@ -399,6 +399,7 @@
+             */}
+             {won && isWordDecode ? (
+               <WordDecodeResult config={engine.project.config as WordDecodeConfig} score={engine.score}
++                openedCount={Number(engine.resultStats.find(stat => stat.label === "Mảnh đã mở")?.value ?? 0)}
+                 onReplay={engine.restart} onExit={allowLibraryExit ? inCombo ? sequence!.onQuit : engine.exit : undefined}
+                 onNext={inCombo ? () => sequence!.onNext(engine.score) : undefined}
+                 nextLabel={inCombo ? isLastStep ? t("shell.finishChallenge") : t("shell.nextGame", { current: sequence!.index + 2, total: sequence!.total }) : undefined} />
