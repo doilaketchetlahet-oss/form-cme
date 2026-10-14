@@ -345,6 +345,12 @@ Decode Letters long-question/answer layout changes are preserved in
 Text wraps without line clamping; long content scrolls above the fixed Confirm
 action. Regression: `node scripts/test-decodeletters-text.cjs` covers desktop,
 phone and short landscape screens using guest fixtures only.
+The follow-up `scripts/studio-patches/decodeletters-ui.patch` adds a responsive
+picture panel (including phones), larger touch controls, compact help and next-step
+guidance. Decode Letters tutorial/chrome/results use Vietnamese independently of
+the workspace language. The result shows the complete reveal image with a
+final-image fallback, and supports replay and combo progression. The same test
+also checks all four image unlocks and replay at every viewport.
 
 Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
 `/play` player runtime mentioned below.

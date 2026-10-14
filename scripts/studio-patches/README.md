@@ -17,6 +17,16 @@ keeping Confirm outside the scroll area; short screens can scroll the board.
 It has already been applied locally. Regression:
 `node scripts/test-decodeletters-text.cjs` (guest-only, no database writes).
 
+`decodeletters-ui.patch` follows the long-text patch. It keeps the secret picture
+reachable on phones, enlarges question/answer and touch controls, replaces the
+sidebar tips with a compact help menu, and guides players to their next action.
+Decode Letters has Vietnamese tutorial/chrome/results without changing the
+workspace language. Its result card displays the full reveal image (or the
+configured final image when no reveal image exists), with an explicit no-image
+completion state. Other games retain their result screens. Already applied
+locally. The same regression also completes all four unlocks, checks the result
+image and replay reset at desktop, phone and landscape sizes.
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -27,6 +37,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-s
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-sharing.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-long-text.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-long-text.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-ui.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-ui.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:

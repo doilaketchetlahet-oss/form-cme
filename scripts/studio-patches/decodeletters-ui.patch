@@ -1,0 +1,801 @@
+--- a/src/modules/DecodeLetters/Runtime.tsx
++++ b/src/modules/DecodeLetters/Runtime.tsx
+@@ -1,6 +1,6 @@
+-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { motion, AnimatePresence } from "framer-motion";
+-import { Check, Lightbulb, Search, Star } from "lucide-react";
++import { Check, HelpCircle, ImageIcon, Trophy } from "lucide-react";
+ import type { GameRuntimeProps } from "@/types";
+ import { useEngine } from "@/engine/EngineContext";
+ import { shuffle } from "@/utils";
+@@ -15,8 +15,8 @@
+ 
+ /**
+  * Flow:
+- *  1) Chạm số dòng → quiz (+ countdown) trong dock cố định (không giật layout)
+- *  2) Đúng → lộ chữ; +1 lượt mở ảnh (mọi ô chưa mở đều hiện CHẠM)
++ *  1) Chạm số dòng → quiz (+ countdown) trong khung câu hỏi cuộn được
++ *  2) Đúng → lộ chữ; +1 lượt mở ảnh (mọi ô chưa mở đều sáng)
+  *  3) Chạm bất kỳ ô chưa mở để mở mảnh (không ép đúng thứ tự)
+  *  4) Mở đủ 4 ô → engine.win (không kẹt màn “hoàn thành”)
+  */
+@@ -40,8 +40,10 @@
+   const doneRef = useRef(false);
+   const resolvedRef = useRef(false);
+   const timeLeftRef = useRef(0);
++  const winTimer = useRef<number | null>(null);
+   const closeTimer = useRef<number | null>(null);
+   const stageRef = useRef<HTMLDivElement>(null);
++  const imagePanelRef = useRef<HTMLElement>(null);
+   const questionDockRef = useRef<HTMLDivElement>(null);
+   const finishAnswerRef = useRef<(piece: DecodePiece, outcome: "correct" | "wrong") => void>(
+     () => {},
+@@ -52,6 +54,7 @@
+     engine.startTimer({ showInShell: true });
+     return () => {
+       if (closeTimer.current) window.clearTimeout(closeTimer.current);
++      if (winTimer.current) window.clearTimeout(winTimer.current);
+     };
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
+@@ -67,12 +70,6 @@
+   }, [engine.status]);
+ 
+   const active = activeId != null ? pieces.find((p) => p.id === activeId) ?? null : null;
+-
+-  // Short screens can scroll the board instead of hiding rows behind the dock.
+-  useEffect(() => {
+-    if (activeId != null) questionDockRef.current?.scrollIntoView({ block: "end" });
+-    else stageRef.current?.scrollTo({ top: 0 });
+-  }, [activeId]);
+ 
+   const optionOrder = useMemo(() => {
+     if (!active) return [] as DecodePiece["choices"];
+@@ -113,12 +110,12 @@
+       }).length;
+       if (openedCount >= total && !doneRef.current) {
+         doneRef.current = true;
+-        if (config.revealImage) engine.setResultImage(config.revealImage);
++        engine.setResultImage(config.revealImage || config.finalImage || null);
+         // Directly go to GameShell result — no sticky intermediate overlay
+-        window.setTimeout(() => engine.win(scoreRef.current), 450);
++        winTimer.current = window.setTimeout(() => engine.win(scoreRef.current), 700);
+       }
+     },
+-    [config.revealImage, engine, pieces, total],
++    [config.revealImage, config.finalImage, engine, pieces, total],
+   );
+ 
+   /**
+@@ -234,6 +231,13 @@
+     return s;
+   }, [unlocksLeft, pieces, imageOpened]);
+ 
++  // Bring the next action into view on phones and short screens.
++  useEffect(() => {
++    if (activeId != null) questionDockRef.current?.scrollIntoView({ block: "end" });
++    else if (unlocksLeft > 0) imagePanelRef.current?.scrollIntoView({ block: "center" });
++    else stageRef.current?.scrollTo({ top: 0 });
++  }, [activeId, unlocksLeft]);
++
+   const stageStyle = bgUrl
+     ? {
+         backgroundImage: `url(${bgUrl})`,
+@@ -245,336 +249,182 @@
+           "radial-gradient(ellipse 100% 80% at 50% 0%, #fde68a 0%, #fef3c7 40%, #fef9c3 100%)",
+       };
+ 
++  const nextStep = active
++    ? selected ? "Nhấn Xác nhận để trả lời" : "Chọn một đáp án bên dưới"
++    : unlocksLeft > 0
++      ? `Bạn có ${unlocksLeft} lượt mở ảnh — chạm vào một mảnh đang sáng`
++      : "Chọn một số trên bảng chữ để bắt đầu";
++
+   return (
+-    <div ref={stageRef} className="relative flex h-full w-full flex-col overflow-x-hidden overflow-y-auto" style={stageStyle}>
+-      {/* Title — fixed band */}
+-      <div className="relative z-10 shrink-0 px-3 pt-11 text-center sm:pt-12">
+-        {ui.title ? (
+-          <img
+-            src={ui.title}
+-            alt="Giải mã chữ cái"
+-            className="mx-auto h-14 w-auto max-w-[min(96vw,40rem)] object-contain drop-shadow-md sm:h-16 md:h-20 lg:h-24"
+-            draggable={false}
+-          />
+-        ) : (
+-          <h1 className="font-display text-3xl font-black text-amber-600 sm:text-4xl">
+-            GIẢI MÃ CHỮ CÁI
+-          </h1>
+-        )}
+-        <p className="mx-auto mt-0.5 max-w-2xl text-sm font-bold text-amber-800/80 sm:text-base">
+-          {config.boardTitle ||
+-            "Trả lời đúng câu hỏi để mở các mảnh ghép và khám phá bức tranh bí mật!"}
+-        </p>
+-
+-        <div className="absolute right-3 top-11 hidden flex-col items-end sm:flex sm:right-5 sm:top-12">
+-          <div className="rounded-2xl border border-white/90 bg-white/95 px-3 py-2 text-center shadow-md">
+-            <div className="text-[10px] font-extrabold uppercase tracking-wide text-amber-500">
+-              Tiến độ hoàn thành
++    <div ref={stageRef} className="relative h-full w-full overflow-x-hidden overflow-y-auto" style={stageStyle}>
++      <div className="mx-auto max-w-[1680px] px-3 pb-4 pt-16 sm:px-5 lg:px-8 lg:pt-14">
++        <header className="mb-3 text-center lg:flex lg:items-center lg:justify-between lg:gap-4 lg:text-left">
++          <div className="min-w-0">
++          {ui.title ? (
++            <img src={ui.title} alt="Giải mã chữ cái" draggable={false}
++              className="mx-auto h-12 w-auto max-w-full object-contain drop-shadow-md sm:h-14 lg:ml-0 lg:h-12" />
++          ) : (
++            <h1 className="font-display text-3xl font-black text-amber-700">Giải mã chữ cái</h1>
++          )}
++          <p className="mx-auto mt-1 max-w-3xl text-sm font-bold text-amber-950/80">
++            {config.boardTitle || "Trả lời câu hỏi, mở mảnh ghép và khám phá ảnh bí mật!"}
++          </p>
++          </div>
++          <div className="mt-3 flex shrink-0 flex-wrap items-center justify-center gap-2 text-sm font-bold sm:text-base lg:mt-0">
++            <span className="flex items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-amber-900 shadow-sm">
++              <Trophy className="h-5 w-5 text-orange-500" aria-hidden /> {engine.score} điểm
++            </span>
++            <span className="rounded-full bg-white/95 px-4 py-2 text-amber-900 shadow-sm" aria-label="Tiến độ mở ảnh">
++              Đã mở {imageOpenedCount}/{total} mảnh
++            </span>
++            <details className="group relative text-left">
++              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-amber-900 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500">
++                <HelpCircle className="h-5 w-5" aria-hidden /> Cách chơi
++              </summary>
++              <div className="absolute right-0 top-full z-30 mt-2 w-[min(80vw,22rem)] rounded-2xl border border-amber-200 bg-white p-4 text-sm leading-relaxed text-slate-700 shadow-xl">
++                <ol className="list-inside list-decimal space-y-2">
++                  <li>Chọn số câu hỏi trên bảng chữ.</li>
++                  <li>Chọn đáp án rồi nhấn Xác nhận. Trả lời đúng để lộ chữ và nhận một lượt mở ảnh.</li>
++                  <li>Chạm vào mảnh ảnh đang sáng. Mở đủ {total} mảnh để hoàn thành!</li>
++                </ol>
++              </div>
++            </details>
++          </div>
++        </header>
++
++        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,27%)] lg:gap-5">
++          <section aria-label="Bảng chữ" className="min-w-0 rounded-3xl border border-white bg-white/95 p-3 shadow-lg shadow-amber-800/10 sm:p-3">
++            <div className="mb-2 flex items-center justify-between gap-3 px-1">
++              <h2 className="text-sm font-extrabold text-amber-900 sm:text-base">BẢNG CHỮ</h2>
++              <span className="text-sm font-semibold text-slate-500">{solved.size}/{pieces.length} câu đã giải</span>
+             </div>
+-            <div className="font-display text-xl font-black text-amber-600 tabular-nums">
+-              {imageOpenedCount}/{total}
+-            </div>
+-          </div>
+-        </div>
+-      </div>
+-
+-      {/*
+-        Main board keeps enough room for all rows; short screens scroll the stage.
+-        Quiz dock below stays the same size when the question changes.
+-      */}
+-      <div className="relative z-10 flex min-h-[20rem] flex-1 items-stretch justify-center gap-2 px-2 sm:gap-3 sm:px-3 lg:gap-4 lg:px-5">
+-        <aside className="hidden w-[11rem] shrink-0 flex-col justify-center sm:flex lg:w-[12.5rem]">
+-          <div className="relative rounded-[1.5rem] border border-white bg-white/95 p-3.5 pt-7 shadow-[0_12px_36px_rgba(245,158,11,0.14)]">
+-            {ui.goiY ? (
+-              <img
+-                src={ui.goiY}
+-                alt="Gợi ý"
+-                className="pointer-events-none absolute -top-4 left-1/2 z-10 h-10 w-[80%] max-w-none -translate-x-1/2 object-contain drop-shadow-md sm:h-11"
+-                draggable={false}
+-              />
+-            ) : (
+-              <div className="absolute -top-3 left-1/2 w-[80%] -translate-x-1/2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 py-1.5 text-center text-sm font-extrabold text-white shadow-md">
+-                Gợi ý
+-              </div>
+-            )}
+-            <ul className="mt-3 space-y-3 text-sm font-semibold leading-snug text-slate-600">
+-              <Tip
+-                icon={<Lightbulb className="h-5 w-5 text-amber-500" />}
+-                text="Chạm số dòng để nhận câu hỏi"
+-              />
+-              <Tip
+-                icon={<Search className="h-5 w-5 text-sky-500" />}
+-                text="Trả lời đúng → chữ lộ + 1 lượt mở ảnh"
+-              />
+-              <Tip
+-                icon={<Star className="h-5 w-5 text-amber-400" fill="currentColor" />}
+-                text="Chạm CHẠM trên ô bất kỳ để mở mảnh"
+-              />
+-            </ul>
+-            <div className="mt-4 flex items-center justify-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5">
+-              <span className="text-lg">🏆</span>
+-              <span className="font-display text-lg font-black text-amber-600 tabular-nums">
+-                {engine.score}
+-              </span>
+-            </div>
+-            {unlocksLeft > 0 && (
+-              <p className="mt-2 text-center text-[11px] font-extrabold text-orange-500">
+-                Còn {unlocksLeft} lượt mở ảnh
+-              </p>
+-            )}
+-          </div>
+-        </aside>
+-
+-        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center">
+-          <div className="rounded-[1.75rem] border border-white bg-white/95 p-3 shadow-[0_14px_40px_rgba(245,158,11,0.12)] sm:p-4 md:p-5">
+-            <div className="flex flex-col gap-2 sm:gap-2.5 md:gap-3">
++            <div className="space-y-1.5">
+               {pieces.map((p, idx) => {
+                 const isSolved = solved.has(p.id);
+                 const isActive = activeId === p.id;
+                 const tokens = phraseChars(p.phrase);
+-                const letterCount = tokens.filter((t) => !t.isSpace).length;
+-
+                 return (
+-                  <div
+-                    key={p.id}
+-                    className={cn(
+-                      "flex items-center gap-2 rounded-2xl px-1 py-1 transition sm:gap-3 sm:py-1.5",
+-                      isActive && "bg-amber-50/80",
+-                    )}
+-                  >
+-                    <div
+-                      className="flex min-w-0 flex-1 flex-wrap content-center items-center justify-center gap-x-1 gap-y-1 sm:gap-x-1.5 sm:gap-y-1.5 md:gap-x-2"
+-                      title={`${letterCount} chữ`}
+-                    >
+-                      {tokens.length === 0 ? (
+-                        <span className="text-xs font-semibold text-slate-300">—</span>
+-                      ) : (
+-                        tokens.map((c, i) =>
+-                          c.isSpace ? (
+-                            <span key={i} className="w-2 shrink-0 sm:w-2.5" aria-hidden />
+-                          ) : (
+-                            <span
+-                              key={i}
+-                              className={cn(
+-                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-black sm:h-9 sm:w-9 sm:text-sm md:h-10 md:w-10 md:text-base",
+-                                isSolved
+-                                  ? "bg-gradient-to-b from-amber-400 to-orange-500 text-white shadow-md"
+-                                  : "bg-[#f5efe6] text-transparent shadow-inner ring-1 ring-amber-100/80",
+-                              )}
+-                            >
+-                              {isSolved ? c.ch : ""}
+-                            </span>
+-                          ),
+-                        )
+-                      )}
+-                    </div>
+-                    <button
+-                      type="button"
+-                      onClick={() => selectRow(p.id)}
+-                      disabled={
+-                        isSolved ||
+-                        engine.status !== "playing" ||
+-                        (result != null && activeId !== p.id)
+-                      }
++                  <div key={p.id} className={cn(
++                    "flex items-center gap-2 rounded-2xl p-0.5 transition sm:gap-3",
++                    isActive && "bg-orange-50 ring-2 ring-orange-300",
++                  )}>
++                    <button type="button" onClick={() => selectRow(p.id)}
++                      aria-label={isSolved ? `Câu ${idx + 1} đã giải` : `Câu ${idx + 1}`}
++                      aria-pressed={isActive}
++                      disabled={isSolved || engine.status !== "playing" || result != null}
+                       className={cn(
+-                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-display text-lg font-black text-white shadow-md transition sm:h-11 sm:w-11 sm:text-xl md:h-12 md:w-12",
+-                        isSolved
+-                          ? "bg-emerald-500"
+-                          : isActive
+-                            ? "bg-orange-500 ring-4 ring-orange-200 scale-105"
+-                            : "bg-gradient-to-b from-amber-400 to-orange-500 hover:brightness-110 active:scale-95",
+-                        (isSolved || engine.status !== "playing") && "opacity-90",
+-                      )}
+-                    >
++                        "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xl font-black text-white shadow transition focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 sm:h-11 sm:w-11",
++                        isSolved ? "bg-emerald-600" : isActive ? "bg-orange-600" : "bg-gradient-to-b from-amber-400 to-orange-500 hover:brightness-110 active:scale-95",
++                      )}>
+                       {isSolved ? <Check className="h-6 w-6" strokeWidth={3} /> : idx + 1}
+                     </button>
++                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-1 sm:gap-1.5" title={`${tokens.filter(t => !t.isSpace).length} chữ`}>
++                      {tokens.map((c, i) => c.isSpace ? (
++                        <span key={i} className="w-1.5 shrink-0 sm:w-2" aria-hidden />
++                      ) : (
++                        <span key={i} className={cn(
++                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-black sm:h-9 sm:w-9 sm:text-lg xl:h-10 xl:w-10",
++                          isSolved ? "bg-gradient-to-b from-amber-400 to-orange-500 text-white shadow" : "bg-[#f5efe6] text-transparent ring-1 ring-amber-100",
++                        )}>{isSolved ? c.ch : ""}</span>
++                      ))}
++                    </div>
+                   </div>
+                 );
+               })}
+             </div>
+-          </div>
+-        </div>
+-
+-        <aside className="hidden w-[13rem] shrink-0 flex-col justify-center sm:flex lg:w-[16rem] xl:w-[18.5rem]">
+-          <SecretFrame
+-            frameUrl={ui.frame}
+-            titleUrl={ui.frameTitle}
+-            pieces={pieces}
+-            imageOpened={imageOpened}
+-            claimable={claimable}
+-            revealUrl={revealUrl}
+-            onOpenCell={openImageCell}
+-          />
+-          <p className="mt-2 min-h-[1.25rem] text-center text-xs font-extrabold text-amber-800/90 sm:text-sm">
+-            {unlocksLeft > 0
+-              ? "✨ Chạm CHẠM trên ô bất kỳ để mở mảnh!"
+-              : "Trả lời đúng câu hỏi để nhận lượt mở ảnh"}
+-          </p>
+-        </aside>
+-      </div>
+-
+-      {/*
+-        Stable, viewport-sized dock. Long questions and answers scroll together;
+-        the confirm action stays outside the scrolling content.
+-      */}
+-      <div ref={questionDockRef} className="relative z-20 shrink-0 px-2 pb-3 pt-1 sm:px-4 sm:pb-4">
+-        <div className="relative mx-auto flex h-[clamp(15rem,42vh,25rem)] max-w-3xl flex-col rounded-[1.5rem] border border-white bg-white/95 px-4 pb-3 pt-6 shadow-[0_12px_36px_rgba(245,158,11,0.16)] sm:px-6 sm:pb-4 sm:pt-7">
+-          {ui.bannerQuestion ? (
+-            <img
+-              src={ui.bannerQuestion}
+-              alt="Câu hỏi"
+-              className="pointer-events-none absolute -top-4 left-1/2 h-9 w-auto max-w-[70%] -translate-x-1/2 object-contain drop-shadow-md sm:h-10"
+-              draggable={false}
+-            />
+-          ) : (
+-            <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-1 text-sm font-extrabold text-white shadow">
+-              Câu hỏi
++          </section>
++
++          <aside ref={imagePanelRef} aria-label="Ảnh bí mật"
++            className={cn(
++              "mx-auto w-full max-w-sm scroll-mt-16 rounded-3xl border-2 bg-white/95 p-4 shadow-lg shadow-amber-800/10 lg:col-start-2 lg:row-start-1 lg:row-span-2 lg:max-w-none",
++              unlocksLeft > 0 ? "border-orange-400 ring-4 ring-amber-200" : "border-white",
++            )}>
++            <div className="mx-auto max-w-[20rem] lg:max-w-none">
++              <SecretFrame frameUrl={ui.frame} titleUrl={ui.frameTitle}
++                pieces={pieces} imageOpened={imageOpened} claimable={claimable}
++                revealUrl={revealUrl} onOpenCell={openImageCell} />
+             </div>
+-          )}
+-
+-          {!active ? (
+-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-2">
+-              <p className="text-center text-base font-bold text-slate-400 sm:text-lg">
+-                {unlocksLeft > 0 ? (
+-                  <>
+-                    Chạm <span className="text-orange-500">CHẠM</span> trên ô ảnh để mở mảnh — hoặc
+-                    chọn dòng khác
+-                  </>
+-                ) : (
+-                  <>
+-                    Chạm số <span className="text-orange-500">1–{pieces.length}</span> trên bảng chữ
+-                    để nhận câu hỏi
+-                  </>
+-                )}
+-              </p>
++            <p role="status" className={cn("mt-2 text-center text-base font-extrabold leading-snug sm:text-lg", unlocksLeft > 0 ? "text-orange-700" : "text-slate-600")}>
++              {imageOpenedCount >= total ? "Đã mở toàn bộ ảnh!" : unlocksLeft > 0
++                ? `Bạn có ${unlocksLeft} lượt mở ảnh`
++                : "Trả lời đúng để nhận lượt mở ảnh"}
++            </p>
++            {unlocksLeft > 0 && <p className="mt-1 text-center text-sm font-semibold text-slate-600">Chạm vào một mảnh đang sáng</p>}
++            <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-100" aria-hidden>
++              <div className="h-full rounded-full bg-orange-500 transition-all" style={{ width: `${total ? imageOpenedCount / total * 100 : 0}%` }} />
+             </div>
+-          ) : (
+-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+-              <div key={active.id} role="region" aria-label="Câu hỏi và đáp án" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
+-              <div className="mb-2 flex shrink-0 items-start justify-between gap-3">
+-                <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-center font-display text-base font-extrabold leading-snug text-slate-800 sm:text-lg md:text-xl">
+-                  {active.question}
+-                </h3>
+-                {active.timeLimit > 0 && (
+-                  <CircularTimer value={timeLeft} max={active.timeLimit} />
+-                )}
++          </aside>
++
++          <section ref={questionDockRef} aria-label="Câu hỏi"
++            className={cn(
++              "flex min-w-0 scroll-mt-16 flex-col rounded-3xl border-2 border-white bg-white/95 p-4 shadow-lg shadow-amber-800/10 sm:p-5 lg:col-start-1 lg:row-start-2",
++              active && "h-[clamp(22rem,48vh,34rem)] max-h-[calc(100dvh-5rem)]",
++            )}>
++            {!active ? (
++              <div role="status" className="flex items-center justify-center gap-3 py-2 text-center text-base font-bold text-amber-900 sm:text-lg">
++                {unlocksLeft > 0 && <ImageIcon className="h-6 w-6 shrink-0 text-orange-600" aria-hidden />}
++                {nextStep}
+               </div>
+-
+-              <div className="mb-1 min-h-[1.75rem] shrink-0">
+-                <AnimatePresence mode="wait">
+-                  {result && (
+-                    <motion.div
+-                      key={result}
+-                      initial={{ opacity: 0 }}
+-                      animate={{ opacity: 1 }}
+-                      exit={{ opacity: 0 }}
+-                      className={cn(
+-                        "rounded-xl px-3 py-1 text-center text-sm font-extrabold sm:text-base",
+-                        result === "correct"
+-                          ? "bg-emerald-100 text-emerald-700"
+-                          : "bg-rose-100 text-rose-600",
+-                      )}
+-                    >
+-                      {result === "correct"
+-                        ? "✓ Chính xác — chạm CHẠM trên ô ảnh để mở!"
+-                        : `✗ Sai — đáp án: ${active.correct}`}
+-                    </motion.div>
+-                  )}
+-                </AnimatePresence>
+-              </div>
+-
+-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 sm:gap-2">
+-                {optionOrder.map((choice) => {
+-                  const isSel = selected === choice.label;
+-                  const isCorrect = choice.label === active.correct;
+-                  const show = result != null;
+-                  return (
+-                    <button
+-                      key={choice.label}
+-                      type="button"
+-                      onClick={() => {
+-                        if (result != null) return;
+-                        setSelected(choice.label);
+-                        engine.sfx("click");
+-                      }}
+-                      disabled={result != null}
+-                      className={cn(
+-                        "flex min-h-[2.4rem] min-w-0 items-center gap-2 rounded-3xl border-2 px-2.5 py-1.5 text-left text-xs font-bold transition sm:min-h-[2.75rem] sm:px-3 sm:text-sm",
+-                        !show &&
+-                          !isSel &&
+-                          "border-amber-100 bg-[#fffaf3] text-slate-800 hover:border-amber-300",
+-                        !show &&
+-                          isSel &&
+-                          "border-orange-400 bg-orange-50 text-orange-800 ring-2 ring-orange-200",
+-                        show && isCorrect && "border-emerald-400 bg-emerald-50",
+-                        show && isSel && !isCorrect && "border-rose-400 bg-rose-50",
+-                        show &&
+-                          !isCorrect &&
+-                          !isSel &&
+-                          "border-slate-100 bg-slate-50 text-slate-400 opacity-70",
+-                      )}
+-                    >
+-                      <span
+-                        className={cn(
+-                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-extrabold text-white shadow sm:h-8 sm:w-8",
+-                          !show && isSel && "bg-orange-500",
+-                          !show && !isSel && "bg-gradient-to-br from-amber-400 to-orange-500",
+-                          show && isCorrect && "bg-emerald-500",
+-                          show && isSel && !isCorrect && "bg-rose-500",
+-                          show && !isCorrect && !isSel && "bg-slate-300",
+-                        )}
+-                      >
+-                        {choice.label}
+-                      </span>
+-                      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-snug">{choice.text}</span>
+-                    </button>
+-                  );
+-                })}
+-              </div>
+-              </div>
+-
+-              <div className="mt-1.5 flex shrink-0 justify-center sm:mt-2">
+-                {ui.confirm ? (
+-                  <button
+-                    type="button"
+-                    onClick={confirmAnswer}
+-                    disabled={selected == null || result != null}
+-                    className="disabled:opacity-40"
+-                  >
+-                    <img
+-                      src={ui.confirm}
+-                      alt="Xác nhận"
+-                      className="h-9 w-auto object-contain drop-shadow-md transition active:scale-95 sm:h-10"
+-                      draggable={false}
+-                    />
+-                  </button>
+-                ) : (
+-                  <button
+-                    type="button"
+-                    onClick={confirmAnswer}
+-                    disabled={selected == null || result != null}
+-                    className="rounded-full bg-gradient-to-r from-amber-400 to-orange-500 px-7 py-2 text-sm font-extrabold text-white shadow-md transition active:scale-95 disabled:opacity-40"
+-                  >
++            ) : (
++              <>
++                <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
++                  <span className="rounded-full bg-orange-100 px-3 py-1 text-sm font-extrabold text-orange-800">
++                    Câu {pieces.findIndex(p => p.id === activeId) + 1} / {pieces.length}
++                  </span>
++                  {active.timeLimit > 0 && <CircularTimer value={timeLeft} max={active.timeLimit} />}
++                </div>
++                <div key={active.id} role="region" aria-label="Câu hỏi và đáp án" tabIndex={0}
++                  className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-400 [scrollbar-gutter:stable]">
++                  <h3 className="mb-4 whitespace-pre-wrap break-words font-display text-xl font-extrabold leading-snug text-slate-800 sm:text-2xl 2xl:text-3xl">
++                    {active.question}
++                  </h3>
++                  <AnimatePresence mode="wait">
++                    {result && (
++                      <motion.p role="status" key={result} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
++                        className={cn("mb-3 rounded-xl px-3 py-2 text-base font-extrabold", result === "correct" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700")}>
++                        {result === "correct" ? "✓ Chính xác! Bạn nhận được 1 lượt mở ảnh." : `✗ Chưa đúng — đáp án: ${active.correct}`}
++                      </motion.p>
++                    )}
++                  </AnimatePresence>
++                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
++                    {optionOrder.map(choice => {
++                      const isSel = selected === choice.label;
++                      const isCorrect = choice.label === active.correct;
++                      const show = result != null;
++                      return (
++                        <button key={choice.label} type="button" aria-pressed={isSel}
++                          onClick={() => { if (result != null || engine.status !== "playing") return; setSelected(choice.label); engine.sfx("click"); }}
++                          disabled={result != null}
++                          className={cn(
++                            "flex min-h-14 min-w-0 items-center gap-3 rounded-2xl border-2 px-3 py-3 text-left text-base font-bold transition focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300 sm:min-h-16 sm:text-lg 2xl:text-xl",
++                            !show && !isSel && "border-amber-200 bg-[#fffaf3] text-slate-800 hover:border-orange-400",
++                            !show && isSel && "border-orange-500 bg-orange-50 text-orange-900 ring-2 ring-orange-200",
++                            show && isCorrect && "border-emerald-500 bg-emerald-50 text-emerald-900",
++                            show && isSel && !isCorrect && "border-rose-500 bg-rose-50 text-rose-900",
++                            show && !isCorrect && !isSel && "border-slate-200 bg-slate-50 text-slate-500",
++                          )}>
++                          <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-extrabold text-white",
++                            show && isCorrect ? "bg-emerald-600" : show && isSel ? "bg-rose-600" : "bg-orange-500")}>{choice.label}</span>
++                          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words leading-snug">{choice.text}</span>
++                          {isSel && <Check className="h-5 w-5 shrink-0" aria-hidden />}
++                        </button>
++                      );
++                    })}
++                  </div>
++                </div>
++                <div className="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-amber-100 pt-3">
++                  <p className="text-sm font-semibold text-slate-600" role="status">{result ? "Đang cập nhật kết quả…" : nextStep}</p>
++                  <button type="button" onClick={confirmAnswer} disabled={selected == null || result != null}
++                    className="min-h-12 w-full rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 px-8 py-3 text-lg font-extrabold text-white shadow-md transition hover:brightness-105 active:scale-[0.98] disabled:opacity-40 sm:w-auto focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-300">
+                     Xác nhận
+                   </button>
+-                )}
+-              </div>
+-            </div>
+-          )}
++                </div>
++              </>
++            )}
++          </section>
+         </div>
+       </div>
+     </div>
+-  );
+-}
+-
+-function Tip({ icon, text }: { icon: ReactNode; text: string }) {
+-  return (
+-    <li className="flex gap-2.5">
+-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50">
+-        {icon}
+-      </span>
+-      <span className="pt-1">{text}</span>
+-    </li>
+   );
+ }
+ 
+@@ -697,10 +547,11 @@
+             key={cell}
+             type="button"
+             disabled={!canClaim}
++            aria-label={isOpen ? `Mảnh ${cell + 1} đã mở` : `Mở mảnh ${cell + 1}`}
+             onClick={() => id != null && onOpenCell(id)}
+             className={cn(
+               "relative min-h-0 min-w-0 overflow-hidden bg-[#3f4654]",
+-              canClaim && "cursor-pointer",
++              canClaim && "cursor-pointer focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-500 focus-visible:z-30",
+               !canClaim && !isOpen && "cursor-default",
+             )}
+           >
+@@ -740,11 +591,11 @@
+                   transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                 />
+                 <motion.span
+-                  className="pointer-events-none absolute inset-x-0 bottom-1 z-20 text-center text-[10px] font-extrabold text-amber-100 drop-shadow sm:text-xs"
++                  className="pointer-events-none absolute inset-x-0 bottom-1 z-20 text-center text-xs font-extrabold text-amber-100 drop-shadow sm:text-xs"
+                   animate={{ y: [0, -2, 0], opacity: [0.7, 1, 0.7] }}
+                   transition={{ duration: 1.2, repeat: Infinity }}
+                 >
+-                  CHẠM!
++                  MỞ MẢNH
+                 </motion.span>
+               </>
+             )}
+@@ -762,7 +613,7 @@
+   const C = 2 * Math.PI * R;
+   const color = pct > 0.5 ? "#10b981" : pct > 0.25 ? "#f59e0b" : "#f43f5e";
+   return (
+-    <div className="relative h-11 w-11 shrink-0" title={`${value}s`}>
++    <div className="relative h-10 w-10 shrink-0" title={`Còn ${value} giây`}>
+       <svg viewBox="0 0 44 44" className="h-full w-full -rotate-90">
+         <circle cx="22" cy="22" r={R} fill="none" stroke="#e2e8f0" strokeWidth="4" />
+         <circle
+--- a/src/modules/DecodeLetters/config.ts
++++ b/src/modules/DecodeLetters/config.ts
+@@ -3,7 +3,7 @@
+ /**
+  * Giải mã chữ cái — pick a letter row → answer MC quiz → (correct) reveal letters
+  * + glow the matching secret cell → player taps the glowing cell to open the image.
+- * Demo layout: left tips · center letter rows · right 2×2 puzzle · bottom question.
++ * Responsive layout: letter rows + question, with a visible 2×2 picture on every screen.
+  */
+ 
+ export interface DecodeChoice {
+@@ -149,7 +149,7 @@
+   tutorial: [
+     { icon: "1️⃣", text: "Chạm số dòng (1–4) trên bảng chữ để nhận câu hỏi." },
+     { icon: "✅", text: "Trả lời đúng → lộ chữ + nhận 1 lượt mở ảnh." },
+-    { icon: "👆", text: "Chạm CHẠM trên ô bất kỳ (chưa mở) để mở mảnh. Mở đủ 4 ô để thắng!" },
++    { icon: "👆", text: "Chạm vào mảnh ảnh đang sáng để mở. Mở đủ 4 mảnh để hoàn thành!" },
+   ],
+   category: "quiz",
+   minPlayers: 1,
+--- /dev/null
++++ b/src/modules/DecodeLetters/Result.tsx
+@@ -0,0 +1,45 @@
++import { ArrowLeft, ArrowRight, RotateCcw, Trophy } from "lucide-react";
++
++interface DecodeLettersResultProps {
++  image: string | null;
++  keyword?: string;
++  score: number;
++  best: number;
++  onReplay: () => void;
++  onExit: () => void;
++  onNext?: () => void;
++  nextLabel?: string;
++}
++
++/** Keep the discovered picture visible, including on narrow/short screens. */
++export function DecodeLettersResult({ image, keyword, score, best, onReplay, onExit, onNext, nextLabel }: DecodeLettersResultProps) {
++  const button = "flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 py-3 text-lg font-extrabold transition active:scale-[0.98] focus-visible:outline focus-visible:outline-4 focus-visible:outline-orange-400";
++  return (
++    <section role="dialog" aria-modal="true" aria-labelledby="decode-result-title"
++      className="max-h-full w-full max-w-3xl overflow-y-auto rounded-3xl border-2 border-amber-100 bg-white p-5 text-center shadow-2xl sm:p-7">
++      <div className="mb-4 flex items-center justify-center gap-3 text-orange-600">
++        <Trophy className="h-9 w-9" aria-hidden />
++        <h2 id="decode-result-title" className="font-display text-3xl font-black">Hoàn thành!</h2>
++      </div>
++      {image && <img src={image} alt="Ảnh bí mật đã được mở hoàn chỉnh" draggable={false}
++        className="mx-auto max-h-[42dvh] w-full rounded-2xl bg-amber-50 object-contain" />}
++      <p className="mt-3 text-base font-semibold text-slate-600">Bạn đã mở tất cả các mảnh ghép!</p>
++      {keyword && keyword.toUpperCase() !== "HOÀN THÀNH" && <p className="mt-2 break-words text-2xl font-extrabold text-amber-900">{keyword}</p>}
++      <div className="my-5 flex justify-center gap-10 text-amber-950">
++        <div><div className="text-3xl font-black tabular-nums">{score}</div><div className="text-sm font-semibold">Điểm ván này</div></div>
++        <div><div className="text-3xl font-black tabular-nums">{best}</div><div className="text-sm font-semibold">Cao nhất</div></div>
++      </div>
++      <div className="grid gap-3 sm:grid-cols-2">
++        {onNext && <button type="button" onClick={onNext} className={`${button} bg-emerald-600 text-white sm:col-span-2`}>
++          {nextLabel || "Game tiếp theo"}<ArrowRight className="h-5 w-5" aria-hidden />
++        </button>}
++        <button type="button" onClick={onReplay} className={`${button} bg-gradient-to-r from-amber-500 to-orange-600 text-white`}>
++          <RotateCcw className="h-5 w-5" aria-hidden />Chơi lại
++        </button>
++        <button type="button" onClick={onExit} className={`${button} bg-amber-50 text-amber-900`}>
++          <ArrowLeft className="h-5 w-5" aria-hidden />{onNext ? "Thoát thử thách" : "Về thư viện"}
++        </button>
++      </div>
++    </section>
++  );
++}
+--- a/src/engine/GameShell.tsx
++++ b/src/engine/GameShell.tsx
+@@ -32,7 +32,9 @@
+ import { ErrorBoundary } from "@/components/ErrorBoundary";
+ import { formatTime } from "@/utils";
+ import { cn } from "@/utils/cn";
+-import { useT } from "@/i18n";
++import { useT, translate, type TFunction } from "@/i18n";
++import { DecodeLettersResult } from "@/modules/DecodeLetters/Result";
++import type { DecodeLettersConfig } from "@/modules/DecodeLetters/config";
+ import { HandSliceInputPicker } from "@/modules/HandSlice/InputPicker";
+ import type { HandSliceInputMode } from "@/modules/HandSlice/config";
+ 
+@@ -154,6 +156,7 @@
+         {tutorialOpen && steps && steps.length > 0 && (
+           <GameTutorial
+             key="tutorial"
++            language={module.manifest.id === "decodeletters" ? "vi" : undefined}
+             gameName={module.manifest.name}
+             icon={module.manifest.icon}
+             steps={steps}
+@@ -179,8 +182,10 @@
+   tutorialOpen?: boolean;
+   onChooseInput?: () => void;
+ }) {
+-  const t = useT();
++  const defaultT = useT();
+   const engine = useEngine();
++  const isDecode = engine.project.moduleId === "decodeletters";
++  const t: TFunction = isDecode ? (key, vars) => translate("vi", key, vars) : defaultT;
+   const settings = useStudio((s) => s.settings);
+   const updateSettings = useStudio((s) => s.updateSettings);
+   const obs = settings.obsMode;
+@@ -210,10 +215,10 @@
+             <MousePointer2 className="h-4 w-4" />
+           </IconButton>
+         )}
+-        <div className={cn("hidden sm:flex", chip)}>
++        {!isDecode && <div className={cn("hidden sm:flex", chip)}>
+           <span className="text-lg leading-none">{module.manifest.icon}</span>
+           <span className="font-display text-sm font-bold text-ink">{engine.project.name}</span>
+-        </div>
++        </div>}
+         {sequence && (
+           <div className="flex h-10 items-center gap-1.5 rounded-full bg-brand-gradient px-3 text-brand-fg shadow-[0_4px_14px_rgba(15,23,42,0.12)]">
+             <Layers className="h-3.5 w-3.5" />
+@@ -307,8 +312,10 @@
+    */
+   enableVictoryPhoto?: boolean;
+ }) {
+-  const t = useT();
++  const defaultT = useT();
+   const engine = useEngine();
++  const isDecode = engine.project.moduleId === "decodeletters";
++  const t: TFunction = isDecode ? (key, vars) => translate("vi", key, vars) : defaultT;
+   const settingOn = useStudio((s) => s.settings.victoryPhoto !== false);
+   /** Global setting AND this game is AR. */
+   const victoryPhotoOn = enableVictoryPhoto && settingOn;
+@@ -377,7 +384,18 @@
+               Image games (resultImage set): use shared HOÀN THÀNH frame chrome.
+               Pause / lose / non-image wins keep the classic card.
+             */}
+-            {won && engine.resultImage ? (
++            {won && isDecode ? (
++              <DecodeLettersResult
++                image={engine.resultImage}
++                keyword={(engine.project.config as DecodeLettersConfig).finalKeyword}
++                score={engine.score}
++                best={Math.max(best, engine.score)}
++                onReplay={engine.restart}
++                onExit={inCombo ? sequence!.onQuit : engine.exit}
++                onNext={inCombo ? () => sequence!.onNext(engine.score) : undefined}
++                nextLabel={inCombo ? isLastStep ? t("shell.finishChallenge") : t("shell.nextGame", { current: sequence!.index + 2, total: sequence!.total }) : undefined}
++              />
++            ) : won && engine.resultImage ? (
+               <motion.div
+                 initial={{ scale: 0.88, y: 20, opacity: 0 }}
+                 animate={{ scale: 1, y: 0, opacity: 1 }}
+--- a/src/engine/GameTutorial.tsx
++++ b/src/engine/GameTutorial.tsx
+@@ -1,8 +1,9 @@
+ import { motion } from "framer-motion";
+-import type { GameTutorialStep } from "@/types";
+-import { useT } from "@/i18n";
++import type { GameTutorialStep, Language } from "@/types";
++import { useT, translate, type TFunction } from "@/i18n";
+ 
+ interface GameTutorialProps {
++  language?: Language;
+   gameName: string;
+   icon: string;
+   steps: GameTutorialStep[];
+@@ -13,8 +14,9 @@
+  * Shared full-screen how-to shown at the start of every game run.
+  * Parent should pause the engine while this is open.
+  */
+-export function GameTutorial({ gameName, icon, steps, onDismiss }: GameTutorialProps) {
+-  const t = useT();
++export function GameTutorial({ gameName, icon, steps, onDismiss, language }: GameTutorialProps) {
++  const defaultT = useT();
++  const t: TFunction = language ? (key, vars) => translate(language, key, vars) : defaultT;
+ 
+   return (
+     <motion.div
+@@ -38,7 +40,7 @@
+         initial={{ scale: 0.9, y: 20, opacity: 0 }}
+         animate={{ scale: 1, y: 0, opacity: 1 }}
+         transition={{ type: "spring", stiffness: 320, damping: 26 }}
+-        className="w-full max-w-lg rounded-3xl bg-surface p-6 text-left shadow-lift sm:p-8"
++        className="max-h-full w-full max-w-lg overflow-y-auto rounded-3xl bg-surface p-6 text-left shadow-lift sm:p-8"
+         onClick={(e) => e.stopPropagation()}
+       >
+         <div className="mb-1 flex items-center gap-3">
+@@ -71,7 +73,7 @@
+         >
+           {t("shell.tutorialStart")}
+         </button>
+-        <p className="mt-2 text-center text-xs font-semibold text-muted">{t("shell.tutorialHint")}</p>
++        <p className="mt-2 text-center text-xs font-semibold text-muted">{language === "vi" ? "Chạm ra ngoài hoặc nhấn Enter để bắt đầu" : t("shell.tutorialHint")}</p>
+       </motion.div>
+     </motion.div>
+   );
