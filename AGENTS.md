@@ -278,8 +278,15 @@ items, polls, slides, or badges.
 
 This app now also hosts the EventPlay game portal (kiosk mini-games):
 
-- `/games` - public catalog; all 18 modules are open, no login required.
+- `/games` - public catalog; all 19 modules are open, no login required.
 - `/games/play?module=<id>` - embeds `/studio/index.html#/games/<id>` in an iframe.
+- `worddecode` ("Giải Mã Ô Chữ") is a studio module added in
+  `D:/Game Mới/src/modules/WordDecode/` (tile grid covers a secret image; each
+  correct answer opens a tile, reveals its letter, and the letters spell a
+  secret keyword; opening every tile shows the full image). It is bundled like
+  the others: rebuild the studio with `VITE_BASE=./`, then run
+  `node scripts/import-studio.cjs "D:/Game Mới/dist"`. It is reachable at
+  `/games/play?module=worddecode`.
 - `/api/game/entitlements` - public; returns all `allowedIds` and `user: null`.
 - `/api/game/session` - POST verifies a Bearer token and sets the HttpOnly studio
   session cookie for account sync; DELETE clears it on sign-out/guest launch.

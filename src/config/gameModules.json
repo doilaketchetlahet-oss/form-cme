@@ -230,5 +230,17 @@
     "isFree": false,
     "sort": 18,
     "cover": "/games/covers/wordsearch.webp"
+  },
+  {
+    "id": "worddecode",
+    "name": "Giải Mã Ô Chữ",
+    "icon": "🔠",
+    "tagline": "Trả lời đúng để mở ô, lộ ảnh và ghép thành từ khoá bí mật.",
+    "category": "quiz",
+    "accent": "from-sky-400 to-indigo-500",
+    "minPlayers": 1,
+    "maxPlayers": 8,
+    "isFree": true,
+    "sort": 19
   }
 ]
