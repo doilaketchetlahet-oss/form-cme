@@ -106,7 +106,10 @@ async function scenario(name, viewport, extended, pictureMode = "reveal") {
   await result.getByRole("button", { name: "Chơi lại", exact: true }).waitFor();
   assert.equal(await result.getByRole("img", { name: "Ảnh bí mật đã được mở hoàn chỉnh" }).count(), pictureMode === "none" ? 0 : 1);
   const finalImage = result.getByRole("img", { name: "Ảnh bí mật đã được mở hoàn chỉnh" });
-  if (pictureMode !== "none") assert.equal(await finalImage.evaluate(el => el.complete && el.naturalWidth > 0), true);
+  if (pictureMode !== "none") assert.equal(await finalImage.evaluate(async el => {
+    await el.decode();
+    return el.naturalWidth > 0;
+  }), true);
   await page.screenshot({ path: path.join(shots, name + "-win.png") });
   await result.getByRole("button", { name: "Chơi lại", exact: true }).click();
   await result.waitFor({ state: "hidden" });
