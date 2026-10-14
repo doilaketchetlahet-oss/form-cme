@@ -27,6 +27,10 @@ completion state. Other games retain their result screens. Already applied
 locally. The same regression also completes all four unlocks, checks the result
 image and replay reset at desktop, phone and landscape sizes.
 
+`decodeletters-help-layer.patch` follows the UI patch. It puts the help dropdown
+above the board's decorative image layers and centers it within narrow screens
+so a wrapped help button cannot push instructions off the left edge.
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -39,6 +43,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decode
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-long-text.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-ui.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-ui.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-help-layer.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-help-layer.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:

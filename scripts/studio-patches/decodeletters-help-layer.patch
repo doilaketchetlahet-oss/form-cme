@@ -1,0 +1,34 @@
+--- a/src/modules/DecodeLetters/Runtime.tsx
++++ b/src/modules/DecodeLetters/Runtime.tsx
+@@ -258,7 +258,7 @@
+   return (
+     <div ref={stageRef} className="relative h-full w-full overflow-x-hidden overflow-y-auto" style={stageStyle}>
+       <div className="mx-auto max-w-[1680px] px-3 pb-4 pt-16 sm:px-5 lg:px-8 lg:pt-14">
+-        <header className="mb-3 text-center lg:flex lg:items-center lg:justify-between lg:gap-4 lg:text-left">
++        <header className="relative z-10 mb-3 text-center lg:flex lg:items-center lg:justify-between lg:gap-4 lg:text-left">
+           <div className="min-w-0">
+           {ui.title ? (
+             <img src={ui.title} alt="Giải mã chữ cái" draggable={false}
+@@ -277,11 +277,11 @@
+             <span className="rounded-full bg-white/95 px-4 py-2 text-amber-900 shadow-sm" aria-label="Tiến độ mở ảnh">
+               Đã mở {imageOpenedCount}/{total} mảnh
+             </span>
+-            <details className="group relative text-left">
++            <details className="group text-left sm:relative">
+               <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-amber-900 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-500">
+                 <HelpCircle className="h-5 w-5" aria-hidden /> Cách chơi
+               </summary>
+-              <div className="absolute right-0 top-full z-30 mt-2 w-[min(80vw,22rem)] rounded-2xl border border-amber-200 bg-white p-4 text-sm leading-relaxed text-slate-700 shadow-xl">
++              <div className="absolute inset-x-0 top-full z-10 mx-auto mt-2 w-[min(calc(100vw-2rem),22rem)] rounded-2xl border border-amber-200 bg-white p-4 text-sm leading-relaxed text-slate-700 shadow-xl sm:left-auto sm:right-0 sm:mx-0">
+                 <ol className="list-inside list-decimal space-y-2">
+                   <li>Chọn số câu hỏi trên bảng chữ.</li>
+                   <li>Chọn đáp án rồi nhấn Xác nhận. Trả lời đúng để lộ chữ và nhận một lượt mở ảnh.</li>
+@@ -292,7 +292,7 @@
+           </div>
+         </header>
+ 
+-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,27%)] lg:gap-5">
++        <div className="relative z-0 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,27%)] lg:gap-5">
+           <section aria-label="Bảng chữ" className="min-w-0 rounded-3xl border border-white bg-white/95 p-3 shadow-lg shadow-amber-800/10 sm:p-3">
+             <div className="mb-2 flex items-center justify-between gap-3 px-1">
+               <h2 className="text-sm font-extrabold text-amber-900 sm:text-base">BẢNG CHỮ</h2>
