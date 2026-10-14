@@ -280,10 +280,17 @@ This app now also hosts the EventPlay game portal (kiosk mini-games):
 
 - `/games` - public catalog; all 19 modules are open, no login required.
 - `/games/play?module=<id>` - embeds `/studio/index.html#/games/<id>` in an iframe.
-- `worddecode` ("Giải Mã Ô Chữ") is a studio module added in
-  `D:/Game Mới/src/modules/WordDecode/` (tile grid covers a secret image; each
-  correct answer opens a tile, reveals its letter, and the letters spell a
-  secret keyword; opening every tile shows the full image). It is bundled like
+- `worddecode` ("Giải Mã Ô Chữ") lives in `D:/Game Mới/src/modules/WordDecode/`.
+  Its video-reference flow uses separate full-stage screens: start → letter-row
+  board → timed question/feedback → manually choose a picture tile → board →
+  full-image result. Every answered question (including wrong/timeout) grants
+  exactly one reveal; only correct answers award points. Back grants nothing.
+  Replay returns to start. New projects default to 4 questions / 2×2 image;
+  older projects retain their configured questions/grid. Each question has an
+  optional `phrase` (fallback: correct answer text); optional `background` is
+  independent of `revealImage`. Source changes are preserved in
+  `scripts/studio-patches/worddecode-flow.patch`; guest-only regression:
+  `node scripts/test-worddecode-flow.cjs`. It is bundled like
   the others: rebuild the studio with `VITE_BASE=./`, then run
   `node scripts/import-studio.cjs "D:/Game Mới/dist"`. It is reachable at
   `/games/play?module=worddecode`.

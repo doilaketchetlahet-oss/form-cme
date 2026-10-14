@@ -31,6 +31,20 @@ image and replay reset at desktop, phone and landscape sizes.
 above the board's decorative image layers and centers it within narrow screens
 so a wrapped help button cannot push instructions off the left edge.
 
+`worddecode-flow.patch` applies to the upstream WordDecode v1 module after the
+patches above. It reproduces the separate screens in the supplied 66-second
+video: intro → letter board → timed quiz/feedback → manual image reveal → board
+→ complete image/replay. It deliberately grants a reveal for wrong answers and
+timeouts as well as correct answers, while scoring only correct answers. The
+reducer prevents repeated taps from granting extra points/reveals. Questions and
+images do not overlay the letter board. Editor supports per-question phrases,
+independent background art, 2×2 default and existing larger grids. No account
+or database migration is needed; old missing fields fall back at render time.
+Already applied locally. Regression: `node scripts/test-worddecode-flow.cjs`.
+The regression covers desktop, long mobile/landscape content, pause, timeout,
+wrong answer, arbitrary single-tile reveal, complete image, replay and old
+16-question projects. Screenshots are written to `%TEMP%/worddecode-flow-qa`.
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -45,6 +59,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decode
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-ui.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-help-layer.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-help-layer.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-flow.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-flow.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:

@@ -235,7 +235,7 @@
     "id": "worddecode",
     "name": "Giải Mã Ô Chữ",
     "icon": "🔠",
-    "tagline": "Trả lời đúng để mở ô, lộ ảnh và ghép thành từ khoá bí mật.",
+    "tagline": "Chọn dòng ô chữ, trả lời câu hỏi rồi mở từng mảnh ảnh bí mật.",
     "category": "quiz",
     "accent": "from-sky-400 to-indigo-500",
     "minPlayers": 1,
