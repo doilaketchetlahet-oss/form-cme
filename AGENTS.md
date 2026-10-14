@@ -283,8 +283,14 @@ This app now also hosts the EventPlay game portal (kiosk mini-games):
 - `worddecode` ("Giải Mã Ô Chữ") lives in `D:/Game Mới/src/modules/WordDecode/`.
   Its video-reference flow uses separate full-stage screens: start → letter-row
   board → timed question/feedback → manually choose a picture tile → board →
-  full-image result. Every answered question (including wrong/timeout) grants
-  exactly one reveal; only correct answers award points. Back grants nothing.
+  full-image result. By default every answered question (including wrong/timeout)
+  grants exactly one reveal; only correct answers award points. Back grants nothing.
+  Cài đặt → Luồng chơi has “Cho mở mảnh ảnh khi trả lời sai” (`allowOpenOnWrong`,
+  default true for new/old projects). When disabled, wrong/timeout returns to the
+  board without revealing letters or an image tile; that question can be retried.
+  Correct answers still grant exactly one tile and cannot be scored again.
+  Patch: `worddecode-wrong-answer-policy.patch`; regression:
+  `node scripts/test-worddecode-policy.cjs` (mocked shares, no database writes).
   Replay returns to start. New projects default to 4 questions / 2×2 image;
   older projects retain their configured questions/grid. Each question has an
   optional `phrase` (fallback: correct answer text); optional `background` is

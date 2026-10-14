@@ -56,6 +56,13 @@ up on replay and respects reduced motion. Already applied locally. Regressions:
 `node scripts/test-worddecode-polish.cjs` (mocked play/edit shares with real
 browser audio nodes, no publishing or account/database writes).
 
+`worddecode-wrong-answer-policy.patch` follows the celebration patch. Settings
+can disable image reveals for wrong answers/timeouts; failed questions return to
+the board and can be retried. Missing `allowOpenOnWrong` defaults to true to keep
+existing projects compatible. The policy travels with project/share config.
+Already applied locally. `node scripts/test-worddecode-policy.cjs` covers reducer
+gating plus editor save/reload and shared play with mocked persistence only.
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -74,6 +81,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/wordde
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-flow.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-share-music-celebration.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-share-music-celebration.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-wrong-answer-policy.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-wrong-answer-policy.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:
