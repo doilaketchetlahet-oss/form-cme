@@ -294,6 +294,13 @@ This app now also hosts the EventPlay game portal (kiosk mini-games):
   the others: rebuild the studio with `VITE_BASE=./`, then run
   `node scripts/import-studio.cjs "D:/Game Mới/dist"`. It is reachable at
   `/games/play?module=worddecode`.
+  Follow-up source patch: `worddecode-share-music-celebration.patch` keeps music
+  continuous through WordDecode completion/replay (stops on exit), retries
+  browser-blocked audio after interaction, and celebrates the last image tile.
+  Shared result screens hide library actions for play-only links and retain
+  them for edit links, based on the API-returned permission. Regressions:
+  `node scripts/test-game-music.cjs`, `node scripts/test-worddecode-polish.cjs`
+  (mocked shares; no database writes).
 - `/api/game/entitlements` - public; returns all `allowedIds` and `user: null`.
 - `/api/game/session` - POST verifies a Bearer token and sets the HttpOnly studio
   session cookie for account sync; DELETE clears it on sign-out/guest launch.

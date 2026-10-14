@@ -1,0 +1,454 @@
+diff --git a/src/app/App.tsx b/src/app/App.tsx
+--- a/src/app/App.tsx
++++ b/src/app/App.tsx
+@@ -79,11 +79,11 @@
+     });
+   }, [settings.masterVolume, settings.musicVolume, settings.sfxVolume, settings.muted]);
+
+-  // Browsers block audio until a user gesture — unlock on first interaction.
++  // Retry blocked music on real interactions, including after mobile tab suspension.
+   useEffect(() => {
+     const unlock = () => audioEngine.unlock();
+-    window.addEventListener("pointerdown", unlock, { once: true });
+-    window.addEventListener("keydown", unlock, { once: true });
++    window.addEventListener("pointerdown", unlock);
++    window.addEventListener("keydown", unlock);
+     return () => {
+       window.removeEventListener("pointerdown", unlock);
+       window.removeEventListener("keydown", unlock);
+diff --git a/src/components/ResultImageCard.tsx b/src/components/ResultImageCard.tsx
+--- a/src/components/ResultImageCard.tsx
++++ b/src/components/ResultImageCard.tsx
+@@ -13,7 +13,7 @@
+   score: number;
+   bestScore: number;
+   onReplay: () => void;
+-  onExit: () => void;
++  onExit?: () => void;
+   onNext?: () => void;
+   nextLabel?: string;
+   gestureConfirm?: boolean;
+@@ -124,7 +124,7 @@
+               draggable={false}
+             />
+           </button>
+-          <button
++          {onExit && <button
+             type="button"
+             onClick={onExit}
+             className="shrink-0 transition active:scale-[0.98]"
+@@ -136,7 +136,7 @@
+               className="mx-auto block h-auto w-full object-contain"
+               draggable={false}
+             />
+-          </button>
++          </button>}
+         </div>
+       </div>
+     </div>
+diff --git a/src/engine/EngineContext.tsx b/src/engine/EngineContext.tsx
+--- a/src/engine/EngineContext.tsx
++++ b/src/engine/EngineContext.tsx
+@@ -131,6 +131,7 @@
+   theme: Theme;
+   audio: AudioClip[];
+   onExit: () => void;
++  keepMusicOnFinish?: boolean;
+   children: ReactNode;
+ }
+
+@@ -139,6 +140,7 @@
+   theme,
+   audio,
+   onExit,
++  keepMusicOnFinish = false,
+   children,
+ }: EngineProviderProps) {
+   const settings = useStudio((s) => s.settings);
+@@ -257,6 +259,7 @@
+   }, []);
+
+   useEffect(() => () => stopLoop(), [stopLoop]);
++  useEffect(() => () => audioEngine.stopMusic(), []);
+
+   /* --- Score ---------------------------------------------------- */
+   const addScore = useCallback((delta: number) => {
+@@ -298,14 +301,14 @@
+       stopLoop();
+       setTimerActive(false);
+       pausedRef.current = false;
+-      audioEngine.stopMusic();
++      if (!keepMusicOnFinish) audioEngine.stopMusic();
+       scoreRef.current = final;
+       setScoreState(final);
+       setStatus(outcome);
+       sfx(outcome === "won" ? "victory" : "fail");
+       recordPlay(project.id, final);
+     },
+-    [sfx, recordPlay, project.id, stopLoop],
++    [sfx, recordPlay, project.id, stopLoop, keepMusicOnFinish],
+   );
+
+   const win = useCallback((f?: number) => finish("won", f), [finish]);
+diff --git a/src/engine/GameShell.tsx b/src/engine/GameShell.tsx
+--- a/src/engine/GameShell.tsx
++++ b/src/engine/GameShell.tsx
+@@ -35,6 +35,7 @@
+ import { useT, translate, type TFunction } from "@/i18n";
+ import { DecodeLettersResult } from "@/modules/DecodeLetters/Result";
+ import type { DecodeLettersConfig } from "@/modules/DecodeLetters/config";
++import { WordDecodeCelebration } from "@/modules/WordDecode/Celebration";
+ import { WordDecodeResult } from "@/modules/WordDecode/Result";
+ import type { WordDecodeConfig } from "@/modules/WordDecode/config";
+ import { HandSliceInputPicker } from "@/modules/HandSlice/InputPicker";
+@@ -46,10 +47,12 @@
+   onExit: () => void;
+   /** When set, this project is played as one step of a combo/game chain. */
+   sequence?: GameSequence;
++  /** Supplied by the loaded share permission, not inferred from the URL. */
++  allowLibraryExit?: boolean;
+ }
+
+ /** Full-screen host that gives any game the shared engine, chrome + overlays. */
+-export function GameShell({ project, module, onExit, sequence }: GameShellProps) {
++export function GameShell({ project, module, onExit, sequence, allowLibraryExit = true }: GameShellProps) {
+   const theme = useTheme(project.themeId);
+   const audio = useWorkspaceAudio();
+   const isHandSlice = module.manifest.id === "handslice";
+@@ -76,8 +79,9 @@
+         theme={theme}
+         audio={audio}
+         onExit={onExit}
++        keepMusicOnFinish={module.manifest.id === "worddecode"}
+       >
+-        <GameShellInner module={module} sequence={sequence} pointerMode={isHandSlice && inputMode === "pointer"} onChooseInput={isHandSlice ? () => setSliceControl(null) : undefined} />
++        <GameShellInner allowLibraryExit={allowLibraryExit} module={module} sequence={sequence} pointerMode={isHandSlice && inputMode === "pointer"} onChooseInput={isHandSlice ? () => setSliceControl(null) : undefined} />
+       </EngineProvider>
+       )}
+     </ThemeScope>
+@@ -85,7 +89,8 @@
+ }
+
+ /** Lives inside EngineProvider so it can pause for the how-to overlay. */
+-function GameShellInner({ module, sequence, pointerMode, onChooseInput }: {
++function GameShellInner({ module, sequence, pointerMode, onChooseInput, allowLibraryExit }: {
++  allowLibraryExit: boolean;
+   module: GameModule;
+   sequence?: GameSequence;
+   pointerMode?: boolean;
+@@ -148,6 +153,7 @@
+         </div>
+       </div>
+       <GameOverlays
++        allowLibraryExit={allowLibraryExit}
+         sequence={sequence}
+         gestureConfirm={Boolean(module.manifest.gestureConfirm)}
+         suppressPause={tutorialOpen}
+@@ -304,7 +310,9 @@
+   gestureConfirm,
+   suppressPause,
+   enableVictoryPhoto = false,
++  allowLibraryExit,
+ }: {
++  allowLibraryExit: boolean;
+   sequence?: GameSequence;
+   gestureConfirm?: boolean;
+   /** Hide the pause card while the shared how-to tutorial is up. */
+@@ -359,7 +367,8 @@
+           onDone={() => setPhotoDone(true)}
+         />
+       )}
+-      {showWinResult && <Confetti disabled={engine.reducedMotion} />}
++      {showWinResult && !isWordDecode && <Confetti disabled={engine.reducedMotion} />}
++      {isWordDecode && (engine.scene === "worddecode-complete" || showWinResult) && <WordDecodeCelebration disabled={engine.reducedMotion} />}
+       {/*
+         Gesture cursor layer — above result overlay (z-30), outside GameStage (z-10).
+         Only visible on won/lost; Runtime also clears it every frame while playing
+@@ -390,7 +399,7 @@
+             */}
+             {won && isWordDecode ? (
+               <WordDecodeResult config={engine.project.config as WordDecodeConfig} score={engine.score}
+-                onReplay={engine.restart} onExit={inCombo ? sequence!.onQuit : engine.exit}
++                onReplay={engine.restart} onExit={allowLibraryExit ? inCombo ? sequence!.onQuit : engine.exit : undefined}
+                 onNext={inCombo ? () => sequence!.onNext(engine.score) : undefined}
+                 nextLabel={inCombo ? isLastStep ? t("shell.finishChallenge") : t("shell.nextGame", { current: sequence!.index + 2, total: sequence!.total }) : undefined} />
+             ) : won && isDecode ? (
+@@ -400,7 +409,7 @@
+                 score={engine.score}
+                 best={Math.max(best, engine.score)}
+                 onReplay={engine.restart}
+-                onExit={inCombo ? sequence!.onQuit : engine.exit}
++                onExit={allowLibraryExit ? inCombo ? sequence!.onQuit : engine.exit : undefined}
+                 onNext={inCombo ? () => sequence!.onNext(engine.score) : undefined}
+                 nextLabel={inCombo ? isLastStep ? t("shell.finishChallenge") : t("shell.nextGame", { current: sequence!.index + 2, total: sequence!.total }) : undefined}
+               />
+@@ -417,7 +426,7 @@
+                   score={engine.score}
+                   bestScore={Math.max(best, engine.score)}
+                   onReplay={engine.restart}
+-                  onExit={inCombo ? sequence!.onQuit : engine.exit}
++                  onExit={allowLibraryExit ? inCombo ? sequence!.onQuit : engine.exit : undefined}
+                   onNext={
+                     inCombo
+                       ? () => sequence!.onNext(engine.score)
+@@ -599,7 +608,7 @@
+                     >
+                       <RotateCcw className="h-5 w-5" /> {t("shell.playAgain")}
+                     </Button>
+-                    <Button
++                    {allowLibraryExit && <Button
+                       size="lg"
+                       variant="secondary"
+                       fullWidth
+@@ -607,7 +616,7 @@
+                       data-gesture-action={gestureConfirm ? "exit" : undefined}
+                     >
+                       <ArrowLeft className="h-5 w-5" /> {t("shell.exitToLibrary")}
+-                    </Button>
++                    </Button>}
+                   </>
+                 )}
+               </div>
+diff --git a/src/engine/audio.ts b/src/engine/audio.ts
+--- a/src/engine/audio.ts
++++ b/src/engine/audio.ts
+@@ -1,4 +1,4 @@
+-import { Howl } from "howler";
++import { Howl, Howler } from "howler";
+ import type { AudioClip } from "@/types";
+
+ interface VolumeState {
+@@ -24,6 +24,8 @@
+   private howls = new Map<string, Howl>();
+   private musicStop: (() => void) | null = null;
+   private currentMusicId: string | null = null;
++  private requestedMusic: AudioClip | null = null;
++  private musicStarting = false;
+
+   private volumes: VolumeState = { master: 0.9, music: 0.5, sfx: 0.9, muted: false };
+
+@@ -37,6 +39,8 @@
+       );
+     }
+     for (const howl of this.howls.values()) howl.mute(this.volumes.muted);
++    // A muted launch still remembers its music, so unmuting can start it.
++    if (!this.volumes.muted && this.requestedMusic) this.play(this.requestedMusic);
+   }
+
+   /** Web Audio contexts must be created/resumed after a user gesture. */
+@@ -57,6 +61,8 @@
+   /** Unlock audio on first user interaction. */
+   unlock(): void {
+     this.ensureCtx();
++    if (Howler.ctx?.state === "suspended") void Howler.ctx.resume().catch(() => {});
++    if (this.requestedMusic && !this.volumes.muted) this.play(this.requestedMusic);
+   }
+
+   /**
+@@ -72,10 +78,16 @@
+
+   /** Play any clip; routes to synth or Howler automatically. */
+   play(clip: AudioClip): void {
++    const isMusic = clip.category === "music";
++    if (isMusic) {
++      if (this.requestedMusic?.id !== clip.id || this.requestedMusic?.src !== clip.src) this.stopMusic();
++      this.requestedMusic = clip;
++    }
+     if (this.volumes.muted) return;
+-    const isMusic = clip.category === "music";
+     const channel = isMusic ? this.volumes.music : this.volumes.sfx;
+     if (clip.src.startsWith("synth:")) {
++      if (isMusic && this.currentMusicId === clip.id && this.musicStop) return;
++      if (isMusic) this.currentMusicId = clip.id;
+       this.playSynth(clip.src.slice(6), channel * clip.volume, clip.loop || isMusic);
+     } else {
+       this.playFile(clip, channel * clip.volume);
+@@ -83,6 +95,8 @@
+   }
+
+   stopMusic(): void {
++    this.requestedMusic = null;
++    this.musicStarting = false;
+     if (this.musicStop) {
+       this.musicStop();
+       this.musicStop = null;
+@@ -99,6 +113,7 @@
+     const howl = this.howls.get(clipId);
+     howl?.stop();
+     if (this.currentMusicId === clipId) this.currentMusicId = null;
++    if (this.requestedMusic?.id === clipId) { this.requestedMusic = null; this.musicStarting = false; }
+   }
+
+   dispose(): void {
+@@ -119,11 +134,21 @@
+       howl = new Howl({ src: [clip.src], loop: clip.loop || clip.category === "music" });
+       this.howls.set(clip.id, howl);
+     }
+-    howl.volume(volume);
++    howl.volume(volume * this.volumes.master);
+     howl.mute(this.volumes.muted);
+     if (clip.category === "music") {
+-      this.stopMusic();
+       this.currentMusicId = clip.id;
++      if (howl.playing() || this.musicStarting) return;
++      this.musicStarting = true;
++      howl.once("play", () => { if (this.currentMusicId === clip.id) this.musicStarting = false; });
++      howl.once("playerror", () => {
++        if (this.currentMusicId !== clip.id) return;
++        this.musicStarting = false;
++        howl!.once("unlock", () => {
++          if (this.requestedMusic?.id === clip.id && !this.volumes.muted) this.play(this.requestedMusic);
++        });
++      });
++      howl.once("loaderror", () => { if (this.currentMusicId === clip.id) this.musicStarting = false; });
+     }
+     howl.play();
+   }
+@@ -136,7 +161,6 @@
+     if (!ctx || !this.masterGain) return;
+
+     if (name.startsWith("music-")) {
+-      this.stopMusic();
+       this.musicStop = this.startMusic(ctx, name, volume);
+       return;
+     }
+diff --git a/src/modules/DecodeLetters/Result.tsx b/src/modules/DecodeLetters/Result.tsx
+--- a/src/modules/DecodeLetters/Result.tsx
++++ b/src/modules/DecodeLetters/Result.tsx
+@@ -6,7 +6,7 @@
+   score: number;
+   best: number;
+   onReplay: () => void;
+-  onExit: () => void;
++  onExit?: () => void;
+   onNext?: () => void;
+   nextLabel?: string;
+ }
+@@ -29,16 +29,16 @@
+         <div><div className="text-3xl font-black tabular-nums">{score}</div><div className="text-sm font-semibold">Điểm ván này</div></div>
+         <div><div className="text-3xl font-black tabular-nums">{best}</div><div className="text-sm font-semibold">Cao nhất</div></div>
+       </div>
+-      <div className="grid gap-3 sm:grid-cols-2">
++      <div className={`grid gap-3 ${onExit ? "sm:grid-cols-2" : ""}`}>
+         {onNext && <button type="button" onClick={onNext} className={`${button} bg-emerald-600 text-white sm:col-span-2`}>
+           {nextLabel || "Game tiếp theo"}<ArrowRight className="h-5 w-5" aria-hidden />
+         </button>}
+         <button type="button" onClick={onReplay} className={`${button} bg-gradient-to-r from-amber-500 to-orange-600 text-white`}>
+           <RotateCcw className="h-5 w-5" aria-hidden />Chơi lại
+         </button>
+-        <button type="button" onClick={onExit} className={`${button} bg-amber-50 text-amber-900`}>
++        {onExit && <button type="button" onClick={onExit} className={`${button} bg-amber-50 text-amber-900`}>
+           <ArrowLeft className="h-5 w-5" aria-hidden />{onNext ? "Thoát thử thách" : "Về thư viện"}
+-        </button>
++        </button>}
+       </div>
+     </section>
+   );
+diff --git a/src/modules/WordDecode/Result.tsx b/src/modules/WordDecode/Result.tsx
+--- a/src/modules/WordDecode/Result.tsx
++++ b/src/modules/WordDecode/Result.tsx
+@@ -4,7 +4,7 @@
+ import "./worddecode.css";
+
+ export function WordDecodeResult({ config, score, onReplay, onExit, onNext, nextLabel }: {
+-  config: WordDecodeConfig; score: number; onReplay: () => void; onExit: () => void; onNext?: () => void; nextLabel?: string;
++  config: WordDecodeConfig; score: number; onReplay: () => void; onExit?: () => void; onNext?: () => void; nextLabel?: string;
+ }) {
+   return <div className="wd-game wd-result" data-worddecode-screen="result">
+     <WordDecodeBackdrop background={config.background} />
+@@ -18,7 +18,7 @@
+         <div className="wd-result-actions">
+           <button autoFocus className="wd-primary" onClick={onReplay}><RotateCcw size={20} /> Chơi lại</button>
+           {onNext && <button className="wd-primary" onClick={onNext}>{nextLabel || "Game tiếp theo"}<ArrowRight size={20} /></button>}
+-          <button className="wd-secondary" onClick={onExit}><ArrowLeft size={18} /> {onNext ? "Thoát thử thách" : "Về thư viện"}</button>
++          {onExit && <button className="wd-secondary" onClick={onExit}><ArrowLeft size={18} /> {onNext ? "Thoát thử thách" : "Về thư viện"}</button>}
+         </div>
+       </div>
+     </section>
+diff --git a/src/modules/WordDecode/Runtime.tsx b/src/modules/WordDecode/Runtime.tsx
+--- a/src/modules/WordDecode/Runtime.tsx
++++ b/src/modules/WordDecode/Runtime.tsx
+@@ -24,6 +24,9 @@
+   const playing = engine.status === "playing";
+
+   useEffect(() => { engine.setScore(flow.score); }, [flow.score, engine.setScore]);
++  useEffect(() => {
++    if (flow.phase === "complete") engine.goScene("worddecode-complete");
++  }, [flow.phase, engine.goScene]);
+   useEffect(() => {
+     if (flow.phase === "feedback") {
+       screenRef.current?.querySelector('[role="status"]')?.scrollIntoView({ block: "nearest" });
+diff --git a/src/modules/WordDecode/worddecode.css b/src/modules/WordDecode/worddecode.css
+--- a/src/modules/WordDecode/worddecode.css
++++ b/src/modules/WordDecode/worddecode.css
+@@ -93,6 +93,15 @@
+ .wd-result-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
+ .wd-result-score { font-size: 15px; font-weight: 800; }
+ .wd-result .wd-picture-content { gap: 14px; }
++.wd-celebration { position: absolute; inset: 0; z-index: 65; overflow: hidden; pointer-events: none; }
++.wd-confetti { position: absolute; top: -40px; width: 10px; height: 17px; border-radius: 2px; animation: wd-party-fall 4s ease-in both; }
++.wd-confetti-star { width: 24px; height: 24px; font-size: 24px; line-height: 1; text-shadow: 0 2px 6px #ffffff80; }
++.wd-victory-glow { position: absolute; inset: 0; background: radial-gradient(ellipse, #ffdf7d88 0%, #fff2bd22 38%, transparent 70%); animation: wd-victory-glow 1.4s ease-out both; }
++.wd-victory-ring { position: absolute; left: 50%; top: 50%; width: 25vmin; height: 25vmin; border: 4px solid #ffe494; border-radius: 50%; animation: wd-victory-ring 1.3s ease-out both; }
++.wd-result .wd-finished-picture { box-shadow: 0 0 0 4px #ffe59870, 0 0 45px #f6c95144, 0 14px 45px #16587529; }
++@keyframes wd-party-fall { 0% { transform: translate3d(0, -30px, 0) rotate(0deg); opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { transform: translate3d(var(--wd-drift), 110vh, 0) rotate(var(--wd-spin)); opacity: 0; } }
++@keyframes wd-victory-glow { from { opacity: 1; } to { opacity: 0; } }
++@keyframes wd-victory-ring { from { transform: translate(-50%, -50%) scale(.25); opacity: .8; } to { transform: translate(-50%, -50%) scale(4); opacity: 0; } }
+ @media (max-width: 640px) {
+   .wd-screen { padding: 68px 14px 20px; }
+   .wd-board-heading { gap: 10px; margin-bottom: 18px; }
+diff --git a/src/pages/SharedGame.tsx b/src/pages/SharedGame.tsx
+--- a/src/pages/SharedGame.tsx
++++ b/src/pages/SharedGame.tsx
+@@ -75,12 +75,11 @@
+     <a href="/games" target="_top" className="font-bold text-brand">Về thư viện game</a>
+   </div>;
+
+-  if (playing) return <GameShell project={project} module={module} onExit={() => setPlaying(false)} />;
++  if (playing) return <GameShell allowLibraryExit={permission === "edit"} project={project} module={module} onExit={() => setPlaying(false)} />;
+
+   if (permission === "play") return <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-canvas p-6 text-center text-ink">
+     <span className="text-6xl">{module.manifest.icon}</span><h1 className="font-display text-3xl font-extrabold">{project.name}</h1>
+     <Button size="lg" onClick={() => setPlaying(true)}><Play className="h-5 w-5" /> Chơi lại</Button>
+-    <a href="/games" target="_top" className="font-bold text-brand">Về thư viện game</a>
+   </div>;
+
+   const Editor = module.Editor as React.ComponentType<GameEditorProps>;
+diff --git a/src/modules/WordDecode/Celebration.tsx b/src/modules/WordDecode/Celebration.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/modules/WordDecode/Celebration.tsx
+@@ -0,0 +1,33 @@
++import { useEffect, useMemo, useState, type CSSProperties } from "react";
++import { useReducedMotion } from "framer-motion";
++import "./worddecode.css";
++
++const COLORS = ["#f7c948", "#ff728f", "#22bde4", "#38d8a2", "#ab85ff", "#ffffff"];
++
++/** One continuous burst from the last tile through the full-picture result. */
++export function WordDecodeCelebration({ disabled = false }: { disabled?: boolean }) {
++  const prefersReducedMotion = useReducedMotion();
++  const [active, setActive] = useState(true);
++  const pieces = useMemo(() => Array.from({ length: 100 }, (_, i) => ({
++    x: (i * 37) % 100,
++    delay: (i % 20) * 0.085,
++    duration: 2.6 + (i % 7) * 0.22,
++    drift: ((i * 29) % 180) - 90,
++    color: COLORS[i % COLORS.length],
++    star: i % 5 === 0,
++  })), []);
++  useEffect(() => {
++    const timer = window.setTimeout(() => setActive(false), 6000);
++    return () => window.clearTimeout(timer);
++  }, []);
++  if (!active || disabled || prefersReducedMotion) return null;
++  return <div className="wd-celebration" data-testid="worddecode-celebration" aria-hidden="true">
++    <div className="wd-victory-glow" />
++    <div className="wd-victory-ring" />
++    {pieces.map((piece, i) => <span key={i} className={`wd-confetti ${piece.star ? "wd-confetti-star" : ""}`} style={{
++      left: `${piece.x}%`, color: piece.color, background: piece.star ? "transparent" : piece.color,
++      animationDelay: `${piece.delay}s`, animationDuration: `${piece.duration}s`,
++      "--wd-drift": `${piece.drift}px`, "--wd-spin": `${i % 2 ? 600 : -540}deg`,
++    } as CSSProperties}>{piece.star ? "★" : ""}</span>)}
++  </div>;
++}

@@ -45,6 +45,17 @@ The regression covers desktop, long mobile/landscape content, pause, timeout,
 wrong answer, arbitrary single-tile reveal, complete image, replay and old
 16-question projects. Screenshots are written to `%TEMP%/worddecode-flow-qa`.
 
+`worddecode-share-music-celebration.patch` follows the flow patch. The loaded
+share permission controls library actions on all shared result screens: play
+links hide them, edit links retain them. WordDecode music continues through
+completion/replay and stops on exit/unmount. The audio engine remembers muted
+or browser-blocked music, retries after interaction/unlock, and avoids restarting
+the same playing track. Last-tile celebration persists into the result, cleans
+up on replay and respects reduced motion. Already applied locally. Regressions:
+`node scripts/test-game-music.cjs` (mocked audio lifecycle) and
+`node scripts/test-worddecode-polish.cjs` (mocked play/edit shares with real
+browser audio nodes, no publishing or account/database writes).
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -61,6 +72,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decode
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-help-layer.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-flow.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-flow.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-share-music-celebration.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/worddecode-share-music-celebration.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:
