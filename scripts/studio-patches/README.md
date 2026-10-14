@@ -11,6 +11,12 @@ and media upload preparation. It also enables CORS when Jigsaw draws a
 Supabase-hosted uploaded picture into puzzle-piece canvases. It has already been
 applied locally, after `handslice-pointer.patch`.
 
+`decodeletters-long-text.patch` removes two-line truncation from the Decode
+Letters question and answers. Its viewport-sized dock scrolls long content while
+keeping Confirm outside the scroll area; short screens can scroll the board.
+It has already been applied locally. Regression:
+`node scripts/test-decodeletters-text.cjs` (guest-only, no database writes).
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
@@ -19,6 +25,8 @@ git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/handsl
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/handslice-pointer.patch"
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-sharing.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-sharing.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-long-text.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/decodeletters-long-text.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:

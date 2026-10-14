@@ -340,6 +340,11 @@ including the win screen. Regression: `node scripts/test-handslice-input.cjs`.
 Sharing source changes are preserved in `scripts/studio-patches/game-sharing.patch`
 (already applied locally). It includes the CORS fix for Supabase-hosted Jigsaw
 pictures so shared uploads can be drawn into puzzle-piece canvases.
+Decode Letters long-question/answer layout changes are preserved in
+`scripts/studio-patches/decodeletters-long-text.patch` (already applied locally).
+Text wraps without line clamping; long content scrolls above the fixed Confirm
+action. Regression: `node scripts/test-decodeletters-text.cjs` covers desktop,
+phone and short landscape screens using guest fixtures only.
 
 Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
 `/play` player runtime mentioned below.
