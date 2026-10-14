@@ -1,0 +1,510 @@
+--- a/src/store/studio.ts
++++ b/src/store/studio.ts
+@@ -15,6 +15,7 @@
+ import { STARTER_THEMES, DEFAULT_THEME_ID } from "@/themes/presets";
+ import { BUILTIN_AUDIO } from "@/audio/presets";
+ import { uid } from "@/utils";
++import { SHARED_SESSION } from "@/shared/session";
+ const DEFAULT_SETTINGS: Settings = {
+   language: "en",
+   touchMode: false,
+@@ -484,8 +485,9 @@
+       name: "eventplay-studio",
+       version: 1,
+       storage: createJSONStorage(() => ({
+-        getItem: (name) => localStorage.getItem(name),
++        getItem: (name) => SHARED_SESSION ? null : localStorage.getItem(name),
+         setItem: (name, value) => {
++          if (SHARED_SESSION) return;
+           try {
+             localStorage.setItem(name, value);
+           } catch (e) {
+@@ -501,7 +503,7 @@
+             );
+           }
+         },
+-        removeItem: (name) => localStorage.removeItem(name),
++        removeItem: (name) => { if (!SHARED_SESSION) localStorage.removeItem(name); },
+       })),
+       // Re-merge fresh builtin themes/audio so upgrades ship new presets while
+       // preserving the user's custom content. Also normalise/heal older or
+--- a/src/sync/index.ts
++++ b/src/sync/index.ts
+@@ -1,5 +1,6 @@
+ import { useStudio } from "@/store/studio";
+ import { gameFetch } from "@/gameApi";
++import { SHARED_SESSION } from "@/shared/session";
+
+ /**
+  * Đồng bộ workspace/state game lên server theo tài khoản (P3).
+@@ -38,8 +39,9 @@
+   "video/webm": "webm",
+ };
+
+-async function uploadDataUrl(dataUrl: string): Promise<string> {
+-  const cached = uploaded.get(dataUrl);
++async function uploadDataUrl(dataUrl: string, assetApi: string): Promise<string> {
++  const key = `${assetApi}:${dataUrl}`;
++  const cached = uploaded.get(key);
+   if (cached) return cached;
+
+   const blob = await (await fetch(dataUrl)).blob();
+@@ -50,13 +52,17 @@
+     new File([blob], `asset.${ext}`, { type: blob.type || "application/octet-stream" }),
+   );
+
+-  const res = await gameFetch(ASSET_API, {
++  const res = await gameFetch(assetApi, {
+     method: "POST",
+     body: form,
+   });
+-  if (!res.ok) throw new Error(`asset upload failed (${res.status})`);
++  if (!res.ok) throw new Error(res.status === 413 ? "Ảnh hoặc video quá lớn để tải lên."
++    : res.status === 429 ? "Tài khoản chủ game đã đạt giới hạn ảnh/nhạc tải lên."
++    : res.status === 401 ? "Đăng nhập để tải media và chia sẻ game."
++    : res.status === 403 || res.status === 404 ? "Link chỉnh sửa đã bị thu hồi hoặc không có quyền tải media."
++    : "Không thể tải media lên. Vui lòng thử lại.");
+   const json = await res.json();
+-  uploaded.set(dataUrl, json.url);
++  uploaded.set(key, json.url);
+   return json.url as string;
+ }
+
+@@ -65,18 +71,18 @@
+ }
+
+ /** Thay đệ quy mọi data-URL base64 trong object/array bằng URL Storage. */
+-async function replaceDataUrls(node: unknown): Promise<unknown> {
++export async function prepareGamePayload(node: unknown, assetApi = ASSET_API): Promise<unknown> {
+   if (typeof node === "string") {
+-    return isDataUrl(node) ? await uploadDataUrl(node) : node;
++    return isDataUrl(node) ? await uploadDataUrl(node, assetApi) : node;
+   }
+   if (Array.isArray(node)) {
+     const out: unknown[] = [];
+-    for (const item of node) out.push(await replaceDataUrls(item));
++    for (const item of node) out.push(await prepareGamePayload(item, assetApi));
+     return out;
+   }
+   if (node && typeof node === "object") {
+     const out: Record<string, unknown> = {};
+-    for (const [k, v] of Object.entries(node)) out[k] = await replaceDataUrls(v);
++    for (const [k, v] of Object.entries(node)) out[k] = await prepareGamePayload(v, assetApi);
+     return out;
+   }
+   return node;
+@@ -102,7 +108,7 @@
+   if (!started || pushing) return;
+   pushing = true;
+   try {
+-    const clean = await replaceDataUrls(collectState());
++    const clean = await prepareGamePayload(collectState());
+     const res = await gameFetch(SAVE_API, {
+       method: "PUT",
+       headers: { "Content-Type": "application/json" },
+@@ -139,7 +145,7 @@
+
+ /** Bật đồng bộ nếu đang chạy trong cổng game đã đăng nhập. */
+ export async function initSync(): Promise<void> {
+-  if (started || isTauri()) return;
++  if (started || isTauri() || SHARED_SESSION) return;
+
+   let remote: Record<string, unknown> | null = null;
+   try {
+--- a/src/app/App.tsx
++++ b/src/app/App.tsx
+@@ -23,6 +23,8 @@
+ import { useEntitlements } from "@/entitlements";
+ import { initSync } from "@/sync";
+ import { seedSampleProjects } from "./seed";
++import { SharedGame } from "@/pages/SharedGame";
++import { SHARED_SESSION } from "@/shared/session";
+
+ /** Side-effect controller: applies the chrome theme + keeps audio in sync. */
+ function AppRuntime() {
+@@ -32,16 +34,23 @@
+
+   // Populate demo content on the very first launch.
+   useEffect(() => {
+-    seedSampleProjects();
++    if (!SHARED_SESSION) seedSampleProjects();
+   }, []);
+
+   // Nạp quyền module + đồng bộ workspace khi chạy trong cổng game (iframe).
+   useEffect(() => {
++    if (SHARED_SESSION) return;
+     void (async () => {
+       await useEntitlements.getState().init();
+       await initSync();
+     })();
+   }, []);
++
++  // Enter a share through a fresh document so account persistence/sync can
++  // never carry over from an already-open normal studio session.
++  useEffect(() => {
++    if (location.pathname.startsWith("/shared/") !== SHARED_SESSION) window.location.reload();
++  }, [location.pathname]);
+
+   // Always open maximized; re-assert on every route (play → library, etc.).
+   useEffect(() => {
+@@ -116,6 +125,7 @@
+         </Route>
+           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+           <Route path="/play/:projectId" element={<PlayPage />} />
++          <Route path="/shared/:token" element={<SharedGame />} />
+           <Route path="/combo/:comboId/play" element={<ComboRunner />} />
+           <Route path="*" element={<Navigate to="/dashboard" replace />} />
+         </Routes>
+--- a/src/components/ProjectCard.tsx
++++ b/src/components/ProjectCard.tsx
+@@ -6,6 +6,7 @@
+ import { Card, Button, IconButton } from "@/components/ui";
+ import { timeAgo } from "@/utils";
+ import { useT } from "@/i18n";
++import { GameShareButton } from "./GameShareButton";
+
+ export function ProjectCard({ project }: { project: Project }) {
+   const t = useT();
+@@ -55,6 +56,7 @@
+         >
+           <Pencil className="h-5 w-5" />
+         </IconButton>
++        <GameShareButton project={project} compact />
+       </div>
+     </Card>
+   );
+--- a/src/pages/ProjectEditor.tsx
++++ b/src/pages/ProjectEditor.tsx
+@@ -6,6 +6,7 @@
+ import { useProject, useThemes, useWorkspaceAudio } from "@/store/selectors";
+ import { useStudio } from "@/store/studio";
+ import { Button, IconButton, Select, EmptyState, Badge } from "@/components/ui";
++import { GameShareButton } from "@/components/GameShareButton";
+
+ /**
+  * Project edit screen — compact top bar, full-width module editor.
+@@ -122,6 +123,7 @@
+         <Button size="md" onClick={() => navigate(`/play/${project.id}`)}>
+           <Play className="h-4 w-4" /> Chơi
+         </Button>
++        <GameShareButton project={project} />
+       </div>
+
+       <Editor
+--- a/src/gameApi.ts
++++ b/src/gameApi.ts
+@@ -10,6 +10,8 @@
+  * desktop) thì không có token -> request 401/404 -> studio tự về chế độ
+  * "standalone" (mở tất cả).
+  */
++
++import { SHARED_SESSION } from "@/shared/session";
+
+ let token: string | null = null;
+ let authReady: Promise<void> | null = null;
+@@ -26,7 +28,7 @@
+   if (authReady) return authReady;
+
+   authReady = new Promise<void>((resolve) => {
+-    if (!isEmbedded()) {
++    if (!isEmbedded() || SHARED_SESSION) {
+       resolve();
+       return;
+     }
+--- a/src/modules/Jigsaw/Runtime.tsx
++++ b/src/modules/Jigsaw/Runtime.tsx
+@@ -48,6 +48,9 @@
+   return new Promise((resolve, reject) => {
+     const im = new Image();
+     im.decoding = "async";
++    // Shared projects load uploaded pictures from Supabase Storage. Request
++    // CORS access before drawing them into exportable puzzle-piece canvases.
++    im.crossOrigin = "anonymous";
+     im.onload = () => resolve(im);
+     im.onerror = () => reject(new Error("Failed to load puzzle image"));
+     im.src = src;
+--- /dev/null
++++ b/src/components/GameShareButton.tsx
+@@ -0,0 +1,99 @@
++import { useState } from "react";
++import { Share2, Copy, RefreshCw, Link2 } from "lucide-react";
++import type { Project } from "@/types";
++import { Button, IconButton, Modal, Toggle } from "@/components/ui";
++import { gameFetch } from "@/gameApi";
++import { prepareGamePayload } from "@/sync";
++import { collectShareSnapshot, shareError } from "@/shared/snapshot";
++
++interface ShareInfo { revision: number; playPath: string; editPath: string | null; updatedAt: string }
++
++export function GameShareButton({ project, compact = false }: { project: Project; compact?: boolean }) {
++  const [open, setOpen] = useState(false);
++  const [share, setShare] = useState<ShareInfo | null>(null);
++  const [busy, setBusy] = useState(false);
++  const [loaded, setLoaded] = useState(false);
++  const [error, setError] = useState("");
++  const [login, setLogin] = useState(false);
++  const [editEnabled, setEditEnabled] = useState(false);
++  const [copied, setCopied] = useState("");
++
++  async function load() {
++    setOpen(true); setBusy(true); setError(""); setLogin(false); setLoaded(false); setShare(null);
++    try {
++      const response = await gameFetch(`/api/game/shares?projectId=${encodeURIComponent(project.id)}`);
++      const data = await response.json().catch(() => ({ error: "unavailable" }));
++      if (!response.ok) { setLogin(response.status === 401); throw new Error(shareError(data.error)); }
++      setShare(data.share); setEditEnabled(Boolean(data.share?.editPath)); setLoaded(true);
++    } catch (e) { setError(e instanceof Error ? e.message : "Không thể tải thông tin chia sẻ."); }
++    finally { setBusy(false); }
++  }
++
++  async function publish(includeContent: boolean, edit = editEnabled) {
++    setBusy(true); setError(""); setCopied("");
++    try {
++      const snapshot = includeContent ? await prepareGamePayload(collectShareSnapshot(project)) : undefined;
++      const response = await gameFetch("/api/game/shares", {
++        method: "POST", headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ projectId: project.id, snapshot, expectedRev: share?.revision, editEnabled: edit }),
++      });
++      const data = await response.json().catch(() => ({ error: "unavailable" }));
++      if (!response.ok) { setLogin(response.status === 401); throw new Error(shareError(data.error)); }
++      setShare(data.share); setEditEnabled(Boolean(data.share.editPath));
++    } catch (e) { setError(e instanceof Error ? e.message : "Không thể chia sẻ game."); }
++    finally { setBusy(false); }
++  }
++
++  async function revoke() {
++    setBusy(true); setError("");
++    try {
++      const response = await gameFetch("/api/game/shares", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id }) });
++      if (!response.ok) throw new Error(shareError((await response.json()).error));
++      setShare(null); setEditEnabled(false);
++    } catch (e) { setError(e instanceof Error ? e.message : "Không thể thu hồi link."); }
++    finally { setBusy(false); }
++  }
++
++  const linkField = (label: string, path: string) => {
++    const url = new URL(path, window.location.origin).href;
++    return <div className="mt-4">
++      <label className="mb-1 block text-sm font-bold text-ink">{label}</label>
++      <div className="flex gap-2">
++        <input aria-label={label} readOnly value={url} onFocus={(e) => e.target.select()} className="min-w-0 flex-1 rounded-btn border border-line bg-surface-2 px-3 py-2 text-sm text-ink" />
++        <Button variant="secondary" onClick={async () => {
++          try { await navigator.clipboard.writeText(url); setCopied(label); }
++          catch { setError("Chọn đường link rồi sao chép bằng Ctrl+C hoặc nhấn giữ trên điện thoại."); }
++        }}><Copy className="h-4 w-4" />{copied === label ? "Đã sao chép" : "Sao chép"}</Button>
++      </div>
++    </div>;
++  };
++
++  return <>
++    {compact ? <IconButton label="Chia sẻ project" onClick={() => void load()}><Share2 className="h-5 w-5" /></IconButton>
++      : <Button variant="secondary" size="md" onClick={() => void load()}><Share2 className="h-4 w-4" /> Chia sẻ</Button>}
++    <Modal open={open} onClose={() => setOpen(false)} title="Chia sẻ game" description={project.name} icon={<Share2 className="h-5 w-5" />}>
++      <p className="text-sm text-muted">Người nhận link có thể chơi ngay, không cần đăng nhập. Chỉ nội dung và media của project này được chia sẻ.</p>
++      {busy && <p role="status" className="mt-4 text-sm text-muted">Đang lưu thông tin chia sẻ…</p>}
++      {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
++      {login && <a className="mt-3 inline-block font-bold text-brand" href={`/login?redirect=${encodeURIComponent(`/games/play?module=${project.moduleId}`)}`} target="_top">Đăng nhập để chia sẻ</a>}
++      {loaded && <>
++        <div className="mt-5 flex items-center justify-between gap-3 rounded-btn bg-surface-2 p-3">
++          <div><p className="font-bold text-ink">Cho phép chỉnh sửa</p><p className="mt-1 text-xs text-muted">Ai có link chỉnh sửa đều có thể đổi và lưu bản game chia sẻ. Link chơi luôn chỉ để chơi.</p></div>
++          <Toggle checked={editEnabled} disabled={busy} label="Cho phép chỉnh sửa" onChange={(value) => {
++            if (share) void publish(false, value); else setEditEnabled(value);
++          }} />
++        </div>
++        {share ? <>
++          {linkField("Link chơi", share.playPath)}
++          {share.editPath && linkField("Link chỉnh sửa", share.editPath)}
++          <p className="mt-4 text-xs text-muted">Bản chia sẻ được lưu riêng. Sau khi sửa project của bạn, bấm Cập nhật nội dung để đưa cấu hình mới lên link. Người có quyền chỉnh sửa cũng có thể cập nhật bản chia sẻ.</p>
++          <div className="mt-5 flex flex-wrap gap-2">
++            <Button disabled={busy} onClick={() => void publish(true)}><RefreshCw className="h-4 w-4" /> Cập nhật nội dung</Button>
++            <Button disabled={busy} variant="ghost" onClick={() => void revoke()}>Thu hồi tất cả link</Button>
++          </div>
++        </> : <Button className="mt-5" disabled={busy} onClick={() => void publish(true)}><Link2 className="h-4 w-4" /> Tạo link chia sẻ</Button>}
++        {error && <Button className="mt-3" variant="ghost" disabled={busy} onClick={() => void load()}>Tải thông tin mới</Button>}
++      </>}
++    </Modal>
++  </>;
++}
+--- /dev/null
++++ b/src/pages/SharedGame.tsx
+@@ -0,0 +1,122 @@
++import { useEffect, useRef, useState } from "react";
++import { useParams } from "react-router-dom";
++import { Play, Save, ArrowLeft } from "lucide-react";
++import type { GameEditorProps } from "@/types";
++import { getModule } from "@/modules/registry";
++import { useStudio } from "@/store/studio";
++import { useThemes, useWorkspaceAudio } from "@/store/selectors";
++import { Button, Select, Modal } from "@/components/ui";
++import { AssetLibrary } from "./AssetLibrary";
++import { GameShell } from "@/engine/GameShell";
++import { prepareGamePayload } from "@/sync";
++import { collectShareSnapshot, installSharedSnapshot, shareError } from "@/shared/snapshot";
++import { SHARED_SESSION } from "@/shared/session";
++
++export function SharedGame() {
++  const { token = "" } = useParams();
++  const [ready, setReady] = useState(false);
++  const [permission, setPermission] = useState<"play" | "edit">("play");
++  const [revision, setRevision] = useState(0);
++  const [playing, setPlaying] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState("");
++  const [saved, setSaved] = useState(false);
++  const [dirty, setDirty] = useState(false);
++  const [conflict, setConflict] = useState(false);
++  const [mediaOpen, setMediaOpen] = useState(false);
++  const mutation = useRef(0);
++  const project = useStudio((s) => s.projects[0]);
++  const themes = useThemes();
++  const audio = useWorkspaceAudio();
++  const module = project ? getModule(project.moduleId) : undefined;
++  const api = `/api/game/shared/${encodeURIComponent(token)}`;
++
++  async function load() {
++    if (!SHARED_SESSION) return;
++    setError(""); setBusy(true);
++    try {
++      const response = await fetch(api, { cache: "no-store" });
++      const data = await response.json().catch(() => ({ error: "unavailable" }));
++      if (!response.ok) throw new Error(shareError(data.error));
++      installSharedSnapshot(data.snapshot);
++      setPermission(data.permission); setRevision(data.revision); setReady(true);
++      setPlaying(data.permission === "play"); setSaved(false); setDirty(false); setConflict(false);
++    } catch (e) { setError(e instanceof Error ? e.message : "Không mở được game chia sẻ."); }
++    finally { setBusy(false); }
++  }
++
++  useEffect(() => { void load(); }, [token]);
++
++  async function save() {
++    if (!project || permission !== "edit") return;
++    setBusy(true); setError(""); setSaved(false);
++    const savingMutation = mutation.current;
++    try {
++      const snapshot = await prepareGamePayload(collectShareSnapshot(project), `${api}/assets`);
++      const response = await fetch(api, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ snapshot, expectedRev: revision }) });
++      const data = await response.json().catch(() => ({ error: "unavailable" }));
++      if (!response.ok) { setConflict(response.status === 409); throw new Error(shareError(data.error)); }
++      setRevision(data.revision); setSaved(true); setDirty(mutation.current !== savingMutation);
++    } catch (e) { setError(e instanceof Error ? e.message : "Không lưu được thay đổi."); }
++    finally { setBusy(false); }
++  }
++
++  const markChanged = () => { mutation.current++; setDirty(true); setSaved(false); };
++  useEffect(() => {
++    if (!dirty) return;
++    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
++    window.addEventListener("beforeunload", warn);
++    return () => window.removeEventListener("beforeunload", warn);
++  }, [dirty]);
++
++  if (!ready || !project || !module) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-canvas p-6 text-center text-ink">
++    <p role={error ? "alert" : "status"}>{error || "Đang mở game chia sẻ…"}</p>
++    {error && <Button disabled={busy} onClick={() => void load()}>Thử lại</Button>}
++    <a href="/games" target="_top" className="font-bold text-brand">Về thư viện game</a>
++  </div>;
++
++  if (playing) return <GameShell project={project} module={module} onExit={() => setPlaying(false)} />;
++
++  if (permission === "play") return <div className="flex min-h-screen flex-col items-center justify-center gap-5 bg-canvas p-6 text-center text-ink">
++    <span className="text-6xl">{module.manifest.icon}</span><h1 className="font-display text-3xl font-extrabold">{project.name}</h1>
++    <Button size="lg" onClick={() => setPlaying(true)}><Play className="h-5 w-5" /> Chơi lại</Button>
++    <a href="/games" target="_top" className="font-bold text-brand">Về thư viện game</a>
++  </div>;
++
++  const Editor = module.Editor as React.ComponentType<GameEditorProps>;
++  return <div className="min-h-screen bg-canvas p-3 text-ink sm:p-5">
++    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-surface p-3 shadow-soft">
++      <a href="/games" target="_top" aria-label="Về thư viện game"><ArrowLeft className="h-5 w-5" /></a>
++      <span className="text-2xl">{module.manifest.icon}</span>
++      <input aria-label="Tên dự án" value={project.name} disabled={busy} className="min-w-0 flex-1 rounded-btn bg-surface-2 px-3 py-2 font-bold"
++        onChange={(e) => { useStudio.getState().updateProject(project.id, { name: e.target.value }); markChanged(); }} />
++      <Select aria-label="Theme" value={project.themeId} disabled={busy} onChange={(e) => { useStudio.getState().updateProject(project.id, { themeId: e.target.value }); markChanged(); }}>
++        {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.badge} {theme.name}</option>)}
++      </Select>
++      {!module.manifest.selfContainedAudio && <Select aria-label="Nhạc nền" value={project.musicId ?? ""} disabled={busy}
++        onChange={(e) => { useStudio.getState().updateProject(project.id, { musicId: e.target.value || undefined }); markChanged(); }}>
++        <option value="">Không nhạc nền</option>{audio.filter((a) => a.category === "music").map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
++      </Select>}
++      <Button disabled={busy || conflict} onClick={() => void save()}><Save className="h-4 w-4" />{busy ? "Đang lưu…" : "Lưu thay đổi"}</Button>
++      <Button variant="secondary" disabled={busy} onClick={() => setPlaying(true)}><Play className="h-4 w-4" />Chơi thử</Button>
++    </div>
++    <p className="mb-3 text-sm text-muted">Bạn có quyền chỉnh sửa bản game chia sẻ. Bấm Lưu thay đổi để cập nhật game cho mọi người dùng link chơi.</p>
++    {saved && <p role="status" className="mb-3 text-sm text-success">Đã lưu thay đổi lên game chia sẻ.</p>}
++    {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}
++    {conflict && <Button className="mb-3" variant="secondary" onClick={() => {
++      if (!dirty || confirm("Tải bản mới sẽ bỏ các thay đổi chưa lưu. Tiếp tục?")) void load();
++    }}>Tải bản mới</Button>}
++    <fieldset disabled={busy} className="min-w-0" onClickCapture={(event) => {
++      const link = (event.target as HTMLElement).closest("a");
++      if (link?.getAttribute("href") === "#/assets") {
++        event.preventDefault(); event.stopPropagation(); setMediaOpen(true); markChanged();
++      }
++    }}>
++      <Editor project={project} updateConfig={(patch) => { useStudio.getState().updateProjectConfig(project.id, patch as Record<string, unknown>); markChanged(); }}
++        updateProject={(patch) => { useStudio.getState().updateProject(project.id, patch); markChanged(); }} />
++    </fieldset>
++    <Modal open={mediaOpen} onClose={() => setMediaOpen(false)} title="Media của game chia sẻ" size="lg">
++      <AssetLibrary />
++    </Modal>
++  </div>;
++}
+--- /dev/null
++++ b/src/shared/session.ts
+@@ -0,0 +1,3 @@
++// Decide before zustand persistence initializes. Share tabs never hydrate,
++// write or sync the recipient's private account workspace.
++export const SHARED_SESSION = /^#\/shared\//.test(window.location.hash);
+--- /dev/null
++++ b/src/shared/snapshot.ts
+@@ -0,0 +1,49 @@
++import type { Project, Theme, Asset, AudioClip } from "@/types";
++import { useStudio } from "@/store/studio";
++
++export interface SharedSnapshot {
++  project: Pick<Project, "id" | "moduleId" | "name" | "themeId" | "musicId" | "config">;
++  themes: Theme[];
++  assets: Asset[];
++  audio: AudioClip[];
++}
++
++/** Collect only media referenced by this game, not the owner's asset library. */
++export function collectShareSnapshot(project: Project): SharedSnapshot {
++  const state = useStudio.getState();
++  const theme = state.themes.find((t) => t.id === project.themeId) ?? state.themes[0];
++  const selected = { id: project.id, moduleId: project.moduleId, name: project.name,
++    themeId: theme.id, musicId: project.musicId, config: project.config };
++  const refs = new Set<string>();
++  const scan = (value: unknown) => {
++    if (typeof value === "string") refs.add(value);
++    else if (Array.isArray(value)) value.forEach(scan);
++    else if (value && typeof value === "object") Object.values(value).forEach(scan);
++  };
++  scan(selected); scan(theme);
++  return { project: selected, themes: [theme],
++    assets: state.assets.filter((a) => refs.has(a.id) || refs.has(a.src)),
++    audio: state.audio.filter((a) => refs.has(a.id) || refs.has(a.src)),
++  };
++}
++
++export function installSharedSnapshot(snapshot: SharedSnapshot) {
++  const now = Date.now();
++  useStudio.getState().importState({
++    workspaces: [{ id: "ws_shared", name: "Game được chia sẻ", client: "", color: "#6366f1", createdAt: now, updatedAt: now }],
++    activeWorkspaceId: "ws_shared", projects: [{ ...snapshot.project, workspaceId: "ws_shared", createdAt: now, updatedAt: now,
++      save: { bestScore: 0, lastScore: 0, plays: 0 } }],
++    combos: [], assets: snapshot.assets.map((a) => ({ ...a, workspaceId: "ws_shared" })),
++    audio: snapshot.audio.map((a) => ({ ...a, workspaceId: "ws_shared" })), themes: snapshot.themes,
++    settings: { language: "vi", fullscreenOnPlay: false, defaultThemeId: snapshot.project.themeId }, recentProjectIds: [],
++  });
++}
++
++export function shareError(code: string) {
++  return ({ not_authenticated: "Đăng nhập để tạo link chia sẻ project.", conflict: "Game đã được người khác cập nhật. Tải bản mới trước khi lưu tiếp.",
++    read_only: "Link này chỉ cho phép chơi. Cần link có quyền chỉnh sửa để lưu.", not_found: "Link không tồn tại hoặc đã bị thu hồi.",
++    invalid_snapshot: "Không thể chia sẻ nội dung này. Kiểm tra tên project, ảnh và nhạc của game.",
++    quota_assets: "Tài khoản chủ game đã đạt giới hạn ảnh/nhạc tải lên.", quota_shares: "Đã đạt giới hạn 100 project được chia sẻ.",
++    unavailable: "Chưa thể kết nối dịch vụ chia sẻ. Vui lòng thử lại.", too_large: "Nội dung quá lớn. Hãy giảm dung lượng ảnh hoặc video.",
++  } as Record<string, string>)[code] || "Không thể lưu chia sẻ. Vui lòng thử lại.";
++}

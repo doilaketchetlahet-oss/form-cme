@@ -5,12 +5,20 @@ The upstream project lives at `D:/Game Mới` and is not a Git repository.
 deployed bundle. It adds Camera / Mouse / Touch selection, pointer blades and
 camera-free results for pointer play. It has already been applied locally.
 
+`game-sharing.patch` preserves the project share button, play/edit recipient
+screens, selected-project snapshot collection, isolated shared-session storage,
+and media upload preparation. It also enables CORS when Jigsaw draws a
+Supabase-hosted uploaded picture into puzzle-piece canvases. It has already been
+applied locally, after `handslice-pointer.patch`.
+
 To apply it to a copy of the upstream source from before this feature, run from
 that source directory:
 
 ```powershell
 git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/handslice-pointer.patch"
 git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/handslice-pointer.patch"
+git apply --check "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-sharing.patch"
+git apply "D:/Game Quiz Quét Mã/form-cme/scripts/studio-patches/game-sharing.patch"
 ```
 
 To rebuild the web portal, run in the upstream directory:
@@ -26,6 +34,7 @@ Then run from `form-cme` (the importer copies and optimizes assets):
 ```powershell
 node scripts/import-studio.cjs "D:/Game Mới/dist"
 node scripts/test-handslice-input.cjs
+node scripts/test-game-sharing.cjs
 ```
 
 The browser regression requires a running portal at `http://localhost:3001` and
@@ -33,6 +42,14 @@ the upstream Playwright install. `GAME_E2E_BASE` can target a deployed portal;
 `EVENTPLAY_SOURCE` can point to a different upstream directory. Fixtures use
 guest browser storage, with no Supabase writes. Mouse drag/release, pause,
 restart, two-finger touch, camera selection and camera-free wins are checked.
+
+The sharing regression uses the portal's real Supabase APIs. It creates two
+confirmed throwaway accounts without sending email, then cleans up those
+accounts, shares and uploaded media. It checks owner access, anonymous play/edit,
+separate capabilities, snapshot privacy, account-storage isolation, upload,
+concurrent revisions, conflict recovery, revocation, phone-sized share controls
+and a Jigsaw game using a Supabase-hosted picture. Apply
+`supabase/game-shares.sql` before running it.
 
 After source changes also run `build-exe.bat` from the upstream directory,
 as required by its `AGENTS.md`.

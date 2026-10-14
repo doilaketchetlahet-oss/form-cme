@@ -288,6 +288,15 @@ This app now also hosts the EventPlay game portal (kiosk mini-games):
 - `/api/game/save` - GET/PUT per-user studio state (workspace sync).
 - `/api/game/assets` - uploads to Supabase Storage bucket `game-assets` (public,
   per-account quota: 30 files / 60MB).
+- `/games/shared/[token]` - public play/edit capability link; embeds the isolated
+  studio `#/shared/<token>` route. Recipients do not need an account.
+- `/api/game/shares` - authenticated owner creates, publishes, changes edit access
+  or revokes a project's shared edition. The studio has **Chia sẻ** on each
+  project card and in its editor. Play and edit links use separate random tokens.
+- `/api/game/shared/[token]` - public GET; PUT requires the current edit token
+  and revision. Play links cannot write. Edit re-enable rotates the edit token.
+- `/api/game/shared/[token]/assets` - edit-token media upload, charged to the
+  original owner's existing Storage quota; play links cannot upload.
 - `studio/` - prebuilt EventPlay Studio bundle, served by the public
   `/studio/[[...slug]]` route (do not edit by hand).
 - `public/games/covers/` - optimized copies of demo images and screenshots from
@@ -301,9 +310,25 @@ calls the game APIs with `Authorization: Bearer <token>`. A standalone studio
 tab can use the verified HttpOnly cookie for account APIs instead. The save and
 asset upload APIs still require authentication; guests do not sync to Supabase.
 
+Sharing publishes a separate edition containing one project, its selected theme
+and referenced media/music. It never publishes the whole workspace or scores.
+Owner changes to the private project require **Cập nhật nội dung**; anonymous
+edit recipients use **Lưu thay đổi** to update the shared edition. Revision
+checks prevent stale/simultaneous saves from overwriting each other. Shared
+sessions never hydrate/write the recipient's normal `eventplay-studio` storage
+or sync their account. Revocation prevents new loads/saves; already-loaded game
+content remains in a recipient's tab. Capability URLs should not be logged.
+
 Session regression checks: `node --test scripts/test-game-session.cjs`.
 
-SQL to run once: `supabase/game-modules.sql`, `supabase/game-saves.sql`.
+SQL to run once: `supabase/game-modules.sql`, `supabase/game-saves.sql`,
+`supabase/game-shares.sql` (service-role API only; no browser table privileges).
+`node scripts/setup-game-shares.cjs` applies the sharing migration with
+`SUPABASE_DB_URL`; optional `GAME_SHARE_DB_POOLER_HOST` selects the project's
+session pooler on networks without direct database IPv6 access.
+Sharing regression: `node scripts/test-game-sharing.cjs` (local server on 3001;
+`GAME_E2E_BASE` can target production). Creates confirmed throwaway Supabase
+accounts, sends no email, and removes test accounts/media afterward.
 
 Rebuild the studio bundle from the EventPlay project with `VITE_BASE=./`, then
 run `node scripts/import-studio.cjs "D:/Game Mới/dist"` to copy and optimize it.
@@ -312,6 +337,9 @@ Source changes for Camera / Mouse / Touch HandSlice are preserved in
 See the adjacent README for rebuild instructions. HandSlice shows a control
 picker before mounting the engine; pointer mode never opens the camera,
 including the win screen. Regression: `node scripts/test-handslice-input.cjs`.
+Sharing source changes are preserved in `scripts/studio-patches/game-sharing.patch`
+(already applied locally). It includes the CORS fix for Supabase-hosted Jigsaw
+pictures so shared uploads can be drawn into puzzle-piece canvases.
 
 Note: `/games/play` is the game launcher and is unrelated to the quiz-app's
 `/play` player runtime mentioned below.
