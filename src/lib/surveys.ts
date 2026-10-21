@@ -28,6 +28,7 @@ export interface Survey {
   email_subject: string | null;
   email_body: string | null;
   pdf_attach_email?: boolean;
+  smtp_account_id?: string | null;
   checkin_pin: string | null;
   checkin_theme: CheckinTheme | null;
   scoring_config: ScoringConfig | null;

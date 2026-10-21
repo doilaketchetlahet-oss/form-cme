@@ -6,6 +6,10 @@ import { fillMergeTokens, hasOverlayImage, parseEmailTemplate, sampleMergeValues
 import { renderCheckinEmailHtml } from "@/lib/server/email-react";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { sendEmail } from "@/lib/server/email-provider";
+import { resolveProvider } from "@/lib/server/email-provider";
+import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
+import { loadSmtpAccountById } from "@/lib/server/smtp-accounts";
+import type { SmtpAccount } from "@/lib/mail-merge";
 import { composeInvitePdf, sanitizePdfName } from "@/lib/server/email-pdf";
 import type { EmailOverlay } from "@/lib/email-template";
 
@@ -57,6 +61,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     email_subject?: string | null;
     email_body?: string | null;
     email_provider?: string | null;
+    smtp_account_id?: string | null;
   } | null;
 
   const hasProviderOverride = payload !== null
@@ -78,7 +83,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const { data: survey } = await supabase
     .from("surveys")
-    .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email")
+    .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email, smtp_account_id")
     .eq("id", surveyId)
     .maybeSingle();
 
@@ -140,13 +145,34 @@ export async function POST(request: NextRequest, context: RouteContext) {
     ? payload?.email_provider || null
     : (survey as { email_provider?: string | null }).email_provider ?? null;
 
+  // Gửi bằng đúng tài khoản SMTP mà form đang chọn (ví dụ Microsoft 365 của khách).
+  let smtpAccount: SmtpAccount | null = null;
+  const requestedAccountId = payload?.smtp_account_id || null;
+  let smtpAccountId = requestedAccountId ?? (survey as { smtp_account_id?: string | null }).smtp_account_id ?? null;
+  if (smtpAccountId && resolveProvider(providerOverride) === "smtp") {
+    // Tài khoản phải thuộc quyền của người đang gửi thử.
+    const { data: allowed } = await supabase
+      .from("smtp_accounts")
+      .select("id")
+      .eq("id", smtpAccountId)
+      .maybeSingle();
+    if (!allowed) smtpAccountId = null;
+  }
+  if (smtpAccountId && resolveProvider(providerOverride) === "smtp") {
+    const admin = createSupabaseAdmin();
+    smtpAccount = admin ? await loadSmtpAccountById(admin, smtpAccountId) : null;
+    if (!smtpAccount) {
+      return NextResponse.json({ ok: false, error: "Không mở được tài khoản SMTP của form. Nhập lại mật khẩu trong Cài đặt → Tài khoản SMTP." }, { status: 400 });
+    }
+  }
+
   const result = await sendEmail({
     to,
     subject: `[TEST] ${fillMergeTokens(rawSubject, values).trim()}`,
     html,
     text: "",
     ...(attachments.length > 0 ? { attachments } : {}),
-  }, providerOverride);
+  }, providerOverride, { smtpAccount });
 
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: "Gửi thử thất bại.", detail: result.error }, { status: 500 });

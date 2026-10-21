@@ -36,10 +36,18 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const [provider, setProvider] = useState<"" | "resend" | "smtp">("");
+  const [smtpAccountId, setSmtpAccountId] = useState("");
+  const [accounts, setAccounts] = useState<{ id: string; name: string; user: string }[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [saved, setSaved] = useState({ subject: "", body: "", provider: "" as "" | "resend" | "smtp" });
+  const [saved, setSaved] = useState({ subject: "", body: "", provider: "" as "" | "resend" | "smtp", smtpAccountId: "" });
 
-  const dirty = !loading && (subject !== saved.subject || body !== saved.body || provider !== saved.provider);
+  const dirty = !loading && (
+    subject !== saved.subject
+    || body !== saved.body
+    || provider !== saved.provider
+    || smtpAccountId !== saved.smtpAccountId
+  );
   useUnsavedChangesWarning(dirty && canManageForms, "Thư mời có thay đổi chưa lưu. Rời trang?");
 
   useEffect(() => {
@@ -51,11 +59,14 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       setBody(next?.email_body ?? "");
       const nextProvider = (next as { email_provider?: string | null } | null)?.email_provider;
       const normalized = nextProvider === "resend" || nextProvider === "smtp" ? nextProvider : "";
+      const nextAccount = (next as { smtp_account_id?: string | null } | null)?.smtp_account_id ?? "";
       setProvider(normalized);
+      setSmtpAccountId(nextAccount);
       setSaved({
         subject: next?.email_subject ?? "",
         body: next?.email_body ?? "",
         provider: normalized,
+        smtpAccountId: nextAccount,
       });
       setLoading(false);
     })();
@@ -92,6 +103,24 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
     void run();
     return () => { active = false; };
   }, [loadTemplates]);
+
+  const loadAccounts = useCallback(async () => {
+    setLoadingAccounts(true);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const response = await fetch("/api/admin/smtp-accounts", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) return;
+      setAccounts((result.accounts ?? []) as { id: string; name: string; user: string }[]);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    queueMicrotask(() => void loadAccounts());
+  }, [loadAccounts]);
 
   const applyTemplate = async (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
@@ -148,14 +177,19 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
       const response = await fetch(`/api/admin/forms/${formId}/email`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ email_subject: subject.trim() || null, email_body: body.trim() || null, email_provider: provider || null }),
+        body: JSON.stringify({
+          email_subject: subject.trim() || null,
+          email_body: body.trim() || null,
+          email_provider: provider || null,
+          smtp_account_id: provider === "smtp" ? smtpAccountId || null : null,
+        }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
       if (!result.ok) {
         setMessage({ type: "error", text: result.error ?? "Lưu thư thất bại." });
         return;
       }
-      setSaved({ subject, body, provider });
+      setSaved({ subject, body, provider, smtpAccountId });
       setMessage({ type: "success", text: "Đã lưu thư mời." });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "Lưu thư thất bại." });
@@ -184,6 +218,7 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           email_subject: subject.trim() || null,
           email_body: body.trim() || null,
           email_provider: provider || null,
+          smtp_account_id: provider === "smtp" ? smtpAccountId || null : null,
         }),
       });
       const result = await response.json().catch(() => ({ ok: false, error: `Lỗi server (HTTP ${response.status}).` }));
@@ -334,20 +369,48 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
           </div>
 
           <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
-            <details className="mb-4 rounded-xl border border-slate-200 p-3">
-              <summary className="cursor-pointer text-sm font-semibold text-slate-600">Nâng cao: kênh gửi email</summary>
-              <label className="mt-3 flex flex-col gap-1.5 sm:max-w-xs">
-              <span className="text-xs font-medium text-slate-500">Kênh gửi email</span>
-              <select
-                value={provider}
-                onChange={(event) => setProvider(event.target.value as "" | "resend" | "smtp")}
-                className="admin-dark-select admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
-              >
-                <option value="">Mặc định (theo hệ thống)</option>
-                <option value="resend">Resend</option>
-                <option value="smtp">SMTP riêng</option>
-              </select>
-              </label>
+            <details className="mb-4 rounded-xl border border-slate-200 p-3" open={provider === "smtp"}>
+              <summary className="cursor-pointer text-sm font-semibold text-slate-600">Nâng cao: gửi bằng tài khoản SMTP của khách</summary>
+              <div className="mt-3 grid gap-3 sm:max-w-md">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-slate-500">Kênh gửi email</span>
+                  <select
+                    value={provider}
+                    onChange={(event) => setProvider(event.target.value as "" | "resend" | "smtp")}
+                    className="admin-dark-select admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
+                  >
+                    <option value="">Mặc định (Resend của hệ thống)</option>
+                    <option value="resend">Resend</option>
+                    <option value="smtp">SMTP của khách</option>
+                  </select>
+                </label>
+
+                {provider === "smtp" && (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-slate-500">Tài khoản SMTP</span>
+                    <select
+                      value={smtpAccountId}
+                      onChange={(event) => setSmtpAccountId(event.target.value)}
+                      disabled={loadingAccounts}
+                      className="admin-dark-select admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none disabled:opacity-60"
+                    >
+                      <option value="">{loadingAccounts ? "Đang tải…" : "Chọn tài khoản…"}</option>
+                      {accounts.map((account) => (
+                        <option key={account.id} value={account.id}>{account.name} · {account.user}</option>
+                      ))}
+                    </select>
+                    <Link href="/admin/settings/smtp" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700">
+                      <ExternalLink size={12} /> Quản lý / thêm tài khoản SMTP
+                    </Link>
+                    {accounts.length === 0 && (
+                      <span className="text-xs text-amber-700">Chưa có tài khoản nào. Thêm ở Cài đặt → Tài khoản SMTP trước.</span>
+                    )}
+                    <span className="text-xs text-slate-500">
+                      Microsoft 365: smtp.office365.com, cổng 587, không SSL. Gửi thử sẽ dùng đúng tài khoản này.
+                    </span>
+                  </label>
+                )}
+              </div>
             </details>
             <div className="mb-4 rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm text-slate-700">
               <p>Thiệp ảnh hiển thị ngay trong email. Thiệp PDF là file cá nhân hoá đính kèm để tải về hoặc in.</p>

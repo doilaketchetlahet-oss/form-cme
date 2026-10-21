@@ -15,6 +15,8 @@ import { composeInvitePdf, sanitizePdfName } from "./email-pdf";
 import { composeInviteImage, fetchFileAttachments, overlayEmailPayload, type ResendAttachment } from "@/lib/email-overlay";
 import { QR_INLINE_CONTENT_ID, qrStyleFromBranding, renderQrPng } from "./qr-image";
 import { resolveProvider, sendEmail, type EmailProviderName } from "./email-provider";
+import { loadSmtpAccountById } from "./smtp-accounts";
+import type { SmtpAccount } from "@/lib/mail-merge";
 
 function stripHtml(html: string) {
   return html
@@ -181,6 +183,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
 
   let pdfTemplate: EmailOverlay | null = null;
   let pdfAttach = false;
+  let smtpAccountId: string | null = null;
 
   if (supabase && responseId) {
     const { data: response } = await supabase
@@ -196,7 +199,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       resolvedEmail = response.email || resolvedEmail;
       let { data: survey } = await supabase
         .from("surveys")
-        .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email")
+        .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email, smtp_account_id")
         .eq("id", response.survey_id)
         .maybeSingle();
       if (!survey) {
@@ -221,6 +224,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
         email_provider?: string | null;
         pdf_template?: EmailOverlay | null;
         pdf_attach_email?: boolean | null;
+        smtp_account_id?: string | null;
       } | null;
 
       questions = (questionRows ?? []) as EmailMergeQuestion[];
@@ -231,6 +235,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       providerOverride = providerOverride ?? row?.email_provider ?? null;
       pdfTemplate = row?.pdf_template ?? null;
       pdfAttach = !!row?.pdf_attach_email;
+      smtpAccountId = row?.smtp_account_id ?? null;
       if (!resolvedName) resolvedName = findAttendeeName(resolvedAnswers, questions);
     }
   }
@@ -345,6 +350,27 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
     }
   }
 
+  // Tài khoản SMTP riêng của khách (ví dụ Microsoft 365) — mật khẩu giải mã
+  // ở server, không bao giờ gửi xuống trình duyệt.
+  let smtpAccount: SmtpAccount | null = null;
+  if (supabase && smtpAccountId && resolveProvider(providerOverride) === "smtp") {
+    smtpAccount = await loadSmtpAccountById(supabase, smtpAccountId);
+    if (!smtpAccount) {
+      const detail = "Không mở được tài khoản SMTP đã chọn. Vào Cài đặt → Tài khoản SMTP để nhập lại mật khẩu.";
+      await markEmailStatus(responseId, "failed", detail);
+      return { ok: false, messageId: null, provider: "smtp", error: detail };
+    }
+  }
+
+  // Với SMTP (nhất là Outlook/M365), nhiều nơi chặn ảnh inline: đính thêm QR
+  // dưới dạng file PNG để khách vẫn mở và quét được.
+  if (smtpAccount || resolveProvider(providerOverride) === "smtp") {
+    const qrFile = attachments.find((item) => item.contentId === QR_INLINE_CONTENT_ID);
+    if (qrFile) {
+      attachments.push({ ...qrFile, filename: "ma-qr-check-in.png", contentId: undefined });
+    }
+  }
+
   const result = await sendEmail({
     ...(fromOverride ? { from: fromOverride } : {}),
     ...(replyToOverride ? { replyTo: replyToOverride } : {}),
@@ -354,7 +380,7 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
     text,
     ...(attachments.length > 0 ? { attachments } : {}),
     headers: { "X-Entity-Ref-ID": `form-cme-${Date.now()}` },
-  }, providerOverride);
+  }, providerOverride, { smtpAccount });
 
   if (!result.ok) {
     await markEmailStatus(responseId, "failed", result.error, null, result.provider);

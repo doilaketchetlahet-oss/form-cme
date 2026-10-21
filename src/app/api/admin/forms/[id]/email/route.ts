@@ -50,6 +50,7 @@ export async function POST(request: Request, context: RouteContext) {
     email_subject?: string | null;
     email_body?: string | null;
     email_provider?: string | null;
+    smtp_account_id?: string | null;
   } | null;
   if (!payload) {
     return NextResponse.json({ ok: false, error: "Dữ liệu thư không hợp lệ." }, { status: 400 });
@@ -59,6 +60,20 @@ export async function POST(request: Request, context: RouteContext) {
     ? payload.email_provider
     : null;
 
+  // Tài khoản SMTP phải tồn tại và thuộc quyền quản lý của người đang lưu.
+  let smtpAccountId: string | null = null;
+  if (provider === "smtp" && payload.smtp_account_id) {
+    const { data: account } = await supabase
+      .from("smtp_accounts")
+      .select("id")
+      .eq("id", payload.smtp_account_id)
+      .maybeSingle();
+    if (!account) {
+      return NextResponse.json({ ok: false, error: "Tài khoản SMTP không tồn tại hoặc bạn không có quyền dùng." }, { status: 400 });
+    }
+    smtpAccountId = payload.smtp_account_id;
+  }
+
   const baseUpdate = {
     email_subject: payload.email_subject?.trim() || null,
     email_body: payload.email_body?.trim() || null,
@@ -66,13 +81,16 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { error } = await supabase
     .from("surveys")
-    .update({ ...baseUpdate, email_provider: provider })
+    .update({ ...baseUpdate, email_provider: provider, smtp_account_id: smtpAccountId })
     .eq("id", surveyId);
 
   if (error) {
     const message = (error.message ?? "").toLowerCase();
-    if (message.includes("email_provider")) {
-      const { error: fallbackError } = await supabase.from("surveys").update(baseUpdate).eq("id", surveyId);
+    if (message.includes("email_provider") || message.includes("smtp_account_id")) {
+      const { error: fallbackError } = await supabase
+        .from("surveys")
+        .update({ ...baseUpdate, email_provider: provider })
+        .eq("id", surveyId);
       if (fallbackError) {
         return NextResponse.json({ ok: false, error: fallbackError.message }, { status: 500 });
       }

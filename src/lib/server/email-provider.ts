@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import type { SmtpAccount } from "@/lib/mail-merge";
+import { sendMergeSmtp } from "./mail-merge-smtp";
 
 export type EmailProviderName = "resend" | "smtp";
 
@@ -151,15 +153,28 @@ async function sendViaSmtp(email: OutgoingEmail): Promise<SendResult> {
   return { ok: true, messageId: info.messageId ?? null, provider: "smtp" };
 }
 
-export async function sendEmail(email: OutgoingEmail, override?: string | null): Promise<SendResult> {
+export async function sendEmail(
+  email: OutgoingEmail,
+  override?: string | null,
+  options?: { smtpAccount?: SmtpAccount | null },
+): Promise<SendResult> {
   const provider = resolveProvider(override);
+  const account = options?.smtpAccount ?? null;
   const payload: OutgoingEmail = {
     ...email,
-    from: email.from?.trim() || defaultFrom(provider),
-    replyTo: email.replyTo?.trim() || defaultReplyTo(provider),
+    // Tài khoản SMTP riêng quyết định người gửi (Microsoft 365 từ chối From khác).
+    from: account
+      ? `${account.fromName} <${account.fromEmail}>`
+      : email.from?.trim() || defaultFrom(provider),
+    replyTo: account
+      ? account.replyTo || undefined
+      : email.replyTo?.trim() || defaultReplyTo(provider),
   };
   try {
-    if (provider === "smtp") return await sendViaSmtp(payload);
+    if (provider === "smtp") {
+      if (account) return await sendViaAccount(payload, account);
+      return await sendViaSmtp(payload);
+    }
     return await sendViaResend(payload);
   } catch (error) {
     return {
@@ -169,4 +184,23 @@ export async function sendEmail(email: OutgoingEmail, override?: string | null):
       error: error instanceof Error ? error.message : "Gửi email thất bại",
     };
   }
+}
+
+/** Gửi qua tài khoản SMTP của khách (đã lưu, mật khẩu giải mã ở server). */
+async function sendViaAccount(email: OutgoingEmail, account: SmtpAccount): Promise<SendResult> {
+  const result = await sendMergeSmtp(account, {
+    to: email.to,
+    subject: email.subject,
+    html: email.html,
+    text: email.text,
+    attachments: email.attachments?.map((attachment) => ({
+      filename: attachment.filename,
+      content: Buffer.from(attachment.content, "base64"),
+      contentType: attachment.contentType,
+      cid: attachment.contentId,
+    })),
+  });
+  return result.status === "sent"
+    ? { ok: true, messageId: result.messageId ?? null, provider: "smtp" }
+    : { ok: false, messageId: null, provider: "smtp", error: result.error };
 }

@@ -47,6 +47,18 @@ export function SettingsView() {
       <PageHeader title="Cài đặt" subtitle="Thông tin tài khoản và phiên đăng nhập." />
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-6 mb-4">
+        <h2 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+          <Mail size={14} /> Tài khoản SMTP
+        </h2>
+        <p className="mb-3 text-sm text-slate-600">
+          Lưu hộp thư của từng khách (ví dụ Microsoft 365) để form gửi bằng chính tài khoản đó.
+        </p>
+        <a href="/admin/settings/smtp" className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50">
+          Quản lý tài khoản SMTP
+        </a>
+      </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-6 mb-4">
         <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
           <User size={14} /> Thông tin tài khoản
         </h2>
