@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
 
 export const runtime = "nodejs";
 
@@ -60,14 +61,19 @@ export async function POST(request: Request, context: RouteContext) {
     ? payload.email_provider
     : null;
 
-  // Tài khoản SMTP phải tồn tại và thuộc quyền quản lý của người đang lưu.
+  // Tài khoản SMTP phải tồn tại và thuộc đúng người đang lưu.
+  // Bảng smtp_accounts không mở cho trình duyệt nên phải kiểm tra bằng service role.
   let smtpAccountId: string | null = null;
   if (provider === "smtp" && payload.smtp_account_id) {
-    const { data: account } = await supabase
-      .from("smtp_accounts")
-      .select("id")
-      .eq("id", payload.smtp_account_id)
-      .maybeSingle();
+    const admin = createSupabaseAdmin();
+    const { data: account } = admin
+      ? await admin
+          .from("smtp_accounts")
+          .select("id")
+          .eq("id", payload.smtp_account_id)
+          .eq("owner_email", email)
+          .maybeSingle()
+      : { data: null };
     if (!account) {
       return NextResponse.json({ ok: false, error: "Tài khoản SMTP không tồn tại hoặc bạn không có quyền dùng." }, { status: 400 });
     }

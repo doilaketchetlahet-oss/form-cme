@@ -150,12 +150,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const requestedAccountId = payload?.smtp_account_id || null;
   let smtpAccountId = requestedAccountId ?? (survey as { smtp_account_id?: string | null }).smtp_account_id ?? null;
   if (smtpAccountId && resolveProvider(providerOverride) === "smtp") {
-    // Tài khoản phải thuộc quyền của người đang gửi thử.
-    const { data: allowed } = await supabase
-      .from("smtp_accounts")
-      .select("id")
-      .eq("id", smtpAccountId)
-      .maybeSingle();
+    // Bảng smtp_accounts không mở cho trình duyệt: kiểm tra quyền bằng service role.
+    const admin = createSupabaseAdmin();
+    const { data: allowed } = admin
+      ? await admin
+          .from("smtp_accounts")
+          .select("id")
+          .eq("id", smtpAccountId)
+          .eq("owner_email", email)
+          .maybeSingle()
+      : { data: null };
     if (!allowed) smtpAccountId = null;
   }
   if (smtpAccountId && resolveProvider(providerOverride) === "smtp") {

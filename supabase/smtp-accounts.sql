@@ -26,13 +26,9 @@ alter table public.surveys
   add column if not exists smtp_account_id uuid
   references public.smtp_accounts(id) on delete set null;
 
--- Không mở cho anon: toàn bộ truy cập đi qua API service_role.
+-- Không mở cho anon/authenticated: giống mail_merge_*, chỉ service_role API
+-- (route /api/admin/smtp-accounts) được đọc/ghi, nên không phụ thuộc các hàm
+-- phân quyền is_admin_member()/can_manage_forms().
 alter table public.smtp_accounts enable row level security;
 
-drop policy if exists "smtp accounts admin read" on public.smtp_accounts;
-create policy "smtp accounts admin read" on public.smtp_accounts
-  for select to authenticated using (is_admin_member());
-
-drop policy if exists "smtp accounts admin write" on public.smtp_accounts;
-create policy "smtp accounts admin write" on public.smtp_accounts
-  for all to authenticated using (can_manage_forms()) with check (can_manage_forms());
+revoke all on public.smtp_accounts from anon, authenticated;
