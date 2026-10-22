@@ -236,7 +236,9 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       pdfTemplate = row?.pdf_template ?? null;
       pdfAttach = !!row?.pdf_attach_email;
       smtpAccountId = row?.smtp_account_id ?? null;
-      if (!resolvedName) resolvedName = findAttendeeName(resolvedAnswers, questions);
+      // The saved registration is authoritative, including callers that guessed
+      // a name before loading question labels (e.g. payment confirmations).
+      resolvedName = findAttendeeName(resolvedAnswers, questions);
     }
   }
 

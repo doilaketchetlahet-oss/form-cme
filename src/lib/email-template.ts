@@ -367,12 +367,24 @@ function formatAnswer(value: unknown, question?: EmailMergeQuestion): string {
 }
 
 export function findAttendeeName(answers: Record<string, unknown> = {}, questions: EmailMergeQuestion[] = []): string {
-  const nameQuestion = questions.find((question) => /ho ten|họ tên|full name|^tên$|ten khach|hovaten/i.test(question.text));
-  if (nameQuestion?.id) {
-    const value = answers[nameQuestion.id];
+  const nameQuestions = questions.filter((question) => {
+    if (SKIP_QUESTION_TYPES.has(question.type)) return false;
+    const label = slugifyEmailField(question.text);
+    return /(?:^|_)(?:ho_va_ten|ho_ten|hovaten|full_name|fullname)(?:_|$)/.test(label)
+      || /^(?:ten|name|ten_khach(?:_moi|_hang)?|ten_nguoi_tham_du|ten_dai_bieu|ten_hoc_vien|ten_bac_si|ten_cua_ban(?:_la_gi)?)$/.test(label);
+  });
+  for (const question of nameQuestions) {
+    if (!question.id) continue;
+    const value = answers[question.id];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  for (const value of Object.values(answers)) {
+  // An empty name field must not turn an academic title or address into a name.
+  if (nameQuestions.length) return "";
+  // Postgres JSONB key order is unrelated to the form's field order.
+  const values = questions.length
+    ? questions.filter((question) => question.id && !SKIP_QUESTION_TYPES.has(question.type)).map((question) => answers[question.id!])
+    : Object.values(answers);
+  for (const value of values) {
     if (typeof value !== "string") continue;
     const text = value.trim();
     if (text.length > 1 && text.length < 80 && !text.includes("@") && !/^\d+$/.test(text) && !/^https?:/i.test(text)) {

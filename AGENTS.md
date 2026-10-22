@@ -144,6 +144,12 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `PLAYWRIGHT_CHANNEL=msedge`). It imports/exports XLSX, decodes QR from a synthetic
   camera on mobile/desktop, and uses mocked APIs only; no real emails or records.
 
+- Check-in emails recognize normalized name labels including “Họ và tên”,
+  “Họ tên” and “Full name”; saved registration names override caller guesses.
+  An empty explicit name never falls back to an academic title or address.
+  Regression: `node --test scripts/test-checkin-email-name.cjs` uses the real
+  email renderer with mocked providers; it never sends a real message.
+
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
