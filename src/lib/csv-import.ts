@@ -1,16 +1,19 @@
 import type { SurveyResponse } from "@/lib/surveys";
 import * as XLSX from "xlsx";
+import { canAttendSession, type CheckinSessionConfig } from "./checkin-sessions";
 
 export type ImportQuestionMeta = {
   type: string;
   options: string[] | null;
   isHall: boolean;
+  required?: boolean;
+  allowMultiple?: boolean;
 };
 
 export type CsvImportRow = {
   id: string;
   sourceRow: number;
-  answers: Record<string, string | number>;
+  answers: SurveyResponse["answers"];
   email: string;
   hall: string;
   status: "ready" | "duplicate" | "invalid";
@@ -21,6 +24,7 @@ export type CsvImportPreview = {
   headers: string[];
   rows: CsvImportRow[];
   totalRows: number;
+  unmappedHeaders?: string[];
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,6 +38,44 @@ export function normalizeHeader(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+export function parseAttendanceFlag(value: string): boolean | null {
+  const normalized = normalizeHeader(value);
+  if (["co", "yes", "y", "true", "1", "x", "tham du", "dang ky"].includes(normalized) || ["✓", "✔", "☑"].includes(value.trim())) return true;
+  if (["khong", "no", "n", "false", "0", "khong tham du", "khong dang ky"].includes(normalized)) return false;
+  return null;
+}
+
+export type AttendanceColumnMapping = Record<string, { column: number | null; fallback: "unknown" | "yes" | "no" }>;
+
+export function validateImportRows(rows: CsvImportRow[], meta: Record<string, ImportQuestionMeta>, labels: Record<string, string>, existingEmails: Set<string>, config?: CheckinSessionConfig | null): CsvImportRow[] {
+  const seen = new Set(existingEmails);
+  return rows.map((row) => {
+    const email = row.email.trim().toLowerCase();
+    const issues: string[] = [];
+    for (const [id, question] of Object.entries(meta)) {
+      const value = row.answers[id];
+      const missing = value == null || value === "" || (Array.isArray(value) && value.length === 0);
+      // Conditional required questions are not marked required by the import UI.
+      if (missing && (question.required || config?.questionId === id)) issues.push(`Thiếu: ${labels[id] || id}`);
+      if (!missing && question.type === "choice") {
+        const indexes = Array.isArray(value) ? value : [value];
+        if ((!question.allowMultiple && indexes.length > 1) || indexes.some((v) => typeof v !== "number" || !Number.isInteger(v) || v < 0 || v >= (question.options?.length ?? 0))) {
+          issues.push(`Lựa chọn không hợp lệ: ${labels[id] || id}${typeof value === "string" ? ` (${value})` : ""}`);
+        }
+      }
+    }
+    if (email && !emailPattern.test(email)) issues.push("Email không hợp lệ");
+    if (!row.hall.trim() && config?.sessions.some((session) => session.checkHall && canAttendSession(config, session.id, row.answers))) issues.push("Thiếu hội trường được phân cho buổi có kiểm tra hội trường");
+    if (!Object.values(row.answers).some((v) => v !== "" && v != null) && !email && !row.hall) issues.push("Dòng không có dữ liệu khớp với form");
+    const duplicate = !!email && seen.has(email);
+    if (duplicate) issues.push("Email đã tồn tại hoặc bị trùng trong file");
+    // Invalid rows must not consume an address that a later valid row can use.
+    const invalid = issues.some((issue) => !issue.startsWith("Email đã"));
+    if (email && !invalid) seen.add(email);
+    return { ...row, email, issues, status: invalid ? "invalid" : duplicate ? "duplicate" : "ready" };
+  });
 }
 
 export function parseSpreadsheetFile(file: File): Promise<string[][]> {
@@ -128,6 +170,10 @@ export function parseSurveyImportRows(params: {
   questionLabels: Record<string, string>;
   questionMeta: Record<string, ImportQuestionMeta>;
   existingEmails: Set<string>;
+  sessionConfig?: CheckinSessionConfig | null;
+  attendanceColumns?: AttendanceColumnMapping;
+  cmeQuestionId?: string;
+  cmeColumn?: number | null;
 }) {
   const rows = params.rows;
   if (rows.length < 2) {
@@ -135,13 +181,17 @@ export function parseSurveyImportRows(params: {
   }
 
   const headers = rows[0].map((header) => header.trim());
-  const dataRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim()));
+  const dataRows = rows.slice(1).map((row, index) => ({ row, sourceRow: index + 2 })).filter(({ row }) => row.some((cell) => cell.trim()));
   const questionByHeader = buildQuestionHeaderMap(params.questionOrder, params.questionLabels);
-  const seenEmails = new Set(params.existingEmails);
+  const hallQuestions = params.questionOrder.filter((id) => params.questionMeta[id]?.isHall);
+  if (hallQuestions.length === 1) {
+    for (const header of ["hoi truong", "hall", "hoi truong duoc phan"]) {
+      if (!questionByHeader.has(header)) questionByHeader.set(header, hallQuestions[0]);
+    }
+  }
 
-  const previewRows = dataRows.map((row, index) => {
-    const answers: Record<string, string | number> = {};
-    const issues: string[] = [];
+  const previewRows = dataRows.map(({ row, sourceRow }, index) => {
+    const answers: SurveyResponse["answers"] = {};
     let email = "";
     let hall = "";
 
@@ -154,8 +204,11 @@ export function parseSurveyImportRows(params: {
       if (qid) {
         const meta = params.questionMeta[qid];
         if (meta?.type === "choice" && meta.options) {
-          const optionIndex = meta.options.findIndex((option) => normalizeHeader(option) === normalizeHeader(raw));
-          answers[qid] = optionIndex >= 0 ? optionIndex : raw;
+          const flag = parseAttendanceFlag(raw);
+          const exact = meta.options.findIndex((option) => normalizeHeader(option) === normalizeHeader(raw));
+          const optionIndex = exact >= 0 ? exact : flag === null ? -1 : meta.options.findIndex((option) => parseAttendanceFlag(option) === flag);
+          const multiple = meta.allowMultiple && exact < 0 ? raw.split(/[;,]/).map((part) => meta.options!.findIndex((option) => normalizeHeader(option) === normalizeHeader(part))) : null;
+          answers[qid] = multiple?.every((i) => i >= 0) ? multiple : optionIndex >= 0 ? (meta.allowMultiple ? [optionIndex] : optionIndex) : raw;
           if (meta.isHall) hall = optionIndex >= 0 ? meta.options[optionIndex] : raw;
         } else {
           answers[qid] = raw;
@@ -170,37 +223,56 @@ export function parseSurveyImportRows(params: {
       }
     });
 
-    let status: CsvImportRow["status"] = "ready";
-    if (email && seenEmails.has(email)) {
-      status = "duplicate";
-      issues.push("Email đã tồn tại hoặc bị trùng trong file");
+    const config = params.sessionConfig;
+    if (config?.questionId && params.attendanceColumns) {
+      const desired = config.sessions.map((session) => {
+        const mapping = params.attendanceColumns![session.id];
+        if (!mapping) return null;
+        // Blank mapped cells are unknown, never silently grant attendance.
+        return mapping.column !== null ? parseAttendanceFlag(row[mapping.column] ?? "") : mapping.fallback === "unknown" ? null : mapping.fallback === "yes";
+      });
+      const meta = params.questionMeta[config.questionId];
+      const existing = answers[config.questionId];
+      const options = meta?.options ?? [];
+      const allowedIndexes = options.map((_, i) => i).filter((i) => config.sessions.every((s, index) => desired[index] !== false || !s.optionIndexes.includes(i)));
+      const candidate = meta?.allowMultiple ? allowedIndexes.filter((i) => config.sessions.some((s, index) => desired[index] && s.optionIndexes.includes(i))) : options.findIndex((_, i) => config.sessions.every((s, index) => s.optionIndexes.includes(i) === desired[index]));
+      const candidateAnswers = { [config.questionId]: candidate };
+      if (desired.some((v) => v === null)) answers[config.questionId] = "Cần chọn cột hoặc giá trị cho mọi buổi; ô trống không được coi là Không";
+      else if (candidate === -1 || !config.sessions.every((s, i) => canAttendSession(config, s.id, candidateAnswers) === desired[i])) answers[config.questionId] = "Nhóm tham dự không khớp lựa chọn của form";
+      else if (existing != null && !config.sessions.every((s, i) => canAttendSession(config, s.id, answers) === desired[i])) answers[config.questionId] = "Cột chương trình và các cột buổi tham dự mâu thuẫn";
+      else answers[config.questionId] = candidate;
     }
-    if (email && !emailPattern.test(email)) {
-      status = "invalid";
-      issues.push("Email không hợp lệ");
+    if (params.cmeQuestionId && params.cmeColumn != null) {
+      const id = params.cmeQuestionId;
+      const raw = row[params.cmeColumn]?.trim() ?? "";
+      const meta = params.questionMeta[id];
+      const flag = parseAttendanceFlag(raw);
+      const option = meta?.options?.findIndex((value) => flag !== null && parseAttendanceFlag(value) === flag) ?? -1;
+      const mapped = option >= 0 ? (meta.allowMultiple ? [option] : option) : raw;
+      answers[id] = answers[id] != null && JSON.stringify(answers[id]) !== JSON.stringify(mapped) ? "Các cột đăng ký CME mâu thuẫn" : mapped;
     }
-    if (Object.keys(answers).length === 0 && !email && !hall) {
-      status = "invalid";
-      issues.push("Dòng không có dữ liệu khớp với form");
-    }
-
-    if (email) seenEmails.add(email);
 
     return {
       id: `${Date.now()}-${index}`,
-      sourceRow: index + 2,
+      sourceRow,
       answers,
       email,
       hall,
-      status,
-      issues,
+      status: "ready",
+      issues: [],
     } satisfies CsvImportRow;
   });
 
   return {
     headers,
-    rows: previewRows,
+    rows: validateImportRows(previewRows, params.questionMeta, params.questionLabels, params.existingEmails, params.sessionConfig),
     totalRows: dataRows.length,
+    unmappedHeaders: headers.filter((header, index) => {
+      const normalized = normalizeHeader(header);
+      return !questionByHeader.has(normalized) && !normalized.includes("email") && !normalized.includes("hoi truong") && normalized !== "hall"
+        && !Object.values(params.attendanceColumns ?? {}).some((mapping) => mapping.column === index)
+        && !(params.cmeQuestionId && params.cmeColumn === index);
+    }),
   } satisfies CsvImportPreview;
 }
 

@@ -5,6 +5,8 @@ export type CheckinSession = {
   id: string;
   name: string;
   hall: string;
+  /** Require the operator's hall to match the attendee's assigned hall. */
+  checkHall?: boolean;
   opensAt: string | null;
   closesAt: string | null;
   optionIndexes: number[];
@@ -22,6 +24,7 @@ export function normalizeSessionConfig(input: unknown): CheckinSessionConfig | n
       id: typeof session.id === "string" ? session.id.trim() : "",
       name: typeof session.name === "string" ? session.name.trim() : "",
       hall: typeof session.hall === "string" ? session.hall.trim() : "",
+      checkHall: session.checkHall === true,
       opensAt: typeof session.opensAt === "string" && session.opensAt ? session.opensAt : null,
       closesAt: typeof session.closesAt === "string" && session.closesAt ? session.closesAt : null,
       optionIndexes: Array.isArray(session.optionIndexes)
@@ -44,6 +47,7 @@ export function validateSessionConfig(input: unknown, questions: ChoiceQuestion[
       const session = item as Record<string, unknown>;
       return typeof session.id !== "string" || session.id !== session.id.trim()
         || typeof session.name !== "string" || typeof session.hall !== "string"
+        || (session.checkHall !== undefined && typeof session.checkHall !== "boolean")
         || [session.opensAt, session.closesAt].some((date) => date != null && typeof date !== "string")
         || !Array.isArray(session.optionIndexes)
         || session.optionIndexes.some((index) => typeof index !== "number" || !Number.isInteger(index) || index < 0);

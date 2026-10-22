@@ -10,7 +10,7 @@ export type SessionCheckinResult = {
   error?: string;
 };
 
-export async function recordSessionCheckin(surveyId: string, responseId: string, sessionId: string, action: "preview" | "checkin" | "undo", method: "qr" | "face" | "manual"): Promise<SessionCheckinResult> {
+export async function recordSessionCheckin(surveyId: string, responseId: string, sessionId: string, action: "preview" | "checkin" | "undo", method: "qr" | "face" | "manual", hall?: string): Promise<SessionCheckinResult> {
   try {
     const { data } = await supabase.auth.getSession();
     let pin: string | null = null;
@@ -18,7 +18,7 @@ export async function recordSessionCheckin(surveyId: string, responseId: string,
     const response = await fetch(`/api/checkin/${encodeURIComponent(surveyId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {}) },
-      body: JSON.stringify({ responseId, sessionId, action, method, pin }),
+      body: JSON.stringify({ responseId, sessionId, action, method, pin, hall }),
     });
     const result = await response.json();
     return response.ok ? result : { ...result, ok: false };

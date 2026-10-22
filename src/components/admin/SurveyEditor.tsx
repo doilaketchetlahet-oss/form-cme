@@ -306,7 +306,7 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
     patchTheme({ sessionsEnabled: true, sessionConfig: {
       questionId: id,
       sessions: [
-        { id: newId(), name: "Hội thảo", hall: "", opensAt: null, closesAt: null, optionIndexes: [0, 2] },
+        { id: newId(), name: "Hội thảo", hall: "", checkHall: questions.some((q) => q.is_hall_selector), opensAt: null, closesAt: null, optionIndexes: [0, 2] },
         { id: newId(), name: "Gala dinner", hall: "", opensAt: null, closesAt: null, optionIndexes: [1, 2] },
       ],
     } });
@@ -635,6 +635,13 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
             </span>
           </label>
           {theme.sessionsEnabled && <SessionSettings value={theme.sessionConfig} questions={questions} onChange={(sessionConfig) => patchTheme({ sessionConfig })} onPreset={createConferenceGala} />}
+          <div className="mt-3 space-y-2">
+            <button type="button" disabled={questions.some((q) => /\bcme\b/i.test(q.text))} onClick={() => {
+              const id = newId();
+              setQuestions((previous) => [...previous, { _key: newKey(), id, position: previous.length, type: "choice", text: "Đăng ký cấp CME", options: ["Có", "Không"], required: false, allow_multiple: false, show_if: null, is_hall_selector: false }]);
+            }} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-slate-200 disabled:opacity-50">Thêm câu hỏi đăng ký cấp CME</button>
+            <p className="text-[11px] text-slate-400">CME là thông tin đăng ký riêng, có thể import và xuất cùng danh sách. Không tự xác nhận đủ điều kiện cấp CME từ một lần quét.</p>
+          </div>
         </div>
       </div>
       )}

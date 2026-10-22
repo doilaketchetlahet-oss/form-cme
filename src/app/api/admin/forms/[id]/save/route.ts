@@ -83,6 +83,18 @@ export async function POST(request: Request, context: RouteContext) {
     }
   }
 
+  if (normalizeSessionConfig(payload!.checkin_theme?.sessionConfig)?.sessions.some((session) => session.checkHall)) {
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) return NextResponse.json({ ok: false, error: "Thiếu cấu hình Supabase server để bật kiểm tra hội trường theo buổi." }, { status: 503 });
+    const service = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    // Probe with an invalid action: proves the overload exists without reading or writing a guest.
+    const { data, error } = await service.rpc("record_session_checkin", {
+      p_survey_id: surveyId, p_response_id: "00000000-0000-0000-0000-000000000000",
+      p_session_key: "migration-probe", p_action: "migration-probe", p_method: "qr", p_hall: null,
+    });
+    if (error || data?.code !== "bad_request") return NextResponse.json({ ok: false, error: "Cần cập nhật database bằng supabase/checkin-sessions.sql trước khi bật kiểm tra hội trường theo buổi. Các buổi hiện tại vẫn dùng cấu hình đã lưu." }, { status: 503 });
+  }
+
   const surveyUpdate = {
     title: payload!.title.trim(),
     form_type: payload!.form_type,

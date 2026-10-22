@@ -12,10 +12,15 @@ import {
   parseCsv,
   parseSpreadsheetFile,
   parseSurveyImportRows,
+  validateImportRows,
+  type AttendanceColumnMapping,
   type CsvImportPreview,
   type CsvImportRow,
   type ImportQuestionMeta,
 } from "@/lib/csv-import";
+import { normalizeSessionConfig, type CheckinSessionConfig } from "@/lib/checkin-sessions";
+import { formatAttendanceAnswer } from "@/lib/attendance-display";
+import { AttendanceImportMapping } from "@/components/admin/AttendanceImportMapping";
 
 type QuestionInfo = {
   id: string;
@@ -23,6 +28,9 @@ type QuestionInfo = {
   type: string;
   options: string[] | null;
   is_hall_selector: boolean;
+  required: boolean;
+  show_if: unknown;
+  allow_multiple: boolean;
 };
 
 export default function AttendeeImportPage({ params }: { params: Promise<{ surveyId: string }> }) {
@@ -40,33 +48,45 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   const [preview, setPreview] = useState<CsvImportPreview | null>(null);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<string | null>(null);
+  const [sessionConfig, setSessionConfig] = useState<CheckinSessionConfig | null>(null);
+  const [sourceRows, setSourceRows] = useState<string[][]>([]);
+  const [separateColumns, setSeparateColumns] = useState(false);
+  const [attendanceColumns, setAttendanceColumns] = useState<AttendanceColumnMapping>({});
+  const [cmeQuestionId, setCmeQuestionId] = useState("");
+  const [cmeColumn, setCmeColumn] = useState<number | null>(null);
+  const [mappingDirty, setMappingDirty] = useState(false);
 
   const questionOrder = useMemo(() => questions.map((q) => q.id), [questions]);
   const questionLabels = useMemo(() => Object.fromEntries(questions.map((q) => [q.id, q.text])), [questions]);
   const questionMeta = useMemo<Record<string, ImportQuestionMeta>>(
-    () => Object.fromEntries(questions.map((q) => [q.id, { type: q.type, options: q.options, isHall: q.is_hall_selector }])),
+    () => Object.fromEntries(questions.map((q) => [q.id, { type: q.type, options: q.options, isHall: q.is_hall_selector, required: q.required && !q.show_if, allowMultiple: q.allow_multiple }])),
     [questions],
   );
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [{ data: survey }, { data: questionRows }, { data: responseRows }] = await Promise.all([
-      supabase.from("surveys").select("title").eq("id", surveyId).single(),
+    const [{ data: survey, error: surveyError }, { data: questionRows, error: questionError }, { data: responseRows, error: responseError }] = await Promise.all([
+      supabase.from("surveys").select("title, checkin_theme").eq("id", surveyId).single(),
       supabase
         .from("survey_questions")
-        .select("id, text, type, options, is_hall_selector")
+        .select("id, text, type, options, is_hall_selector, required, show_if, allow_multiple")
         .eq("survey_id", surveyId)
-        .not("type", "in", '("section","image_banner")')
+        .not("type", "in", '("section","image_banner","face_checkin")')
         .order("position"),
       supabase.from("survey_responses").select("*").eq("survey_id", surveyId),
     ]);
 
+    if (surveyError || questionError || responseError || !survey) { setLoadFailed(true); setLoading(false); return; }
+    setLoadFailed(false);
+
     setSurveyTitle(survey?.title ?? "Form đăng ký");
+    setSessionConfig(normalizeSessionConfig(survey?.checkin_theme?.sessionConfig));
     setQuestions((questionRows ?? []) as QuestionInfo[]);
     setResponses((responseRows ?? []) as SurveyResponse[]);
     setLoading(false);
@@ -110,15 +130,25 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
     try {
       const isExcel = /\.xlsx?$/i.test(file.name);
       const rows = isExcel ? await parseSpreadsheetFile(file) : parseCsv(await file.text());
+      setSourceRows(rows);
+      setSeparateColumns(false);
+      setAttendanceColumns({});
+      setCmeColumn(null);
+      setMappingDirty(false);
       const parsed = parseSurveyImportRows({
         rows,
         questionOrder,
         questionLabels,
         questionMeta,
         existingEmails,
+        sessionConfig,
       });
       setFileName(file.name);
       setPreview(parsed);
+    } catch {
+      setPreview(null);
+      setSourceRows([]);
+      setResult("Không đọc được file. Kiểm tra định dạng Excel / CSV và thử lại.");
     } finally {
       setParsing(false);
     }
@@ -129,43 +159,35 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       if (!current) return current;
       return {
         ...current,
-        rows: current.rows.map((row) => {
-          if (row.id !== id) return row;
-          const next = { ...row, ...patch };
-          const issues = [...next.issues.filter((issue) => !issue.startsWith("Email"))];
-          const email = next.email.trim().toLowerCase();
-          if (email && existingEmails.has(email)) issues.push("Email đã tồn tại");
-          if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push("Email không hợp lệ");
-          const status = issues.length > 0 ? (issues.some((issue) => issue.includes("tồn tại")) ? "duplicate" : "invalid") : "ready";
-          return { ...next, email, issues, status };
-        }),
+        rows: validateImportRows(current.rows.map((row) => row.id === id ? { ...row, ...patch } : row), questionMeta, questionLabels, existingEmails, sessionConfig),
       };
     });
   };
 
   const patchAnswer = (rowId: string, questionId: string, value: string) => {
     const meta = questionMeta[questionId];
-    const finalValue = meta?.type === "choice" && /^\d+$/.test(value) ? Number(value) : value;
+    const finalValue = meta?.type === "choice" ? meta.allowMultiple ? value.split(",").filter(Boolean).map(Number) : /^\d+$/.test(value) ? Number(value) : value : value;
     setPreview((current) => {
       if (!current) return current;
       return {
         ...current,
-        rows: current.rows.map((row) => {
+        rows: validateImportRows(current.rows.map((row) => {
           if (row.id !== rowId) return row;
           const answers = { ...row.answers, [questionId]: finalValue };
           const hall = meta?.isHall && meta.options && typeof finalValue === "number" ? meta.options[finalValue] : row.hall;
           return { ...row, answers, hall };
-        }),
+        }), questionMeta, questionLabels, existingEmails, sessionConfig),
       };
     });
   };
 
   const removeRow = (id: string) => {
-    setPreview((current) => current ? { ...current, rows: current.rows.filter((row) => row.id !== id) } : current);
+    setPreview((current) => current ? { ...current, rows: validateImportRows(current.rows.filter((row) => row.id !== id), questionMeta, questionLabels, existingEmails, sessionConfig) } : current);
   };
 
   const clearPreview = () => {
     setPreview(null);
+    setSourceRows([]);
     setFileName("");
     setResult(null);
     setQuery("");
@@ -173,11 +195,17 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   };
 
   const doImport = async () => {
-    if (!preview || stats.ready === 0 || importing) return;
+    if (!preview || stats.ready === 0 || importing || mappingDirty) return;
     setImporting(true);
     setResult(null);
     try {
-      const payload = buildImportPayload(surveyId, preview.rows);
+      const { data: latest, error: readError } = await supabase.from("survey_responses").select("email, answers").eq("survey_id", surveyId);
+      if (readError) { setResult("Không kiểm tra được danh sách hiện tại. Vui lòng thử lại."); return; }
+      const latestEmails = new Set((latest ?? []).map((response) => findResponseEmail(response)?.toLowerCase()).filter((email): email is string => !!email));
+      const validated = validateImportRows(preview.rows, questionMeta, questionLabels, latestEmails, sessionConfig);
+      setPreview({ ...preview, rows: validated });
+      const payload = buildImportPayload(surveyId, validated);
+      if (!payload.length) { setResult("Không còn dòng hợp lệ để import. Kiểm tra email trùng và quyền tham dự."); return; }
       const { data, error } = await supabase.from("survey_responses").insert(payload).select("*");
       if (error) {
         setResult(`Import thất bại: ${error.message}`);
@@ -185,7 +213,8 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       }
       setResponses((prev) => [...((data ?? []) as SurveyResponse[]), ...prev]);
       setResult(`Đã import ${data?.length ?? payload.length} người vào danh sách.`);
-      setPreview((current) => current ? { ...current, rows: current.rows.filter((row) => row.status !== "ready") } : current);
+      setPreview({ ...preview, rows: validated.filter((row) => row.status !== "ready") });
+      setSourceRows([]);
     } finally {
       setImporting(false);
     }
@@ -198,6 +227,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       </div>
     );
   }
+  if (loadFailed) return <div className="p-8 text-center text-slate-700"><p>Không tải được cấu hình form hoặc danh sách hiện tại.</p><button onClick={() => void loadData()} className="mt-3 rounded-lg bg-sky-600 px-4 py-2 text-white">Thử lại</button></div>;
 
   return (
     <div className="min-h-dvh bg-slate-50">
@@ -221,7 +251,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               </button>
               <button
                 onClick={doImport}
-                disabled={!preview || stats.ready === 0 || importing}
+                disabled={!preview || stats.ready === 0 || importing || mappingDirty}
                 className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
@@ -250,6 +280,19 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           <StatCard label="Cần sửa" value={stats.invalid} tone="red" />
         </div>
 
+        {sourceRows.length > 0 && <AttendanceImportMapping headers={sourceRows[0]} config={sessionConfig} questions={questions}
+          separate={separateColumns} mappings={attendanceColumns} cmeQuestionId={cmeQuestionId} cmeColumn={cmeColumn} dirty={mappingDirty} disabled={importing}
+          onSeparate={(value) => { setSeparateColumns(value); setMappingDirty(true); }}
+          onMappings={(value) => { setAttendanceColumns(value); setMappingDirty(true); }}
+          onCmeQuestion={(value) => { setCmeQuestionId(value); setCmeColumn(null); setMappingDirty(true); }}
+          onCmeColumn={(value) => { setCmeColumn(value); setMappingDirty(true); }}
+          onApply={() => {
+            setPreview(parseSurveyImportRows({ rows: sourceRows, questionOrder, questionLabels, questionMeta, existingEmails, sessionConfig,
+              attendanceColumns: separateColumns ? attendanceColumns : undefined, cmeQuestionId, cmeColumn }));
+            setMappingDirty(false);
+            setResult("Đã đọc lại file theo cách ghép cột đã chọn. Kiểm tra các dòng trước khi import.");
+          }} />}
+
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -277,6 +320,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               )}
             </div>
             {result && <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">{result}</p>}
+            {!!preview?.unmappedHeaders?.length && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Cột chưa ghép (sẽ không lưu theo tên cột): {preview.unmappedHeaders.join(", ")}. Ghép các cột Gala/CME phía trên hoặc tạo câu hỏi tương ứng trong form.</p>}
           </div>
 
           {!preview && (
@@ -312,7 +356,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
                     <th className="px-4 py-3 text-left font-semibold text-slate-500 min-w-44">Trạng thái</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-500 min-w-56">Email</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-500 min-w-44">Hội trường</th>
-                    {questions.slice(0, 5).map((question) => (
+                    {questions.map((question) => (
                       <th key={question.id} className="px-4 py-3 text-left font-semibold text-slate-500 min-w-56 max-w-72">{question.text}</th>
                     ))}
                     <th className="sticky right-0 z-20 bg-slate-50 px-4 py-3 text-right font-semibold text-slate-500 min-w-28 shadow-[-8px_0_14px_-14px_rgba(15,23,42,0.45)]">Thao tác</th>
@@ -323,7 +367,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
                     <ImportRowView
                       key={row.id}
                       row={row}
-                      questions={questions.slice(0, 5)}
+                      questions={questions}
                       editing={editingId === row.id}
                       onEdit={() => setEditingId(row.id)}
                       onDone={() => setEditingId(null)}
@@ -334,7 +378,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
                   ))}
                   {visibleRows.length === 0 && (
                     <tr>
-                      <td colSpan={questions.slice(0, 5).length + 5} className="px-4 py-10 text-center text-slate-500">
+                      <td colSpan={questions.length + 5} className="px-4 py-10 text-center text-slate-500">
                         Không có dòng nào khớp bộ lọc.
                       </td>
                     </tr>
@@ -427,8 +471,9 @@ function ImportRowView({
           {editing ? (
             question.type === "choice" && question.options ? (
               <select
-                value={String(row.answers[question.id] ?? "")}
-                onChange={(event) => onPatchAnswer(row.id, question.id, event.target.value)}
+                multiple={question.allow_multiple}
+                value={question.allow_multiple ? (Array.isArray(row.answers[question.id]) ? (row.answers[question.id] as number[]).map(String) : []) : String(row.answers[question.id] ?? "")}
+                onChange={(event) => onPatchAnswer(row.id, question.id, question.allow_multiple ? Array.from(event.target.selectedOptions, (option) => option.value).filter(Boolean).join(",") : event.target.value)}
                 className="w-full rounded-lg border border-slate-200 px-2 py-1.5 outline-none focus:border-emerald-400"
               >
                 <option value="">Chọn</option>
@@ -444,7 +489,7 @@ function ImportRowView({
               />
             )
           ) : (
-            <span className="text-slate-700">{formatAnswer(row.answers[question.id], question)}</span>
+            <span className="text-slate-700">{formatAttendanceAnswer(row.answers[question.id], question)}</span>
           )}
         </td>
       ))}
@@ -466,12 +511,4 @@ function ImportRowView({
       </td>
     </tr>
   );
-}
-
-function formatAnswer(value: string | number | undefined, question: QuestionInfo) {
-  if (value === undefined || value === "") return "-";
-  if (question.type === "choice" && question.options && typeof value === "number") {
-    return question.options[value] ?? String(value);
-  }
-  return String(value);
 }

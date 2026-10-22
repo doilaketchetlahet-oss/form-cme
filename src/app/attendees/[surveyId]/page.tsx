@@ -83,7 +83,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setQuestionOrder(order);
     setQuestionMeta(meta);
     // Extract unique halls
-    const uniqueHalls = [...new Set([...(resps ?? []).map((r: SurveyResponse) => r.hall), ...(config?.sessions.map((session) => session.hall) ?? [])].filter(Boolean))] as string[];
+    const uniqueHalls = [...new Set([...(resps ?? []).map((r: SurveyResponse) => r.hall)].filter(Boolean))] as string[];
     setHalls(uniqueHalls);
     // Load sessions: from localStorage + derive from existing session_checkins keys
     let stored: string[] = [];
@@ -294,7 +294,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const toggleSession = async (r: SurveyResponse, sessionName: string) => {
     const current = r.session_checkins ?? {};
     const isChecked = !!current[sessionName];
-    const result = await recordSessionCheckin(surveyId, r.id, sessionName, isChecked ? "undo" : "checkin", "manual");
+    const result = await recordSessionCheckin(surveyId, r.id, sessionName, isChecked ? "undo" : "checkin", "manual", hallFilter || undefined);
     if (!result.ok) { toast.error(result.error ?? "Chưa ghi nhận được check-in."); return; }
     if (selectedResponse?.id === r.id) await loadCheckinLogs(r.id);
     const apply = (response: SurveyResponse) => {
@@ -326,9 +326,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     }
   };
 
-  const exportCSV = () => {
+  const exportCSV = async (excel = false) => {
     const headers = [
       "STT",
+      "Hội trường được phân",
       ...questionOrder.map((k) => questionLabels[k] || k),
       "Thanh toán",
       "Số tiền",
@@ -362,6 +363,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       const arrival = arrivalSummary(r, sessionConfig);
       return [
         String(i + 1),
+        r.hall ?? "",
         ...fields,
         formatPaymentStatus(r.payment_status),
         r.payment_amount ? String(r.payment_amount) : "",
@@ -377,6 +379,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         new Date(r.submitted_at).toLocaleString("vi-VN"),
       ];
     });
+    if (excel) {
+      try {
+        const XLSX = await import("xlsx");
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, ...rows]), "Danh sách");
+        XLSX.writeFile(workbook, `checkin-${(surveyTitle || "export").replace(/[<>:"/\\|?*]/g, "-")}.xlsx`);
+      } catch { toast.error("Không xuất được Excel. Vui lòng thử lại."); }
+      return;
+    }
     const csv = [headers, ...rows].map((row) => row.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
     const bom = "\uFEFF";
     const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
@@ -401,9 +412,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   // Stats: check-in by hour, by hall
   const checkinRate = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
   const hallStats = halls.map((h) => {
-    const venueSessions = sessionConfig?.sessions.filter((session) => session.hall === h);
-    const inHall = responses.filter((r) => venueSessions ? venueSessions.some((session) => canAttendSession(sessionConfig, session.id, r.answers)) : r.hall === h);
-    const checked = inHall.filter((r) => venueSessions ? venueSessions.some((session) => !!r.session_checkins?.[session.id]) : r.checked_in).length;
+    const inHall = responses.filter((r) => r.hall === h);
+    const checked = inHall.filter(hasArrival).length;
     return { hall: h, total: inHall.length, checked };
   });
   // Check-in by hour
@@ -454,7 +464,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     const admitted = sessionConfig?.sessions.filter((session) => canAttendSession(sessionConfig, session.id, r.answers)) ?? [];
     if (participationFilter === "multiple" && admitted.length < 2) return false;
     if (participationFilter.startsWith("only:") && (admitted.length !== 1 || admitted[0].id !== participationFilter.slice(5))) return false;
-    if (hallFilter && (sessionConfig ? !admitted.some((session) => session.hall === hallFilter && (!sessionFilter || session.id === sessionFilter)) : r.hall !== hallFilter)) return false;
+    if (hallFilter && r.hall !== hallFilter) return false;
     if (fieldFilterKey && fieldFilterValue && !answerDisplay(r, fieldFilterKey).toLowerCase().includes(fieldFilterValue.toLowerCase())) return false;
     const isChecked = sessionFilter ? !!r.session_checkins?.[sessionFilter] : hasArrival(r);
     if (statusFilter === "checked" && !isChecked) return false;
@@ -503,7 +513,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       const updates = new Map<string, string>();
       let failed = 0;
       for (const id of selectedIds) {
-        const result = await recordSessionCheckin(surveyId, id, sessionFilter, "checkin", "manual");
+        const result = await recordSessionCheckin(surveyId, id, sessionFilter, "checkin", "manual", hallFilter || undefined);
         if (result.ok && result.checkedInAt) updates.set(id, result.checkedInAt);
         else failed += 1;
       }
@@ -769,9 +779,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             </button>
             <Link href={`/attendees/${surveyId}/import`}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
-              <Upload size={14} /> Import CSV
+              <Upload size={14} /> Import Excel / CSV
             </Link>
-            <button onClick={exportCSV}
+            <button onClick={() => void exportCSV(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100"><Download size={14} /> Excel</button>
+            <button onClick={() => void exportCSV()}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50">
               <Download size={14} /> CSV
             </button>
@@ -800,13 +811,13 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 <Mail size={14} /> Gửi cho đã chọn ({selectedIds.size})
               </button>
             )}
-            {sessionConfig && !sessionFilter ? <button onClick={() => setShowSessions(true)} className="rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white">Chọn buổi check-in</button> : <Link href={`/scan/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
+            {sessionConfig && !sessionFilter ? <button onClick={() => setShowSessions(true)} className="rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white">Chọn buổi check-in</button> : <Link href={`/scan/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}${hallFilter ? `&hall=${encodeURIComponent(hallFilter)}` : ""}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
               className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
               style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>
               <QrCode size={14} /> Scan
             </Link>}
             {vipCheckinEnabled && (!sessionConfig || sessionFilter) && (
-              <Link href={`/face-checkin/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
+              <Link href={`/face-checkin/${surveyId}${sessionFilter ? `?session=${encodeURIComponent(sessionFilter)}${hallFilter ? `&hall=${encodeURIComponent(hallFilter)}` : ""}` : hallFilter ? `?hall=${encodeURIComponent(hallFilter)}` : ""}`} target="_blank"
                 className="flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold text-on-brand transition-transform hover:scale-[1.01]"
                 style={{ background: "linear-gradient(135deg, #0ea5e9, #0891b2)" }}>
                 <ShieldCheck size={14} /> VIP Face
@@ -886,15 +897,15 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             {showSessions && (
               <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
                 <div className="px-4 pb-4 space-y-2">
-                  <p className="text-xs text-slate-500">Mỗi buổi có link quét riêng. Người tham dự check-in lại từng buổi (dùng cho CME cấp giờ tham dự).</p>
+                  <p className="text-xs text-slate-500">Mỗi buổi có link quét riêng, dùng cùng QR của khách. Chọn hội trường được phân ở bộ lọc để đưa vào link quét. Điểm danh từng buổi không tự xác nhận đủ điều kiện cấp CME.</p>
                   {sessionConfig && <p className="text-xs font-medium text-indigo-700">Dự {sessionConfig.sessions.length === 2 ? "cả hai buổi" : "nhiều buổi"}: {responses.filter((r) => sessionConfig.sessions.filter((session) => canAttendSession(sessionConfig, session.id, r.answers)).length >= 2).length} người · Khách dùng cùng một QR cho các buổi đã đăng ký.</p>}
                   {sessions.map((s) => {
                     const checkedInSession = responses.filter((r) => r.session_checkins?.[s]).length;
                     const eligible = responses.filter((r) => canAttendSession(sessionConfig, s, r.answers)).length;
                     const definition = sessionConfig?.sessions.find((session) => session.id === s);
                     const archived = !!sessionConfig && !definition;
-                    const scanUrl = buildPublicUrl(`/scan/${surveyId}?session=${encodeURIComponent(s)}`);
-                    const faceUrl = buildPublicUrl(`/face-checkin/${surveyId}?session=${encodeURIComponent(s)}`);
+                    const scanUrl = buildPublicUrl(`/scan/${surveyId}?session=${encodeURIComponent(s)}${hallFilter ? `&hall=${encodeURIComponent(hallFilter)}` : ""}`);
+                    const faceUrl = buildPublicUrl(`/face-checkin/${surveyId}?session=${encodeURIComponent(s)}${hallFilter ? `&hall=${encodeURIComponent(hallFilter)}` : ""}`);
                     return (
                       <div key={s} className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50">
                         <div className="flex-1 min-w-0">
@@ -969,7 +980,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               {halls.length > 0 && (
                 <select value={hallFilter} onChange={(e) => setHallFilter(e.target.value)}
                   className="admin-dark-select admin-field min-w-44 flex-1 rounded-xl px-3 py-3 text-sm focus:outline-none lg:flex-none">
-                  <option value="">Tất cả hội trường</option>
+                  <option value="">Tất cả hội trường được phân</option>
                   {halls.map((h) => <option key={h} value={h}>{h}</option>)}
                 </select>
               )}
@@ -1303,7 +1314,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 )}
 
                 {/* Hall assignment */}
-                {!sessionConfig && editingId !== selectedResponse.id && (
+                {editingId !== selectedResponse.id && (
                   <div className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 pt-3">
                     <span className="text-xs text-slate-500">Hội trường:</span>
                     <input

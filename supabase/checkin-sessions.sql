@@ -4,7 +4,7 @@ begin;
 
 create or replace function public.record_session_checkin(
   p_survey_id uuid, p_response_id uuid, p_session_key text,
-  p_action text, p_method text default 'qr'
+  p_action text, p_method text, p_hall text
 ) returns jsonb
 language plpgsql security definer set search_path = public
 as $$
@@ -47,7 +47,7 @@ begin
     if checked_at is not null then
       update survey_responses set session_checkins = coalesce(session_checkins, '{}'::jsonb) - p_session_key where id = attendee.id;
       insert into checkin_logs (survey_id, response_id, action, method, hall, session_name)
-      values (p_survey_id, attendee.id, 'session_uncheckin', p_method, nullif(session ->> 'hall', ''), p_session_key);
+      values (p_survey_id, attendee.id, 'session_uncheckin', p_method, case when session -> 'checkHall' = 'true'::jsonb then attendee.hall else nullif(session ->> 'hall', '') end, p_session_key);
     end if;
     return jsonb_build_object('ok', true, 'code', 'unchecked', 'session', session, 'checkedInAt', null);
   end if;
@@ -71,6 +71,20 @@ begin
     ) into allowed;
     if not allowed then return jsonb_build_object('ok', false, 'code', 'denied', 'session', session); end if;
   end if;
+  -- Per-attendee halls and a session's event venue are independent.
+  -- Manual check-in from an attendee record uses that record's assigned hall.
+  if session -> 'checkHall' = 'true'::jsonb then
+    if nullif(trim(attendee.hall), '') is null then
+      return jsonb_build_object('ok', false, 'code', 'hall_unassigned', 'session', session);
+    end if;
+    if p_method = 'manual' and nullif(trim(p_hall), '') is null then p_hall := attendee.hall; end if;
+    if nullif(trim(p_hall), '') is null then
+      return jsonb_build_object('ok', false, 'code', 'hall_required', 'session', session);
+    end if;
+    if trim(attendee.hall) <> trim(p_hall) then
+      return jsonb_build_object('ok', false, 'code', 'wrong_hall', 'session', session);
+    end if;
+  end if;
   if checked_at is not null then
     return jsonb_build_object('ok', true, 'code', 'already', 'session', session, 'checkedInAt', checked_at);
   end if;
@@ -84,11 +98,22 @@ begin
 
   update survey_responses set session_checkins = coalesce(session_checkins, '{}'::jsonb) || jsonb_build_object(p_session_key, recorded_at) where id = attendee.id;
   insert into checkin_logs (survey_id, response_id, action, method, hall, session_name)
-  values (p_survey_id, attendee.id, 'session_checkin', p_method, nullif(session ->> 'hall', ''), p_session_key);
+  values (p_survey_id, attendee.id, 'session_checkin', p_method, case when session -> 'checkHall' = 'true'::jsonb then attendee.hall else nullif(session ->> 'hall', '') end, p_session_key);
   return jsonb_build_object('ok', true, 'code', 'checked_in', 'session', session, 'checkedInAt', recorded_at);
 exception when invalid_datetime_format or datetime_field_overflow then
   return jsonb_build_object('ok', false, 'code', 'invalid_config');
 end;
+$$;
+
+revoke all on function public.record_session_checkin(uuid, uuid, text, text, text, text) from public, anon, authenticated;
+grant execute on function public.record_session_checkin(uuid, uuid, text, text, text, text) to service_role;
+
+-- Preserve older callers, while still enforcing the same rules.
+create or replace function public.record_session_checkin(
+  p_survey_id uuid, p_response_id uuid, p_session_key text,
+  p_action text, p_method text default 'qr'
+) returns jsonb language sql security definer set search_path = public as $$
+  select public.record_session_checkin(p_survey_id, p_response_id, p_session_key, p_action, p_method, null);
 $$;
 
 revoke all on function public.record_session_checkin(uuid, uuid, text, text, text) from public, anon, authenticated;

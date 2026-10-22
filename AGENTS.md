@@ -83,7 +83,9 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - One registration and `/checkin/[responseId]` QR covers all eligible sessions.
   `/attendees/[surveyId]` provides attendance-group/session filters, counts, CSV,
   manual check-in, and `/scan/[surveyId]?session=<stable-id>` / VIP Face links.
-  Each session uses its own venue; the legacy single `hall` column is not a gate.
+  Each session uses its own venue. Optional `checkHall: true` also checks the
+  attendee's assigned `hall` against the operator's selected hall; omitted/false
+  keeps the shared-venue behavior (e.g. Gala accepts guests from A and B).
 - `/api/checkin/[surveyId]` accepts preview/checkin/undo with PIN (if configured)
   or writable admin authentication. `record_session_checkin` validates eligibility,
   payment, and server time, then atomically updates `session_checkins` and logs.
@@ -98,6 +100,49 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `SUPABASE_SERVICE_ROLE_KEY` is required for the new check-in API.
 - Regression: `node --test scripts/test-checkin-sessions.cjs`; optional real
   PostgreSQL/React checks are documented at the top of that script.
+
+### Excel attendance / CME and one QR
+
+- Form editor Check-in tab can add the optional “Đăng ký cấp CME” Có/Không
+  question. This is registration intent, not certification eligibility.
+- Attendee import reads XLSX/CSV and shows all question columns. Named columns
+  match form questions; a separate mapping panel can map each session to a
+  Có/Không/Yes/No/1/0/x/✓ column or an explicit batch-wide Có/Không value.
+  Every session needs a decision in this mode. Blank/unknown flags, impossible
+  combinations and conflicting program columns are invalid, never auto-granted.
+  The mapping produces the existing attendance-question answer; no second
+  registration or QR is created. CME maps independently to a form question.
+- Invalid choices, missing attendance, missing required assigned halls and
+  duplicate emails are checked; editing/deleting a row revalidates the preview.
+  Reapplying mappings rereads the source file and replaces preview edits.
+  Unmapped headers are visible. Import adds new registrations; it does not update
+  an existing record with the same email.
+- QR confirmation shows assigned hall, every session's registration/check-in
+  status and decoded choice answers including CME. Denied guests still show
+  details without a confirm button. Excel (.xlsx) and CSV export include assigned
+  hall, question answers and separate eligibility/check-in columns per session.
+- A session's venue is separate from assigned hall. Enable its hall check only
+  where needed; existing configs remain unchanged. New conference presets enable
+  it when the form already has a hall-selector question. QR/Face choose a hall;
+  attendee list links preserve the selected hall. The assigned-hall list filter
+  and statistics use each attendee's hall, not the session venue.
+- `record_session_checkin` has a six-argument variant (`p_hall`) with atomic hall
+  validation under the response lock. Five-argument callers use a wrapper with
+  the same checks. Missing/wrong halls fail closed; manual check-in without an
+  explicit hall uses the attendee's assigned hall. Undo stays available after
+  hall/eligibility changes. Both RPCs are service-role only.
+- Existing projects must rerun `supabase/checkin-sessions.sql`, or run
+  `node scripts/setup-checkin-sessions.cjs` with `SUPABASE_DB_URL` before deploying.
+  Optional `CHECKIN_DB_POOLER_HOST` supplies a known session-pooler host.
+  The form-save API probes the new overload before enabling `checkHall` and
+  refuses the save if unavailable. Existing configs use the five-argument RPC
+  until hall checks are enabled, so pending migration does not stop old sessions.
+- Regression: `node --test scripts/test-attendance-import.cjs
+  scripts/test-checkin-sessions.cjs`. With the optional CHECKIN_TEST_DEPS directory
+  containing PGlite/React/Playwright, all SQL/React checks run. For browser checks,
+  start the app on port 3107 and run `node scripts/test-attendance-ui.cjs` (optional
+  `PLAYWRIGHT_CHANNEL=msedge`). It imports/exports XLSX, decodes QR from a synthetic
+  camera on mobile/desktop, and uses mocked APIs only; no real emails or records.
 
 ## Standalone Resend / SMTP mail merge
 

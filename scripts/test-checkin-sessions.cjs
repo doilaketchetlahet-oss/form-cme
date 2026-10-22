@@ -73,16 +73,17 @@ test("fresh installation SQL includes the same session migration as existing pro
   assert.ok(schema.includes(migration));
 });
 
-function apiHarness(pin = null) {
+function apiHarness(pin = null, checkHall = false) {
   const calls = [];
   let authorized = false, result = { ok: true, code: "checked_in", checkedInAt: "2026-10-06T03:00:00Z" }, rpcError = null;
   const service = {
-    from() { const query = { select() { return query; }, eq() { return query; }, async maybeSingle() { return { data: { checkin_pin: pin }, error: null }; } }; return query; },
+    from() { const query = { select() { return query; }, eq() { return query; }, async maybeSingle() { return { data: { checkin_pin: pin, checkin_theme: { sessionConfig: { ...config, sessions: config.sessions.map((s) => ({ ...s, checkHall })) } } }, error: null }; } }; return query; },
     async rpc(name, args) { calls.push({ name, args }); return { data: result, error: rpcError }; },
   };
   const route = loadSource("src/app/api/checkin/[surveyId]/route.ts", {
     "@supabase/supabase-js": { createClient: () => service },
     "@/lib/server/admin-api": { authorizeAdminApi: async (_req, writable) => { assert.equal(writable, true); return authorized ? { user: {} } : { error: "denied" }; } },
+    "@/lib/checkin-sessions": helpers,
   });
   return {
     calls, authorize: () => { authorized = true; }, respond: (value, error = null) => { result = value; rpcError = error; },
@@ -96,7 +97,7 @@ function apiHarness(pin = null) {
 
 test("check-in API validates before writing and requires the configured PIN or a writable admin", async () => {
   const api = apiHarness("1234");
-  for (const patch of [{ responseId: "wrong" }, { responseId: [responseId] }, { sessionId: "" }, { sessionId: "x".repeat(121) }, { action: "approve" }, { method: "unknown" }]) {
+  for (const patch of [{ responseId: "wrong" }, { responseId: [responseId] }, { sessionId: "" }, { sessionId: "x".repeat(121) }, { action: "approve" }, { method: "unknown" }, { hall: 12 }, { hall: "x".repeat(161) }]) {
     assert.equal((await api.post(patch)).status, 400);
   }
   assert.equal((await api.post({}, "wrong")).status, 400);
@@ -107,11 +108,20 @@ test("check-in API validates before writing and requires the configured PIN or a
   api.authorize();
   assert.equal((await api.post({ action: "undo", method: "manual" })).status, 200);
   assert.equal((await apiHarness().post()).status, 200);
+  assert.equal((await api.post({ hall: " A ", pin: "1234" })).status, 200);
+  assert.equal(Object.hasOwn(api.calls.at(-1).args, 'p_hall'), false);
+  const halls = apiHarness(null, true);
+  assert.equal((await halls.post({ hall: ' A ' })).status, 200);
+  assert.equal(halls.calls.at(-1).args.p_hall, 'A');
+  await halls.post();
+  assert.equal(halls.calls.at(-1).args.p_hall, null);
+  halls.respond(null, { code: 'PGRST202' });
+  assert.equal((await halls.post({ hall: 'A' })).status, 503);
 });
 
 test("API translates authoritative denial/window errors and never reports success for failed persistence", async () => {
   const api = apiHarness();
-  for (const [code, status] of [["denied", 403], ["not_found", 404], ["not_open", 409], ["closed", 409], ["payment_pending", 409], ["invalid_session", 409]]) {
+  for (const [code, status] of [["denied", 403], ["not_found", 404], ["not_open", 409], ["closed", 409], ["payment_pending", 409], ["invalid_session", 409], ["wrong_hall", 409], ["hall_required", 409], ["hall_unassigned", 409]]) {
     api.respond({ ok: false, code });
     const response = await api.post();
     assert.equal(response.status, status);
@@ -124,6 +134,28 @@ test("API translates authoritative denial/window errors and never reports succes
 });
 
 const extraRequire = process.env.CHECKIN_TEST_DEPS ? createRequire(path.join(process.env.CHECKIN_TEST_DEPS, "package.json")) : null;
+test('form save refuses enabling hall checks before the new SQL exists, without changing the form', async () => {
+  let writes = 0, probes = 0;
+  const service = {
+    auth: { getUser: async () => ({ data: { user: { email: 'test@example.test' } } }) },
+    rpc: async (_name, args) => { probes++; assert.equal(args.p_action, 'migration-probe'); return { error: { code: 'PGRST202' } }; },
+    from(table) {
+      const query = { select() { return query; }, eq() { return query; }, ilike() { return query; }, update() { writes++; return query; },
+        async single() { return { data: { quiz_id: randomUUID(), checkin_theme: null } }; },
+        async maybeSingle() { return { data: { role: 'admin' } }; },
+        then(resolve) { return Promise.resolve({ data: table === 'survey_questions' ? [question] : [] }).then(resolve); },
+      }; return query;
+    }
+  };
+  const { POST } = loadSource('src/app/api/admin/forms/[id]/save/route.ts', { '@supabase/supabase-js': { createClient: () => service }, '@/lib/checkin-sessions': helpers });
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-only';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-only';
+  const response = await POST(new Request('https://example.test/save', { method: 'POST', headers: { Authorization: 'Bearer test-only', 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Event', questions: [question], checkin_theme: { sessionConfig: { ...config, sessions: config.sessions.map((s) => ({ ...s, checkHall: true })) } } }) }), { params: Promise.resolve({ id: surveyId }) });
+  assert.equal(response.status, 503); assert.equal(probes, 1); assert.equal(writes, 0);
+  assert.match((await response.json()).error, /checkin-sessions.sql/);
+});
+
 test("form editor starter saves a required three-way question and the two independent session mappings", { skip: !extraRequire }, async () => {
   const React = extraRequire("react"), { create, act } = extraRequire("react-test-renderer");
   global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -246,6 +278,25 @@ test("real SQL enforces three groups, time windows, idempotence and legacy compa
     assert.deepEqual(simultaneous.map((r) => r.code), ["checked_in", "already"]);
     assert.equal((await db.query("select count(*)::int n from checkin_logs where response_id=$1 and session_name='gala'", [attendees[3]])).rows[0].n, 1);
     assert.equal((await db.query("select bool_or(checked_in) checked from survey_responses where survey_id=$1", [surveyId])).rows[0].checked, false);
+
+    await setConfig({ ...config, sessions: config.sessions.map((s) => ({ ...s, checkHall: s.id === "conference" })) });
+    const hallCall = async (id, key, hall, action = 'checkin', method = 'qr') => (await db.query("select record_session_checkin($1,$2,$3,$4,$5,$6) result", [surveyId, id, key, action, method, hall])).rows[0].result;
+    const logsBeforeHall = (await db.query('select count(*)::int n from checkin_logs')).rows[0].n;
+    assert.equal((await hallCall(attendees[3], 'conference', '')).code, 'hall_required');
+    assert.equal((await call(attendees[3], 'conference')).code, 'hall_required'); // old callers cannot bypass
+    assert.equal((await hallCall(attendees[3], 'conference', 'Wrong hall')).code, 'wrong_hall');
+    assert.equal((await db.query('select count(*)::int n from checkin_logs')).rows[0].n, logsBeforeHall);
+    assert.equal((await hallCall(attendees[3], 'conference', 'Old hall', 'preview')).code, 'ready');
+    assert.equal((await hallCall(attendees[3], 'conference', 'Old hall')).code, 'checked_in');
+    assert.equal((await db.query("select hall from checkin_logs where response_id=$1 and session_name='conference'", [attendees[3]])).rows[0].hall, 'Old hall');
+    assert.equal((await hallCall(attendees[3], 'conference', 'Wrong hall', 'undo')).code, 'unchecked');
+    assert.equal((await hallCall(attendees[3], 'gala', 'Unrelated hall')).code, 'already');
+    await db.query('update survey_responses set hall=null where id=$1', [attendees[3]]);
+    assert.equal((await hallCall(attendees[3], 'conference', 'A')).code, 'hall_unassigned');
+    await db.query("update survey_responses set hall='Old hall' where id=$1", [attendees[3]]);
+    assert.equal((await call(attendees[3], 'conference', 'preview', surveyId, 'manual')).code, 'ready');
+    const hallPrivileges = (await db.query("select has_function_privilege('anon','record_session_checkin(uuid,uuid,text,text,text,text)','execute') a, has_function_privilege('authenticated','record_session_checkin(uuid,uuid,text,text,text,text)','execute') u, has_function_privilege('service_role','record_session_checkin(uuid,uuid,text,text,text,text)','execute') s")).rows[0];
+    assert.deepEqual(hallPrivileges, { a: false, u: false, s: true });
 
     const closedConfig = { ...config, sessions: config.sessions.map((s) => ({ ...s, name: `${s.name} renamed`, closesAt: "2000-01-01T00:00:00Z" })) };
     await setConfig(closedConfig);
