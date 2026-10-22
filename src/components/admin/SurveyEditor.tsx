@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -224,6 +224,8 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
       : DEFAULT_QUESTIONS
   );
   const [expandedKey, setExpandedKey] = useState<string | null>(questions[0]?._key ?? null);
+  const questionToFocusRef = useRef<string | null>(null);
+  const cmeQuestion = questions.find((q) => q.type === "choice" && !q.is_hall_selector && q.id !== theme.sessionConfig?.questionId && /\bcme\b/i.test(q.text));
   const formMeta = FORM_TYPE_META[formType];
   const tabs = formMeta.tabs;
   const visibleActiveTab = tabs.includes(activeTab) ? activeTab : tabs[0];
@@ -293,6 +295,18 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
   const removeQuestion = (key: string) => {
     setQuestions((prev) => prev.filter((q) => q._key !== key));
     if (expandedKey === key) setExpandedKey(null);
+  };
+
+  const openCmeQuestion = () => {
+    const question: DraftQuestion = cmeQuestion ?? {
+      _key: newKey(), id: newId(), position: questions.length, type: "choice",
+      text: "Đăng ký cấp CME", options: ["Có", "Không"], required: false,
+      allow_multiple: false, show_if: null, is_hall_selector: false,
+    };
+    if (!cmeQuestion) setQuestions((previous) => [...previous, question]);
+    questionToFocusRef.current = question._key;
+    setExpandedKey(question._key);
+    setActiveTab("questions");
   };
 
   const createConferenceGala = () => {
@@ -636,11 +650,13 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
           </label>
           {theme.sessionsEnabled && <SessionSettings value={theme.sessionConfig} questions={questions} onChange={(sessionConfig) => patchTheme({ sessionConfig })} onPreset={createConferenceGala} />}
           <div className="mt-3 space-y-2">
-            <button type="button" disabled={questions.some((q) => /\bcme\b/i.test(q.text))} onClick={() => {
-              const id = newId();
-              setQuestions((previous) => [...previous, { _key: newKey(), id, position: previous.length, type: "choice", text: "Đăng ký cấp CME", options: ["Có", "Không"], required: false, allow_multiple: false, show_if: null, is_hall_selector: false }]);
-            }} className="rounded-lg border border-white/15 px-3 py-2 text-xs text-slate-200 disabled:opacity-50">Thêm câu hỏi đăng ký cấp CME</button>
-            <p className="text-[11px] text-slate-400">CME là thông tin đăng ký riêng, có thể import và xuất cùng danh sách. Không tự xác nhận đủ điều kiện cấp CME từ một lần quét.</p>
+            <button type="button" onClick={openCmeQuestion}
+              className="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-800 transition-colors hover:border-sky-400 hover:bg-sky-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600">
+              {cmeQuestion ? <Pencil size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+              {cmeQuestion ? "Mở câu hỏi đăng ký CME" : "Thêm câu hỏi đăng ký cấp CME"}
+            </button>
+            <p className="text-xs text-slate-700">{cmeQuestion ? "Đã có câu hỏi CME trong form. Bấm để mở và chỉnh sửa trong tab Câu hỏi." : "Thêm câu hỏi Có/Không và mở ngay trong tab Câu hỏi. Nhấn Lưu thay đổi sau khi chỉnh sửa."}</p>
+            <p className="text-[11px] text-slate-500">CME là thông tin đăng ký riêng, có thể import và xuất cùng danh sách. Không tự xác nhận đủ điều kiện cấp CME từ một lần quét.</p>
           </div>
         </div>
       </div>
@@ -853,18 +869,25 @@ className="admin-field w-full rounded-xl px-4 py-2.5 text-sm admin-placeholder f
           <SortableContext items={questions.map((q) => q._key)} strategy={verticalListSortingStrategy}>
             <div className="flex flex-col gap-2">
               {questions.map((q) => (
-                <DraftItem
-                  key={q._key}
-                  question={q}
-                  allQuestions={questions}
-                  expanded={expandedKey === q._key}
-                  onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
-                  onUpdate={(patch) => updateQuestion(q._key, patch)}
-                  onRemove={() => removeQuestion(q._key)}
-                  onDuplicate={() => duplicateQuestion(q._key)}
-                  availableQuestionTypes={availableQuestionTypes}
-                  allowHallSelector={isCheckinEnabled}
-                />
+                <div key={q._key} ref={(element) => {
+                  if (element && questionToFocusRef.current === q._key) {
+                    questionToFocusRef.current = null;
+                    element.scrollIntoView({ block: "center", behavior: "smooth" });
+                    element.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+                  }
+                }}>
+                  <DraftItem
+                    question={q}
+                    allQuestions={questions}
+                    expanded={expandedKey === q._key}
+                    onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
+                    onUpdate={(patch) => updateQuestion(q._key, patch)}
+                    onRemove={() => removeQuestion(q._key)}
+                    onDuplicate={() => duplicateQuestion(q._key)}
+                    availableQuestionTypes={availableQuestionTypes}
+                    allowHallSelector={isCheckinEnabled}
+                  />
+                </div>
               ))}
             </div>
           </SortableContext>
