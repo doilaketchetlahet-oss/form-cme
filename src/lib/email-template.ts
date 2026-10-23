@@ -366,13 +366,15 @@ function formatAnswer(value: unknown, question?: EmailMergeQuestion): string {
   return String(value);
 }
 
+export function isAttendeeNameQuestion(question: EmailMergeQuestion): boolean {
+  if (SKIP_QUESTION_TYPES.has(question.type)) return false;
+  const label = slugifyEmailField(question.text);
+  return /(?:^|_)(?:ho_va_ten|ho_ten|hovaten|full_name|fullname)(?:_|$)/.test(label)
+    || /^(?:ten|name|ten_khach(?:_moi|_hang)?|ten_nguoi_tham_du|ten_dai_bieu|ten_hoc_vien|ten_bac_si|ten_cua_ban(?:_la_gi)?)$/.test(label);
+}
+
 export function findAttendeeName(answers: Record<string, unknown> = {}, questions: EmailMergeQuestion[] = []): string {
-  const nameQuestions = questions.filter((question) => {
-    if (SKIP_QUESTION_TYPES.has(question.type)) return false;
-    const label = slugifyEmailField(question.text);
-    return /(?:^|_)(?:ho_va_ten|ho_ten|hovaten|full_name|fullname)(?:_|$)/.test(label)
-      || /^(?:ten|name|ten_khach(?:_moi|_hang)?|ten_nguoi_tham_du|ten_dai_bieu|ten_hoc_vien|ten_bac_si|ten_cua_ban(?:_la_gi)?)$/.test(label);
-  });
+  const nameQuestions = questions.filter(isAttendeeNameQuestion);
   for (const question of nameQuestions) {
     if (!question.id) continue;
     const value = answers[question.id];

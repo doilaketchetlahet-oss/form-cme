@@ -183,6 +183,16 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `node --test scripts/test-qr-defaults.cjs`; browser reset/save/reload and real
   SVG/PNG decoding: `node scripts/test-qr-ui.cjs` (port 3109, CHECKIN_TEST_DEPS
   for Playwright, optional PLAYWRIGHT_CHANNEL=msedge; mocked auth/data, no mail).
+- Attendees “QR ZIP” rereads the form's saved branding and question metadata at
+  export time, then downloads the shared `/api/qr` PNG output; it must never
+  apply a hardcoded client-side logo. Each PNG filename prefers a labeled full
+  name, then the full email address, phone, another visible answered field, and
+  finally the response ID. Uploads/signatures/face data are excluded. Safe Unicode
+  filenames use case-insensitive unique suffixes, including suffix-shaped names.
+  A failed settings/image read aborts export instead of guessing a QR style.
+  Regression: `node --test scripts/test-qr-export.cjs`; `node scripts/test-qr-zip-ui.cjs`
+  uses the same port/Playwright setup, mocked records and actual PNG decoding at
+  the camera's 400px scan resolution. No real registrations or email are sent.
 
 ## Standalone Resend / SMTP mail merge
 

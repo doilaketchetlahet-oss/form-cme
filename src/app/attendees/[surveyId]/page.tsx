@@ -14,6 +14,7 @@ import { buildQrImagePath } from "@/lib/qr-style";
 import type { QRBranding } from "@/lib/surveys";
 import { arrivalSummary, canAttendSession, normalizeSessionConfig, sessionLabel, type CheckinSessionConfig } from "@/lib/checkin-sessions";
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
+import { fetchBrandedQrPng, qrExportLabel, uniqueQrFilename } from "@/lib/qr-export";
 
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
@@ -673,17 +674,20 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setExportingQr(true);
     toast.info(`Đang tạo ${targets.length} mã QR…`);
     try {
+      const [{ data: currentSurvey, error: brandingError }, { data: exportQuestions, error: questionError }] = await Promise.all([
+        supabase.from("surveys").select("checkin_theme").eq("id", surveyId).single(),
+        supabase.from("survey_questions").select("id, text, type, options").eq("survey_id", surveyId).order("position"),
+      ]);
+      if (brandingError || questionError || !currentSurvey || !exportQuestions) throw new Error("Không đọc được branding hoặc các trường của form. Vui lòng thử lại.");
+      const branding = (currentSurvey.checkin_theme?.qr as QRBranding | undefined) ?? null;
+      setQrBranding(branding);
       const JSZip = (await import("jszip")).default;
       const zip = new JSZip();
-      const used = new Map<string, number>();
+      const used = new Set<string>();
       for (const r of targets) {
-        const rawName = findName(r.answers) || findEmail(r)?.split("@")[0] || r.id.slice(0, 8);
-        let filename = sanitizeQrFilename(rawName);
-        const seen = used.get(filename) ?? 0;
-        used.set(filename, seen + 1);
-        if (seen > 0) filename = `${filename}_${seen + 1}`;
-        const blob = await buildQrPng(buildPublicUrl(`/checkin/${r.id}`), 512, true);
-        zip.file(`${filename}.png`, blob);
+        const filename = uniqueQrFilename(qrExportLabel(r, exportQuestions), used);
+        const blob = await fetchBrandedQrPng(buildPublicUrl(`/checkin/${r.id}`), 512, branding);
+        zip.file(filename, blob);
       }
       const content = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(content);
@@ -796,7 +800,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             </button>
             <button onClick={downloadQrZip} disabled={exportingQr}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
-              title="Tải ZIP mã QR (tên file = tên người)">
+              title="Tải QR theo branding đã lưu; tên ảnh ưu tiên họ tên, email, số điện thoại">
               <Download size={14} /> {exportingQr ? "Đang tạo QR…" : selectedIds.size > 0 ? `QR ZIP (${selectedIds.size})` : "QR ZIP"}
             </button>
             {emailFailedCount > 0 && (
@@ -1342,70 +1346,6 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
 function isPaymentSettled(status: SurveyResponse["payment_status"]) {
   return !status || status === "not_required" || status === "paid";
-}
-
-function sanitizeQrFilename(name: string) {
-  return name
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\.+$/g, "")
-    .trim()
-    .slice(0, 80) || "khach";
-}
-
-function loadImageElement(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
-}
-
-function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-async function buildQrPng(url: string, size: number, withLogo: boolean): Promise<Blob> {
-  const mod = await import("qrcode");
-  const QRCode = (mod.default ?? mod) as { toDataURL: (text: string, options?: unknown) => Promise<string> };
-  const dataUrl = await QRCode.toDataURL(url, {
-    width: size,
-    margin: 2,
-    errorCorrectionLevel: "H",
-    color: { dark: "#0f172a", light: "#ffffff" },
-  });
-
-  const fallback = async () => (await fetch(dataUrl)).blob();
-  if (!withLogo) return fallback();
-
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return fallback();
-
-  const qrImg = await loadImageElement(dataUrl);
-  ctx.drawImage(qrImg, 0, 0, size, size);
-  try {
-    const logo = await loadImageElement("/logo_qr.png");
-    const logoSize = Math.round(size * 0.22);
-    const padding = Math.round(size * 0.022);
-    const box = logoSize + padding * 2;
-    const left = (size - box) / 2;
-    ctx.fillStyle = "#ffffff";
-    roundRectPath(ctx, left, left, box, box, box * 0.22);
-    ctx.fill();
-    ctx.drawImage(logo, (size - logoSize) / 2, (size - logoSize) / 2, logoSize, logoSize);
-  } catch { /* logo unavailable */ }
-
-  return new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
 }
 
 function formatPaymentStatus(status: SurveyResponse["payment_status"]) {
