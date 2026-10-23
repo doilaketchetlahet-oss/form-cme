@@ -118,8 +118,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   original row/column coordinates are preserved. Changing the source resets
   mappings and preview edits. Generic per-question mappings and an Email-for-QR
   selector distinguish duplicate headers by Excel column letters. Ambiguous
-  automatic matches block import until mapped; a selected blank email never
-  falls back to a different contact's column. Unmapped columns remain visible.
+  automatic matches need explicit mapping or operator review of the current
+  preview; a selected blank email never falls back to another contact's column.
+  The Import button follows valid-row readiness. Pending mappings or duplicate
+  header warnings open a review before importing the existing preview, preserving
+  manual edits instead of forcing a file reread. Cancel writes nothing. Required
+  fields, choices, session rights, halls and latest email duplicates are still
+  validated before insertion. Unmapped columns remain visible.
   Regression: `node scripts/test-attendance-sheets-ui.cjs` with the same port and
   Playwright setup as attendance UI tests. Unit tests optionally compare a local
   source workbook via `ATTENDANCE_SOURCE_XLSX`; fixture data stays outside Git.

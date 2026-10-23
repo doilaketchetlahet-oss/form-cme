@@ -58,6 +58,6 @@ export function AttendanceImportMapping({ headers, config, questions, separate, 
     </div>
     <p className="text-xs text-slate-500">Tạo câu hỏi “Đăng ký cấp CME” với lựa chọn Có/Không trong form nếu chưa có. Đây là thông tin đăng ký, không phải xác nhận đủ điều kiện cấp.</p>
     <button type="button" onClick={onApply} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white">Áp dụng ghép cột / đọc lại file</button>
-    <p className="text-xs text-amber-700">Đọc lại file sẽ thay thế các chỉnh sửa trong bảng xem trước.{dirty && " Cần áp dụng ghép cột trước khi import."}</p>
+    <p className="text-xs text-amber-700">Đọc lại file sẽ thay thế các chỉnh sửa trong bảng xem trước.{dirty && " Ghép cột chưa áp dụng. Nếu đã sửa bảng, bấm Import để dùng dữ liệu đang xem và giữ các sửa đổi."}</p>
   </fieldset>;
 }

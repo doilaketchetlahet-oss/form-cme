@@ -98,8 +98,75 @@ async function run(viewport) {
   } finally { await context.close(); }
 }
 
+async function runEditedPreview(viewport) {
+  const context = await browser.newContext({ viewport });
+  const records = [], errors = [];
+  let writes = 0;
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['Họ và tên', 'Email', 'Email', 'Tên báo cáo'],
+    ...Array.from({ length: 119 }, (_, index) => [`Khách ${index + 1}`, 'contact@example.test', 'speaker@example.test', `Bài ${index + 1}`]),
+    ['', '', '', 'Dòng thiếu tên'],
+  ]), 'Guests');
+  try {
+    await context.route('**/*', async (route) => {
+      const request = route.request(), url = new URL(request.url());
+      if (url.host !== host) return url.origin === new URL(base).origin ? route.continue() : route.abort();
+      let body = [];
+      if (url.pathname.endsWith('/surveys')) body = { id: surveyId, title: 'Edited preview test', checkin_pin: '', checkin_theme: null };
+      if (url.pathname.endsWith('/survey_questions')) body = questions;
+      if (url.pathname.endsWith('/survey_responses')) {
+        if (request.method() === 'POST') { writes++; records.push(...request.postDataJSON().map((r) => ({ ...r, id: randomUUID() }))); }
+        body = records;
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    const page = await context.newPage();
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${base}/attendees/${surveyId}/import`);
+    await page.getByRole('heading', { name: 'Edited preview test' }).waitFor();
+    await page.locator('input[type=file]').setInputFiles({ name: '119-guests.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) });
+    const importButton = page.getByRole('button', { name: 'Import 119 người', exact: true });
+    await importButton.waitFor();
+    assert.equal(await importButton.isEnabled(), true);
+    assert.equal(await page.locator('#import-mapping-warning').isVisible(), true);
+    // Row-level readiness can coexist with unresolved optional duplicate columns.
+    // Cancelling the review must never write or rebuild the preview.
+    await importButton.click();
+    const dialog = page.getByRole('alertdialog');
+    await dialog.waitFor();
+    await dialog.getByRole('button', { name: 'Kiểm tra ghép cột' }).click();
+    assert.equal(writes, 0);
+    const firstRow = page.locator('tbody tr').first();
+    await firstRow.getByRole('button').first().click();
+    await firstRow.locator('input').nth(0).fill('edited@example.test');
+    await firstRow.locator('input').nth(2).fill('Tên đã sửa thủ công');
+    await firstRow.getByRole('button', { name: 'Xong', exact: true }).click();
+
+    // Changing a mapping must not force an XLSX reread that loses manual edits.
+    await page.getByLabel('Ghép trường Họ và tên', { exact: true }).selectOption('1');
+    assert.equal(await importButton.isEnabled(), true);
+    await importButton.click();
+    await dialog.waitFor();
+    assert.match(await dialog.textContent(), /ghép cột chưa áp dụng sẽ không được dùng/);
+    await dialog.getByRole('button', { name: 'Import 119 người từ bảng', exact: true }).click();
+    await page.getByText('Đã import 119 người vào danh sách.', { exact: true }).waitFor();
+    assert.equal(writes, 1); assert.equal(records.length, 119);
+    assert.deepEqual([records[0].answers[name], records[0].email], ['Tên đã sửa thủ công', 'edited@example.test']);
+    assert.equal(records[1].answers[name], 'Khách 2');
+    assert.equal(records[1].email, undefined); // No guess from either unresolved email column.
+    assert.ok(records.every((record) => record.answers[report] !== 'Dòng thiếu tên'));
+    assert.equal(await page.getByRole('button', { name: 'Import 0 người', exact: true }).isEnabled(), false);
+    assert.equal(await page.locator('#import-mapping-warning').count(), 0);
+    assert.deepEqual(errors, []);
+    console.log(`${viewport.width}px: 119 valid rows remain importable with mapping warnings, cancel writes nothing, pending mappings preserve manual edits, invalid rows stay out.`);
+  } finally { await context.close(); }
+}
+
 (async () => {
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {}) });
   await run({ width: 1366, height: 900 });
   await run({ width: 390, height: 844 });
+  await runEditedPreview({ width: 1366, height: 900 });
+  await runEditedPreview({ width: 390, height: 844 });
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { await browser?.close(); });

@@ -24,6 +24,7 @@ import {
 import { normalizeSessionConfig, type CheckinSessionConfig } from "@/lib/checkin-sessions";
 import { formatAttendanceAnswer } from "@/lib/attendance-display";
 import { AttendanceImportMapping } from "@/components/admin/AttendanceImportMapping";
+import { useConfirm } from "@/lib/ui/confirm";
 
 type QuestionInfo = {
   id: string;
@@ -44,7 +45,9 @@ export default function AttendeeImportPage({ params }: { params: Promise<{ surve
 }
 
 function AttendeeImportInner({ surveyId }: { surveyId: string }) {
+  const confirm = useConfirm();
   const inputRef = useRef<HTMLInputElement>(null);
+  const mappingRef = useRef<HTMLDivElement>(null);
   const [surveyTitle, setSurveyTitle] = useState("");
   const [questions, setQuestions] = useState<QuestionInfo[]>([]);
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
@@ -121,6 +124,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       invalid: rows.filter((row) => row.status === "invalid").length,
     };
   }, [preview]);
+  const hasMappingWarnings = mappingDirty || !!preview?.mappingIssues?.length;
 
   const visibleRows = useMemo(() => {
     const rows = preview?.rows ?? [];
@@ -215,10 +219,22 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   };
 
   const doImport = async () => {
-    if (!preview || stats.ready === 0 || importing || parsing || mappingDirty || preview.mappingIssues?.length) return;
+    if (!preview || stats.ready === 0 || importing || parsing) return;
     setImporting(true);
-    setResult(null);
     try {
+      if (hasMappingWarnings) {
+        const accepted = await confirm({
+          title: "Import dữ liệu trong bảng xem trước?",
+          description: `${stats.ready} dòng hợp lệ sẽ được import theo nội dung hiện có trong bảng, bao gồm các chỉnh sửa thủ công. ${mappingDirty ? "Các thay đổi ghép cột chưa áp dụng sẽ không được dùng. " : ""}${preview.mappingIssues?.length ? "Cột trùng tên chưa được chọn sẽ không tự lấy dữ liệu; hãy kiểm tra các ô trống trong bảng. " : ""}Các dòng lỗi hoặc trùng email sẽ được bỏ qua.`,
+          confirmText: `Import ${stats.ready} người từ bảng`,
+          cancelText: "Kiểm tra ghép cột",
+        });
+        if (!accepted) {
+          mappingRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+      }
+      setResult(null);
       const { data: latest, error: readError } = await supabase.from("survey_responses").select("email, answers").eq("survey_id", surveyId);
       if (readError) { setResult("Không kiểm tra được danh sách hiện tại. Vui lòng thử lại."); return; }
       const latestEmails = new Set((latest ?? []).map((response) => findResponseEmail(response)?.toLowerCase()).filter((email): email is string => !!email));
@@ -233,7 +249,8 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       }
       setResponses((prev) => [...((data ?? []) as SurveyResponse[]), ...prev]);
       setResult(`Đã import ${data?.length ?? payload.length} người vào danh sách.`);
-      setPreview({ ...preview, rows: validated.filter((row) => row.status !== "ready") });
+      setPreview({ ...preview, rows: validated.filter((row) => row.status !== "ready"), mappingIssues: [] });
+      setMappingDirty(false);
       setSourceRows([]);
       setSheets([]);
     } finally {
@@ -273,7 +290,8 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               </button>
               <button
                 onClick={doImport}
-                disabled={!preview || stats.ready === 0 || importing || parsing || mappingDirty || !!preview.mappingIssues?.length}
+                disabled={!preview || stats.ready === 0 || importing || parsing}
+                aria-describedby={hasMappingWarnings ? "import-mapping-warning" : undefined}
                 className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
@@ -281,6 +299,10 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               </button>
             </div>
           </div>
+          {hasMappingWarnings && stats.ready > 0 && <p id="import-mapping-warning" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Có {stats.ready} dòng hợp lệ trong bảng xem trước. {mappingDirty ? "Ghép cột đã thay đổi nhưng chưa áp dụng. " : "Còn cột trùng tên chưa chọn. "}
+            Bấm Import để dùng dữ liệu hiện có trong bảng và giữ các chỉnh sửa thủ công, hoặc áp dụng ghép cột để đọc lại file.
+          </p>}
           <input
             ref={inputRef}
             type="file"
@@ -321,7 +343,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           <StatCard label="Cần sửa" value={stats.invalid} tone="red" />
         </div>
 
-        {sourceRows.length > 0 && <AttendanceImportMapping headers={sourceRows[0]} config={sessionConfig} questions={questions}
+        {sourceRows.length > 0 && <div ref={mappingRef}><AttendanceImportMapping headers={sourceRows[0]} config={sessionConfig} questions={questions}
           questionColumns={questionColumns} emailColumn={emailColumn}
           onQuestionColumn={(id, value) => { setQuestionColumns((current) => { const next = { ...current }; if (value === undefined) delete next[id]; else next[id] = value; return next; }); setMappingDirty(true); }}
           onEmailColumn={(value) => {
@@ -343,7 +365,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               attendanceColumns: separateColumns ? attendanceColumns : undefined, cmeQuestionId, cmeColumn, questionColumns, emailColumn, sourceRowOffset: headerRow - 1 }));
             setMappingDirty(false);
             setResult("Đã đọc lại file theo cách ghép cột đã chọn. Kiểm tra các dòng trước khi import.");
-          }} />}
+          }} /></div>}
 
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4">
@@ -372,7 +394,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               )}
             </div>
             {result && <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">{result}</p>}
-            {!!preview?.mappingIssues?.length && <div role="alert" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800"><p className="font-semibold">Cần chọn cột trước khi import:</p><ul className="list-disc pl-5">{preview.mappingIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+            {!!preview?.mappingIssues?.length && <div role="alert" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800"><p className="font-semibold">Cột chưa được tự động ghép:</p><ul className="list-disc pl-5">{preview.mappingIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul><p className="mt-2">Bạn có thể chọn lại cột và áp dụng, hoặc sửa trực tiếp trong bảng rồi Import dữ liệu đang xem. Đọc lại file sẽ thay thế các chỉnh sửa trong bảng.</p></div>}
             {!!preview?.unmappedHeaders?.length && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Cột chưa ghép (sẽ không lưu theo tên cột): {preview.unmappedHeaders.join(", ")}. Ghép các cột Gala/CME phía trên hoặc tạo câu hỏi tương ứng trong form.</p>}
           </div>
 
