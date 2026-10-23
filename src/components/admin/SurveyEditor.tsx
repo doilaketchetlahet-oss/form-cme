@@ -869,25 +869,25 @@ className="admin-field w-full rounded-xl px-4 py-2.5 text-sm admin-placeholder f
           <SortableContext items={questions.map((q) => q._key)} strategy={verticalListSortingStrategy}>
             <div className="flex flex-col gap-2">
               {questions.map((q) => (
-                <div key={q._key} ref={(element) => {
-                  if (element && questionToFocusRef.current === q._key) {
-                    questionToFocusRef.current = null;
-                    element.scrollIntoView({ block: "center", behavior: "smooth" });
-                    element.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
-                  }
-                }}>
-                  <DraftItem
-                    question={q}
-                    allQuestions={questions}
-                    expanded={expandedKey === q._key}
-                    onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
-                    onUpdate={(patch) => updateQuestion(q._key, patch)}
-                    onRemove={() => removeQuestion(q._key)}
-                    onDuplicate={() => duplicateQuestion(q._key)}
-                    availableQuestionTypes={availableQuestionTypes}
-                    allowHallSelector={isCheckinEnabled}
-                  />
-                </div>
+                <DraftItem
+                  key={q._key}
+                  elementRef={(element) => {
+                    if (element && questionToFocusRef.current === q._key) {
+                      questionToFocusRef.current = null;
+                      element.scrollIntoView({ block: "center", behavior: "smooth" });
+                      element.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+                    }
+                  }}
+                  question={q}
+                  allQuestions={questions}
+                  expanded={expandedKey === q._key}
+                  onToggleExpand={() => setExpandedKey(expandedKey === q._key ? null : q._key)}
+                  onUpdate={(patch) => updateQuestion(q._key, patch)}
+                  onRemove={() => removeQuestion(q._key)}
+                  onDuplicate={() => duplicateQuestion(q._key)}
+                  availableQuestionTypes={availableQuestionTypes}
+                  allowHallSelector={isCheckinEnabled}
+                />
               ))}
             </div>
           </SortableContext>
@@ -1208,6 +1208,7 @@ function DraftItem({
   onDuplicate,
   availableQuestionTypes,
   allowHallSelector,
+  elementRef,
 }: {
   question: DraftQuestion;
   allQuestions: DraftQuestion[];
@@ -1218,15 +1219,18 @@ function DraftItem({
   onDuplicate: () => void;
   availableQuestionTypes: typeof QUESTION_TYPES;
   allowHallSelector: boolean;
+  elementRef: (element: HTMLDivElement | null) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: q._key });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: q._key });
   const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 30 : undefined };
 
   return (
     <div
-      ref={setNodeRef}
+      // Keep sortable nodes directly inside the list: restrictToParentElement
+      // must measure the whole list, not a wrapper the size of one question.
+      ref={(element) => { setNodeRef(element); elementRef(element); }}
       style={style}
-      className={`rounded-xl border bg-white overflow-hidden ${isDragging ? "border-sky-300 shadow-lg" : "border-sky-100"}`}
+      className={`relative rounded-xl border bg-white overflow-hidden ${isDragging ? "border-sky-300 shadow-lg" : "border-sky-100"}`}
     >
       {/* Header */}
       <div
@@ -1236,6 +1240,7 @@ function DraftItem({
         {/* Drag handle */}
         <button
           type="button"
+          ref={setActivatorNodeRef}
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}

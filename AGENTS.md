@@ -150,6 +150,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Regression: `node --test scripts/test-checkin-email-name.cjs` uses the real
   email renderer with mocked providers; it never sends a real message.
 
+- Editor sortable question cards must remain direct children of the question
+  list: `restrictToParentElement` otherwise locks dragging inside a card wrapper.
+  CME scroll/focus uses the same sortable root. Regression: start on port 3109,
+  run `node scripts/test-editor-reorder-ui.cjs` with `CHECKIN_TEST_DEPS` pointing
+  to Playwright (optional `PLAYWRIGHT_CHANNEL=msedge`). Mouse/touch, keyboard,
+  CME focus and save/reload use mocked APIs and preserve question IDs.
+
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
