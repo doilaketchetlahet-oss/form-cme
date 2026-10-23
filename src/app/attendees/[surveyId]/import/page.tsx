@@ -25,7 +25,6 @@ import { normalizeSessionConfig, type CheckinSessionConfig } from "@/lib/checkin
 import { formatAttendanceAnswer } from "@/lib/attendance-display";
 import { AttendanceImportMapping } from "@/components/admin/AttendanceImportMapping";
 import { useConfirm } from "@/lib/ui/confirm";
-import { recoverCopiedAttendeePreview } from "@/lib/attendee-preview-recovery";
 
 type QuestionInfo = {
   id: string;
@@ -73,8 +72,6 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   const [headerRow, setHeaderRow] = useState(1);
   const [questionColumns, setQuestionColumns] = useState<Record<string, number | null>>({});
   const [emailColumn, setEmailColumn] = useState<number | null | undefined>(undefined);
-  const [recoveredRows, setRecoveredRows] = useState<CsvImportRow[] | null>(null);
-  const [recoveryError, setRecoveryError] = useState("");
 
   const questionOrder = useMemo(() => questions.map((q) => q.id), [questions]);
   const questionLabels = useMemo(() => Object.fromEntries(questions.map((q) => [q.id, q.text])), [questions]);
@@ -320,25 +317,6 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       </div>
 
       <main className="max-w-6xl mx-auto px-4 py-5">
-        <details className="mb-5 rounded-2xl border border-sky-200 bg-white p-4">
-          <summary className="cursor-pointer font-semibold text-sky-800">Khôi phục bảng đã sửa từ tab cũ</summary>
-          <p className="mt-3 text-sm leading-6 text-slate-600">Giữ tab cũ và mở cùng trang import ở một tab mới. Trong tab cũ, xóa ô tìm kiếm, bấm Xong nếu đang sửa một dòng, rồi bấm ra ngoài ô nhập và nhấn Ctrl+A, Ctrl+C. Quay lại tab mới và dán vào ô bên dưới. Giữ tab cũ đến khi kiểm tra khôi phục đủ dữ liệu.</p>
-          <textarea aria-label="Dán bảng từ tab cũ" placeholder="Bấm vào đây rồi nhấn Ctrl+V để khôi phục bảng đã sao chép" onChange={() => {}} disabled={parsing || importing} value={recoveredRows ? `Đã đọc ${recoveredRows.length} dòng từ bảng sao chép.` : ""}
-            onPaste={(event) => {
-              event.preventDefault();
-              setRecoveryError(""); setRecoveredRows(null);
-              try {
-                setRecoveredRows(recoverCopiedAttendeePreview(event.clipboardData.getData("text/html"), surveyId, questions));
-              } catch (error) { setRecoveryError(error instanceof Error ? error.message : "Không đọc được bảng đã sao chép."); }
-            }} className="mt-3 h-24 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-sky-500" />
-          {recoveryError && <p role="alert" className="mt-2 text-sm text-red-700">{recoveryError}</p>}
-          {recoveredRows && <button type="button" disabled={parsing || importing} onClick={() => {
-            setPreview({ headers: questions.map((question) => question.text), rows: validateImportRows(recoveredRows, questionMeta, questionLabels, existingEmails, sessionConfig), totalRows: recoveredRows.length });
-            setSheets([]); setSourceRows([]); setMappingDirty(false); setEditingId(null); setQuery("");
-            setFileName("Bảng đã khôi phục từ tab cũ"); setResult(`Đã khôi phục ${recoveredRows.length} dòng. Kiểm tra dữ liệu và bấm Import để lưu vào danh sách.`);
-            setRecoveredRows(null);
-          }} className="mt-3 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Khôi phục {recoveredRows.length} dòng vào bảng</button>}
-        </details>
         {sheets.length > 0 && <fieldset disabled={parsing || importing} className="mb-5 rounded-2xl border border-slate-200 bg-white p-4">
           <legend className="px-2 font-bold text-slate-900">Nguồn dữ liệu</legend>
           <div className="grid gap-3 sm:grid-cols-2">

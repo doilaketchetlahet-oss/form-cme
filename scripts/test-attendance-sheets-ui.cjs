@@ -148,35 +148,6 @@ async function runEditedPreview(viewport) {
     // Changing a mapping must not force an XLSX reread that loses manual edits.
     await page.getByLabel('Ghép trường Họ và tên', { exact: true }).selectOption('1');
     assert.equal(await importButton.isEnabled(), true);
-    // Simulate the HTML format produced when copying the old page. The native
-    // clipboard is not touched, so a user's real recovery copy stays intact.
-    const copiedHtml = await page.locator('html').evaluate((node) => node.outerHTML);
-    const restored = await context.newPage();
-    await restored.goto(`${base}/attendees/${surveyId}/import`);
-    await restored.getByRole('heading', { name: 'Edited preview test' }).waitFor();
-    await restored.getByText('Khôi phục bảng đã sửa từ tab cũ', { exact: true }).click();
-    const paste = (html) => restored.getByLabel('Dán bảng từ tab cũ', { exact: true }).evaluate((target, html) => {
-      const data = new DataTransfer(); data.setData('text/html', html);
-      target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
-    }, html);
-    await paste(copiedHtml.replaceAll(`/attendees/${surveyId}`, '/attendees/wrong-form'));
-    assert.match(await restored.locator('main').getByRole('alert').textContent(), /đúng form/);
-    const incompleteHtml = await page.locator('html').evaluate((node) => {
-      const copy = node.cloneNode(true); copy.querySelector('tbody tr').remove(); return copy.outerHTML;
-    });
-    await paste(incompleteHtml);
-    assert.match(await restored.locator('main').getByRole('alert').textContent(), /chưa đủ dòng/);
-    await paste(copiedHtml);
-    await restored.getByRole('button', { name: 'Khôi phục 120 dòng vào bảng', exact: true }).click();
-    assert.equal(await restored.getByRole('button', { name: 'Import 119 người', exact: true }).isEnabled(), true);
-    const recovered = restored.locator('tbody tr').first();
-    assert.equal(await recovered.getByText('Tên đã sửa thủ công', { exact: true }).count(), 1);
-    assert.equal(await recovered.getByText('edited@example.test', { exact: true }).count(), 1);
-    assert.equal(await recovered.getByText('Không', { exact: true }).count(), 1);
-    assert.equal(await restored.locator('tbody tr').nth(1).getByText('Có', { exact: true }).count(), 1);
-    assert.equal(await restored.locator('tbody tr').count(), 120);
-    assert.equal(writes, 0);
-    await restored.close();
     await importButton.click();
     await dialog.waitFor();
     assert.match(await dialog.textContent(), /ghép cột chưa áp dụng sẽ không được dùng/);
