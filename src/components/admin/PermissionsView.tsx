@@ -26,6 +26,7 @@ type AdminMember = {
   email: string;
   role: AdminRole;
   active: boolean;
+  prize_draw_enabled?: boolean;
   created_at: string | null;
 };
 
@@ -79,7 +80,7 @@ export function PermissionsView() {
     setLoading(true);
     const { data, error } = await supabase
       .from("admin_members")
-      .select("id, email, role, active, created_at")
+      .select("*")
       .eq("active", true)
       .order("created_at", { ascending: true });
     setLoading(false);
@@ -238,6 +239,21 @@ export function PermissionsView() {
     await loadMembers();
   };
 
+  const handlePrizeDrawChange = async (member: AdminMember, enabled: boolean) => {
+    if (!canManage || saving) return;
+    setSaving(true);
+    const { error } = await supabase.from("admin_members")
+      .update({ prize_draw_enabled: enabled }).eq("id", member.id).select("id").single();
+    setSaving(false);
+    if (error) {
+      showMessage({ type: "error", text: error.message });
+      return;
+    }
+    showMessage({ type: "success", text: enabled ? "Đã cấp quyền Vòng quay nhận quà." : "Đã tắt quyền Vòng quay nhận quà." });
+    await loadMembers();
+    if (member.email.toLowerCase() === access.email) access.refreshAccess();
+  };
+
   const handleRemoveMember = async (member: AdminMember) => {
     if (!canManage) return;
 
@@ -293,7 +309,7 @@ export function PermissionsView() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-base font-semibold text-slate-900">Thành viên quản trị</h2>
-                    <p className="text-xs text-slate-500 mt-1">Danh sách email được phép vào khu vực admin.</p>
+                    <p className="text-xs text-slate-500 mt-1">Bật “Vòng quay nhận quà” cho từng tài khoản được phép dùng tool, kể cả owner. Chỉ owner được thay đổi quyền này.</p>
                   </div>
                   <div className="relative w-full sm:w-72">
                     <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -335,6 +351,8 @@ export function PermissionsView() {
                       isCurrentUser={member.email.toLowerCase() === access.email}
                       onRoleChange={handleRoleChange}
                       onRemove={handleRemoveMember}
+                      saving={saving}
+                      onPrizeDrawChange={handlePrizeDrawChange}
                     />
                   ))}
                 </div>
@@ -600,6 +618,8 @@ function MemberRow({
   isCurrentUser,
   onRoleChange,
   onRemove,
+  saving,
+  onPrizeDrawChange,
 }: {
   member: AdminMember;
   index: number;
@@ -607,6 +627,8 @@ function MemberRow({
   isCurrentUser: boolean;
   onRoleChange: (member: AdminMember, role: AdminRole) => void;
   onRemove: (member: AdminMember) => void;
+  saving: boolean;
+  onPrizeDrawChange: (member: AdminMember, enabled: boolean) => void;
 }) {
   const createdAt = member.created_at ? new Date(member.created_at).toLocaleDateString("vi-VN") : "-";
 
@@ -645,6 +667,13 @@ function MemberRow({
             {getAdminRoleLabel(member.role)}
           </span>
         )}
+        <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700">
+          <input type="checkbox" className="mt-1 accent-sky-600"
+            aria-label={"Vòng quay nhận quà: " + member.email}
+            checked={member.prize_draw_enabled === true} disabled={!canManage || saving}
+            onChange={event => onPrizeDrawChange(member, event.target.checked)} />
+          Vòng quay nhận quà
+        </label>
       </div>
 
       <div className="text-sm text-slate-500">{createdAt}</div>

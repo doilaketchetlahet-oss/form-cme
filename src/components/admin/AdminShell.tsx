@@ -165,6 +165,7 @@ function SidebarContent({
   onNavigate?: () => void;
   onOpenCommand: () => void;
 }) {
+  const access = useAdminAccess();
   return (
     <>
       <Link href="/" className="flex items-center gap-2 px-6 py-6 border-b border-sky-100">
@@ -184,7 +185,7 @@ function SidebarContent({
       </button>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter(item => item.href !== "/admin/tools/prize-draw" || access.canAccessPrizeDraw).map((item) => {
           const active = isActive(item.href, item.exact);
           const Icon = item.icon;
           return (

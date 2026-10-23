@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 function fail(error: string, status = 400) { return NextResponse.json({ ok: false, error }, { status }); }
 
 export async function GET(request: Request) {
-  const auth = await authorizeAdminApi(request);
+  const auth = await authorizeAdminApi(request, false, "prize-draw");
   if ("error" in auth) return fail(auth.error, auth.status);
   const id = new URL(request.url).searchParams.get("id");
   const campaigns = await auth.service.from("prize_campaigns").select("*").order("created_at", { ascending: false });
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorizeAdminApi(request, true);
+  const auth = await authorizeAdminApi(request, true, "prize-draw");
   if ("error" in auth) return fail(auth.error, auth.status);
   const raw = await request.text();
   if (raw.length > 32000) return fail("Cấu hình quá dài.", 413);

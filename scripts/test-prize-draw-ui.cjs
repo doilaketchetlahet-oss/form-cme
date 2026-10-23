@@ -23,7 +23,7 @@ async function run(viewport) {
   let campaign={id,survey_id:sid,phone_question_id:questions[1].id,name:'DEMO · Merap · Vòng quay nhận quà',status:'active',is_demo:true,starts_at:'2026-11-12T00:00:00+07:00',ends_at:'2026-11-25T00:00:00+07:00',accent_color:'#0284c7',banner_url:'',instructions:'Vui lòng đưa mã nhận quà cho nhân viên tại booth.',track_redemption:true,revision:1};
   let items=['Bình nước','Túi vải','Ô cầm tay','Bộ quà đặc biệt'].map((name,i)=>({id:randomUUID(),name,color:['#0284c7','#7c3aed','#db2777','#d97706'][i],total:[120,90,60,30][i],remaining:[120,90,60,30][i],position:i}));
   const survey={id:sid,form_type:'feedback',title:'Đăng ký nhận quà Merap',prize_campaign_id:id,thank_you_message:'Cảm ơn bạn! Mời bạn quay nhận quà.',accent_color:'#0284c7',redirect_url:'https://must-not-redirect.invalid',redirect_delay:1};
-  let entry=null,records=[],spins=0,registrations=0,dropSpin=false,failSnapshot=false,role='owner',creates=0;
+  let entry=null,records=[],spins=0,registrations=0,dropSpin=false,failSnapshot=false,role='owner',creates=0,toolAllowed=true,adminCalls=0,permissionWrites=0;
   const context=await browser.newContext({viewport,reducedMotion:'reduce',hasTouch:viewport.width<600});
   const errors=[];const blockedWrites=[];
   try {
@@ -31,10 +31,20 @@ async function run(viewport) {
     await context.route('**/*',async route=>{
       const req=route.request(),url=new URL(req.url());let data;
       if(url.host===host) {
+        if(url.pathname.endsWith('/admin_members')) {
+          if(req.method()==='PATCH') {
+            assert.equal(role,'owner');toolAllowed=req.postDataJSON().prize_draw_enabled;permissionWrites++;
+            data={id:user.id};
+          } else {
+            assert.equal(req.method(),'GET');
+            const member={id:user.id,email:user.email,role,active:true,prize_draw_enabled:toolAllowed,created_at:new Date().toISOString()};
+            data=url.searchParams.has('email')?member:[member];
+          }
+          return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
+        }
         if(req.method()!=='GET'){blockedWrites.push(url.pathname);return route.abort();}
         if(url.pathname.endsWith('/surveys'))data=survey;
         else if(url.pathname.endsWith('/survey_questions'))data=questions;
-        else if(url.pathname.endsWith('/admin_members'))data={role,active:true};
         else if(url.pathname.endsWith('/user'))data=user;
         else data=[];
       } else if(url.pathname===`/api/prize-draw/${id}`) {
@@ -55,6 +65,7 @@ async function run(viewport) {
           } else throw new Error('Unexpected public write');
         }
       } else if(url.pathname==='/api/admin/prize-draw') {
+        adminCalls++;assert.equal(toolAllowed,true);
         if(req.method()==='POST') {
           assert.notEqual(role,'viewer');const body=req.postDataJSON();
           if(body.action==='create'){creates++;data={ok:true,id};}
@@ -62,6 +73,10 @@ async function run(viewport) {
           else if(body.action==='redeem'){entry.redeemed_at=new Date().toISOString();records[0].redeemed_at=entry.redeemed_at;data={ok:true,id};}
           else throw new Error('Unexpected admin write');
         } else data=url.searchParams.has('id')?{ok:true,campaigns:[campaign],campaign,items,entries:records,questions,role}:{ok:true,campaigns:[campaign],forms:[],role};
+      } else if(url.pathname==='/api/admin/permissions/users') {
+        data={ok:true,users:[]};
+      } else if(url.pathname==='/api/admin/events' && req.method()==='GET') {
+        data={ok:true,events:[]};
       } else if(url.pathname==='/api/qr') {
         return route.fulfill({status:200,contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="white"/></svg>'});
       } else if(url.pathname.startsWith('/api/')) {
@@ -108,6 +123,26 @@ async function run(viewport) {
     await page.getByRole('button',{name:'Tạo demo mẫu',exact:true}).click();await page.getByText(/Đã tạo chương trình nháp/).waitFor();assert.equal(creates,1);
     role='viewer';await page.reload();await page.getByLabel('Chọn chương trình').selectOption(id);await page.getByLabel('Tên chương trình',{exact:true}).waitFor();
     assert.equal(await page.getByLabel('Tên chương trình',{exact:true}).isDisabled(),true);
+    // Denied for every role without the explicit grant, with no tool API fetch.
+    toolAllowed=false;const callsBefore=adminCalls;
+    for(const deniedRole of ['owner','admin','viewer']) {
+      role=deniedRole;await page.reload();
+      await page.getByRole('heading',{name:'Chưa được cấp quyền Vòng quay nhận quà'}).waitFor();
+      assert.equal(await page.locator('a[href="/admin/tools/prize-draw"]').count(),0);
+      await page.keyboard.press('Control+k');await page.getByPlaceholder('Tìm trang, form, sự kiện…').fill('Vòng quay nhận quà');
+      await page.getByText('Không tìm thấy.',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+    }
+    assert.equal(adminCalls,callsBefore);
+    role='owner';await page.goto(`${base}/admin/permissions`);
+    const permission=page.getByRole('checkbox',{name:`Vòng quay nhận quà: ${user.email}`});
+    await permission.waitFor();assert.equal(await permission.isChecked(),false);
+    await permission.click();await page.locator('a[href="/admin/tools/prize-draw"]').first().waitFor({state:'attached'});
+    assert.equal(toolAllowed,true);assert.equal(permissionWrites,1);
+    await permission.click();
+    await page.waitForFunction(()=>!document.querySelector('a[href="/admin/tools/prize-draw"]'));
+    assert.equal(toolAllowed,false);assert.equal(permissionWrites,2);
+    role='admin';await page.reload();await permission.waitFor();assert.equal(await permission.isDisabled(),true);
     // Sold-out, time window and missing registration states.
     entry=null;items=items.map(p=>({...p,remaining:0}));
     await page.goto(`${base}/prize-draw/${id}`);await page.getByText('Quà đã hết. Cảm ơn bạn đã tham gia!',{exact:true}).waitFor();
@@ -115,7 +150,7 @@ async function run(viewport) {
     await page.reload();await page.getByText('Chương trình chưa đến giờ bắt đầu.',{exact:true}).waitFor();
     failSnapshot=true;await page.reload();await page.getByRole('button',{name:'Tải lại',exact:true}).waitFor();failSnapshot=false;await page.getByRole('button',{name:'Tải lại',exact:true}).click();await page.getByRole('link',{name:'Điền form để nhận lượt quay →'}).waitFor();
     assert.deepEqual(errors,[]);assert.deepEqual(blockedWrites,[]);
-    console.log(`PASS ${viewport.width}px: registration, reload, lost response recovery, stock config, redemption, CSV, viewer, sold-out, schedule, error retry.`);
+    console.log(`PASS ${viewport.width}px: registration, reload, lost response recovery, stock config, redemption, CSV, viewer, permission grant/revoke, denied menu/page/search, sold-out, schedule, error retry.`);
   } finally {await context.close();}
 }
 (async()=>{

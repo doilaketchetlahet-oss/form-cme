@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { motion } from "framer-motion";
 import { Lock, LogOut } from "lucide-react";
@@ -15,14 +15,17 @@ interface AdminAccess {
   canManageForms: boolean;
   isOwner: boolean;
   setupRequired: boolean;
+  canAccessPrizeDraw: boolean;
 }
 
-const AdminAccessContext = createContext<AdminAccess | null>(null);
+const AdminAccessContext = createContext<(AdminAccess & { refreshAccess: () => void }) | null>(null);
 
 export function AdminAccessProvider({ user, children }: { user: User; children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [access, setAccess] = useState<AdminAccess | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [revision, setRevision] = useState(0);
+  const refreshAccess = useCallback(() => setRevision(value => value + 1), []);
   const email = user.email?.trim().toLowerCase() ?? "";
 
   useEffect(() => {
@@ -44,7 +47,7 @@ export function AdminAccessProvider({ user, children }: { user: User; children: 
 
       const { data, error } = await supabase
         .from("admin_members")
-        .select("role, active")
+        .select("*")
         .ilike("email", email)
         .eq("active", true)
         .maybeSingle();
@@ -60,6 +63,7 @@ export function AdminAccessProvider({ user, children }: { user: User; children: 
               canManageForms: true,
               isOwner: true,
               setupRequired: true,
+              canAccessPrizeDraw: false,
             });
             setLoading(false);
             return;
@@ -80,6 +84,7 @@ export function AdminAccessProvider({ user, children }: { user: User; children: 
               canManageForms: true,
               isOwner: true,
               setupRequired: true,
+              canAccessPrizeDraw: false,
             });
             setLoading(false);
             return;
@@ -98,6 +103,7 @@ export function AdminAccessProvider({ user, children }: { user: User; children: 
           canManageForms: role === "owner" || role === "admin",
           isOwner: role === "owner",
           setupRequired: false,
+          canAccessPrizeDraw: data.prize_draw_enabled === true,
         });
         setLoading(false);
     };
@@ -105,9 +111,9 @@ export function AdminAccessProvider({ user, children }: { user: User; children: 
     loadAccess();
 
     return () => { active = false; };
-  }, [email]);
+  }, [email, revision]);
 
-  const value = useMemo(() => access, [access]);
+  const value = useMemo(() => access ? { ...access, refreshAccess } : null, [access, refreshAccess]);
 
   if (loading) {
     return (

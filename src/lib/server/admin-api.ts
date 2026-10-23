@@ -20,6 +20,7 @@ export type AdminApiAuthError = {
 export async function authorizeAdminApi(
   request: Request,
   writable = false,
+  requiredTool?: "prize-draw",
 ): Promise<AdminApiAuth | AdminApiAuthError> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -46,14 +47,17 @@ export async function authorizeAdminApi(
   });
   const { data: member, error: memberError } = await service
     .from("admin_members")
-    .select("role, active")
+    .select("*")
     .ilike("email", email)
     .eq("active", true)
     .maybeSingle();
 
   if (memberError) return { error: memberError.message, status: 500 };
   const role = member?.role as AdminApiRole | undefined;
-  if (!role) return { error: "Tài khoản chưa được cấp quyền quản trị.", status: 403 };
+  if (!role || !member?.active) return { error: "Tài khoản chưa được cấp quyền quản trị.", status: 403 };
+  if (requiredTool === "prize-draw" && member.prize_draw_enabled !== true) {
+    return { error: "Tài khoản chưa được cấp quyền Vòng quay nhận quà.", status: 403 };
+  }
   if (writable && role === "viewer") {
     return { error: "Tài khoản chỉ có quyền xem.", status: 403 };
   }

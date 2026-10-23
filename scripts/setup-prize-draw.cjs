@@ -22,6 +22,7 @@ const sample=load('src/lib/prize-draw.ts',{'./normalize':load('src/lib/normalize
   try {
     await db.connect();await db.query('begin');
     await db.query(readFileSync(path.join(__dirname,'../supabase/prize-draw.sql'),'utf8'));
+    await db.query(readFileSync(path.join(__dirname,'../supabase/prize-draw-permissions.sql'),'utf8'));
     const perms=await db.query("select has_table_privilege('anon','prize_entries','select') a,has_function_privilege('authenticated','prize_draw_spin(uuid,text)','execute') b");
     if(perms.rows[0].a || perms.rows[0].b) throw new Error('Permission verification failed.');
     let id;

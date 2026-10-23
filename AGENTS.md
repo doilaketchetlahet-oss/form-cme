@@ -298,6 +298,14 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 
 ### Registration prize wheel
 
+- Tool management requires explicit `admin_members.prize_draw_enabled = true`,
+  default false for every role including owners. Owners grant/revoke it per member
+  in `/admin/permissions`; viewers with a grant remain read-only. Sidebar, command
+  palette and the management page hide/deny the tool without a grant, and every
+  admin API request rechecks the grant. Public registration and spinning stay public.
+  Run `supabase/prize-draw-permissions.sql` on existing installations; setup script,
+  fresh schema and permissions bootstrap include it. Regression:
+  `node --test scripts/test-prize-permissions.cjs` (same `PRIZE_TEST_DEPS`).
 - `/admin/tools/prize-draw` manages configurable registration-linked prize campaigns;
   `/prize-draw/[id]` is the mobile wheel. Reuses `/s/[id]`, `ThankYouScreen`, QR,
   normalization and admin auth; `PrizeWheel` is shared with Booth Draw.

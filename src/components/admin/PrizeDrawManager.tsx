@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { QRCodeView } from "@/components/ui/QRCodeView";
 import { buildPublicUrl } from "@/lib/site-url";
@@ -28,6 +29,17 @@ async function api(id = "", body?: object) {
 }
 
 export function PrizeDrawManager() {
+  const access = useAdminAccess();
+  if (!access.canAccessPrizeDraw) {
+    return <div className="p-6 sm:p-10">
+      <h1 className="text-xl font-semibold text-slate-900">Chưa được cấp quyền Vòng quay nhận quà</h1>
+      <p className="mt-3 text-sm text-slate-600">Liên hệ chủ sở hữu để bật quyền Vòng quay nhận quà cho tài khoản của bạn trong trang Phân quyền.</p>
+    </div>;
+  }
+  return <PrizeDrawContent />;
+}
+
+function PrizeDrawContent() {
   const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<PrizeCampaign[]>([]);
   const [forms, setForms] = useState<{ id: string; title: string }[]>([]);

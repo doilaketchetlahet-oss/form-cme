@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
 import { Command } from "cmdk";
 import { Activity, ClipboardList, Dices, Gamepad2, HeartHandshake, LayoutDashboard, Layers, Mail, Send, ShieldCheck, Settings } from "lucide-react";
 import { listRegistrationForms, type RegistrationFormSummary } from "@/lib/forms";
@@ -24,6 +25,7 @@ const PAGES = [
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (value: boolean) => void }) {
   const router = useRouter();
+  const access = useAdminAccess();
   const [forms, setForms] = useState<RegistrationFormSummary[]>([]);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -65,7 +67,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           heading="Trang"
           className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-slate-400"
         >
-          {PAGES.map((page) => (
+          {PAGES.filter(page => page.href !== "/admin/tools/prize-draw" || access.canAccessPrizeDraw).map((page) => (
             <Command.Item
               key={page.href}
               value={`${page.label} ${page.href}`}
