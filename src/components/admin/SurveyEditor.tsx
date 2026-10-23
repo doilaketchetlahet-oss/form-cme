@@ -15,6 +15,7 @@ import { ThemeImageUpload } from "./ThemeImageUpload";
 import { QRCodeView } from "@/components/ui/QRCodeView";
 import { SessionSettings } from "./SessionSettings";
 import { validateSessionConfig } from "@/lib/checkin-sessions";
+import { DEFAULT_QR_BRANDING, normalizeQrBranding } from "@/lib/qr-style";
 
 interface Props {
   initial?: Survey & { questions?: SurveyQuestion[] };
@@ -198,6 +199,7 @@ export function SurveyEditor({ initial, onSave, onCancel, saving = false }: Prop
   const [theme, setTheme] = useState<CheckinTheme>((initial as { checkin_theme?: CheckinTheme } | undefined)?.checkin_theme ?? {});
   const patchTheme = (p: Partial<CheckinTheme>) => setTheme((t) => ({ ...t, ...p }));
   const patchQr = (p: NonNullable<CheckinTheme["qr"]>) => setTheme((t) => ({ ...t, qr: { ...(t.qr ?? {}), ...p } }));
+  const qrBranding = normalizeQrBranding(theme.qr);
   const initialPayment = (initial as { payment_config?: PaymentConfig | null } | undefined)?.payment_config ?? null;
   const [paymentEnabled, setPaymentEnabled] = useState(!!initialPayment?.enabled);
   const [paymentAmount, setPaymentAmount] = useState(initialPayment?.amount ? String(initialPayment.amount) : "");
@@ -792,38 +794,38 @@ className="admin-field w-full rounded-xl px-4 py-2.5 text-sm admin-placeholder f
               <div className="grid grid-cols-3 gap-3">
                 <label className="text-[11px] text-slate-400">
                   Màu chính
-                  <input type="color" value={theme.qr?.darkColor ?? "#0369a1"} onChange={(e) => patchQr({ darkColor: e.target.value })}
+                  <input type="color" value={qrBranding.darkColor} onChange={(e) => patchQr({ darkColor: e.target.value })}
                     className="mt-1 w-full h-10 rounded border border-white/10 bg-transparent cursor-pointer" />
                 </label>
                 <label className="text-[11px] text-slate-400">
                   Màu nhấn
-                  <input type="color" value={theme.qr?.accentColor ?? "#0891b2"} onChange={(e) => patchQr({ accentColor: e.target.value })}
+                  <input type="color" value={qrBranding.accentColor} onChange={(e) => patchQr({ accentColor: e.target.value })}
                     className="mt-1 w-full h-10 rounded border border-white/10 bg-transparent cursor-pointer" />
                 </label>
                 <label className="text-[11px] text-slate-400">
                   Nền QR
-                  <input type="color" value={theme.qr?.lightColor ?? "#f8fdff"} onChange={(e) => patchQr({ lightColor: e.target.value })}
+                  <input type="color" value={qrBranding.lightColor} onChange={(e) => patchQr({ lightColor: e.target.value })}
                     className="mt-1 w-full h-10 rounded border border-white/10 bg-transparent cursor-pointer" />
                 </label>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <label className="text-[11px] text-slate-400">
-                  Độ bo ô QR: {theme.qr?.moduleRadius ?? 32}%
-                  <input type="range" min={0} max={50} value={theme.qr?.moduleRadius ?? 32}
+                  Độ bo ô QR: {qrBranding.moduleRadius}%
+                  <input type="range" min={0} max={50} value={qrBranding.moduleRadius}
                     onChange={(e) => patchQr({ moduleRadius: parseInt(e.target.value, 10) })}
                     className="mt-2 w-full accent-cyan-500" />
                 </label>
                 <label className="text-[11px] text-slate-400">
-                  Kích thước logo: {theme.qr?.logoSize ?? 24}%
-                  <input type="range" min={12} max={28} value={theme.qr?.logoSize ?? 24}
+                  Kích thước logo: {qrBranding.logoSize}%
+                  <input type="range" min={12} max={28} value={qrBranding.logoSize}
                     onChange={(e) => patchQr({ logoSize: parseInt(e.target.value, 10) })}
                     className="mt-2 w-full accent-cyan-500" />
                 </label>
               </div>
 
               <label className="flex items-center gap-2 text-xs text-slate-300">
-                <input type="checkbox" checked={theme.qr?.logoEnabled !== false} onChange={(e) => patchQr({ logoEnabled: e.target.checked })}
+                <input type="checkbox" checked={qrBranding.logoEnabled} onChange={(e) => patchQr({ logoEnabled: e.target.checked })}
                   className="accent-cyan-500" />
                 Hiển thị logo ở giữa QR
               </label>
@@ -836,10 +838,11 @@ className="admin-field w-full rounded-xl px-4 py-2.5 text-sm admin-placeholder f
                 aspect="square"
               />
 
-              <button type="button" onClick={() => patchTheme({ qr: undefined })}
-                className="text-xs text-slate-500 hover:text-slate-300">
-                Khôi phục QR mặc định
+              <button type="button" onClick={() => patchTheme({ qr: { ...DEFAULT_QR_BRANDING } })}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600">
+                Khôi phục QR trắng đen
               </button>
+              <p className="text-[11px] text-slate-600">Mặc định: mã đen, nền trắng, ô vuông và không có logo. Nhấn Lưu thay đổi để áp dụng cho form.</p>
             </div>
 
             <div className="rounded-2xl border border-sky-100 bg-white p-3 flex flex-col items-center justify-center">

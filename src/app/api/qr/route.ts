@@ -12,10 +12,10 @@ export async function GET(request: NextRequest) {
     darkColor: request.nextUrl.searchParams.get("dark"),
     accentColor: request.nextUrl.searchParams.get("accent"),
     lightColor: request.nextUrl.searchParams.get("light"),
-    logoEnabled: request.nextUrl.searchParams.get("logo") !== "0",
+    logoEnabled: request.nextUrl.searchParams.get("logo") === "1",
     logoUrl: request.nextUrl.searchParams.get("logoUrl"),
     logoSize: Number(request.nextUrl.searchParams.get("logoSize") || "24"),
-    moduleRadius: Number(request.nextUrl.searchParams.get("radius") || "32"),
+    moduleRadius: Number(request.nextUrl.searchParams.get("radius") || "0"),
   });
 
   if (!value) {

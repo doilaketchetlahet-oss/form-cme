@@ -173,6 +173,17 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   to Playwright (optional `PLAYWRIGHT_CHANNEL=msedge`). Mouse/touch, keyboard,
   CME focus and save/reload use mocked APIs and preserve question IDs.
 
+- Editor Giao diện → Branding mã QR → “Khôi phục QR trắng đen” replaces the
+  full branding with explicit black modules/accent, white background, square
+  cells and no logo; save applies it to the form. Unconfigured QR uses the same
+  `DEFAULT_QR_BRANDING` for previews, check-in, badges and generated email PNGs.
+  The QR style version changes image URLs to invalidate old cached artwork.
+  A missing logo must not paint a blank box over modules. Previously delivered
+  inline email images need resending to change their appearance. Regression:
+  `node --test scripts/test-qr-defaults.cjs`; browser reset/save/reload and real
+  SVG/PNG decoding: `node scripts/test-qr-ui.cjs` (port 3109, CHECKIN_TEST_DEPS
+  for Playwright, optional PLAYWRIGHT_CHANNEL=msedge; mocked auth/data, no mail).
+
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon

@@ -18,18 +18,6 @@ export type QrRenderStyle = {
 /** Content-ID used when the QR is attached inline to an email. */
 export const QR_INLINE_CONTENT_ID = "qrcheckin";
 
-const DEFAULT_DARK = "#0369a1";
-const DEFAULT_ACCENT = "#0891b2";
-const DEFAULT_LIGHT = "#f8fdff";
-
-function cleanHex(value: string | null, fallback: string) {
-  return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
-}
-
-function clamp(value: number, min: number, max: number, fallback: number) {
-  return Number.isFinite(value) ? Math.max(min, Math.min(value, max)) : fallback;
-}
-
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -104,15 +92,12 @@ export function qrRenderStyle(input?: {
   logoSize?: number;
   moduleRadius?: number;
 } | null): QrRenderStyle {
-  return {
-    darkColor: cleanHex(input?.darkColor ?? null, DEFAULT_DARK),
-    accentColor: cleanHex(input?.accentColor ?? null, DEFAULT_ACCENT),
-    lightColor: cleanHex(input?.lightColor ?? null, DEFAULT_LIGHT),
-    logoEnabled: input?.logoEnabled !== false,
-    logoUrl: input?.logoUrl ?? null,
-    logoSize: clamp(Number(input?.logoSize ?? 24), 12, 28, 24),
-    moduleRadius: clamp(Number(input?.moduleRadius ?? 32), 0, 50, 32),
-  };
+  return normalizeQrBranding({
+    ...input,
+    darkColor: input?.darkColor ?? undefined,
+    accentColor: input?.accentColor ?? undefined,
+    lightColor: input?.lightColor ?? undefined,
+  });
 }
 
 export function qrStyleFromBranding(qr?: QRBranding | null): QrRenderStyle {
@@ -126,10 +111,11 @@ export async function renderQrSvg(value: string, size: number, style: QrRenderSt
   const margin = 4;
   const cell = size / (moduleCount + margin * 2);
   const moduleRadius = Math.max(0, cell * (style.moduleRadius / 100));
-  const finderRadius = cell * 1.1;
+  const square = style.moduleRadius === 0;
+  const finderRadius = square ? 0 : cell * 1.1;
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="QR code">`,
-    roundedRect(0, 0, size, size, 18, style.lightColor),
+    roundedRect(0, 0, size, size, square ? 0 : 18, style.lightColor),
   ];
 
   const finderStarts = [
@@ -147,7 +133,8 @@ export async function renderQrSvg(value: string, size: number, style: QrRenderSt
       const x = (col + margin) * cell;
       const y = (row + margin) * cell;
       const fill = (row + col) % 7 === 0 ? style.accentColor : style.darkColor;
-      parts.push(roundedRect(x + cell * 0.08, y + cell * 0.08, cell * 0.84, cell * 0.84, moduleRadius, fill));
+      const inset = square ? 0 : cell * 0.08;
+      parts.push(roundedRect(x + inset, y + inset, cell - inset * 2, cell - inset * 2, moduleRadius, fill));
     }
   }
 
@@ -161,13 +148,13 @@ export async function renderQrSvg(value: string, size: number, style: QrRenderSt
 
   if (style.logoEnabled) {
     const logoDataUri = await loadLogoDataUri(style.logoUrl);
-    const logoSize = size * (style.logoSize / 100);
-    const padding = size * 0.026;
-    const boxSize = logoSize + padding * 2;
-    const left = (size - boxSize) / 2;
-    const top = (size - boxSize) / 2;
-    parts.push(roundedRect(left, top, boxSize, boxSize, boxSize * 0.22, "#ffffff"));
     if (logoDataUri) {
+      const logoSize = size * (style.logoSize / 100);
+      const padding = size * 0.026;
+      const boxSize = logoSize + padding * 2;
+      const left = (size - boxSize) / 2;
+      const top = (size - boxSize) / 2;
+      parts.push(roundedRect(left, top, boxSize, boxSize, boxSize * 0.22, "#ffffff"));
       parts.push(`<image href="${escapeXml(logoDataUri)}" x="${(left + padding).toFixed(3)}" y="${(top + padding).toFixed(3)}" width="${logoSize.toFixed(3)}" height="${logoSize.toFixed(3)}" preserveAspectRatio="xMidYMid meet" />`);
     }
   }
