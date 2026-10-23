@@ -7,6 +7,7 @@ export const prizeHash = (token: string) => createHash("sha256").update(token).d
 export function publicPrizeEntry(row: PrizeResult | null): PrizeResult | null {
   if (!row) return null;
   return { id: row.id, prize_id: row.prize_id, prize_name: row.prize_name, prize_color: row.prize_color,
+    prize_image_url: row.prize_id ? row.prize_image_url : null,
     claim_code: row.prize_id ? row.claim_code : "", drawn_at: row.drawn_at, redeemed_at: row.redeemed_at };
 }
 export function prizeError(error: { message?: string; code?: string } | null, fallback = "Không thực hiện được thao tác. Vui lòng thử lại.") {
@@ -21,12 +22,13 @@ export function prizeError(error: { message?: string; code?: string } | null, fa
     PHONE_QUESTION_INVALID: "Câu hỏi SĐT của chương trình không còn hợp lệ. Vui lòng liên hệ ban tổ chức.",
     FORM_UNAVAILABLE: "Chọn form khảo sát trống, chưa gắn chương trình và không có thanh toán/check-in.",
     STALE_REVISION: "Cấu hình đã được sửa ở nơi khác. Hãy tải lại trước khi lưu.",
+    FORM_LOCKED: "Đã có đăng ký: giữ nguyên câu hỏi để bảo toàn dữ liệu. Hãy tạo chương trình mới nếu cần đổi form.",
     BELOW_DISTRIBUTED: "Số lượng mới không được ít hơn số quà đã trúng.",
     PRIZES_LOCKED: "Đã có người đăng ký: không thể xóa loại quà. Có thể điều chỉnh tồn kho hoặc thêm loại mới.",
     REDEMPTION_DISABLED: "Chương trình đang tắt xác nhận trao quà.",
   };
   const code = Object.keys(messages).find(key => error?.message?.includes(key));
   if (code) return NextResponse.json({ ok: false, error: messages[code] }, { status: code === "NOT_FOUND" ? 404 : 409 });
-  if (["42P01", "42703", "PGRST202", "PGRST205"].includes(error?.code ?? "")) return NextResponse.json({ ok: false, error: "Cần chạy supabase/prize-draw.sql để khởi tạo công cụ." }, { status: 503 });
+  if (["42P01", "42703", "PGRST202", "PGRST205"].includes(error?.code ?? "")) return NextResponse.json({ ok: false, error: "Cần chạy scripts/setup-prize-draw.cjs để cập nhật công cụ." }, { status: 503 });
   return NextResponse.json({ ok: false, error: fallback }, { status: 500 });
 }

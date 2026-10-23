@@ -408,12 +408,15 @@ export async function saveRegistrationForm(surveyId: string, payload: Registrati
 }
 
 export async function deleteRegistrationForm(surveyId: string): Promise<void> {
-  const { data: survey } = await supabase.from("surveys").select("quiz_id").eq("id", surveyId).single();
+  const { data: survey, error: readError } = await supabase.from("surveys").select("quiz_id").eq("id", surveyId).single();
+  if (readError) throw new Error(readError.message);
   if (survey?.quiz_id) {
-    await supabase.from("quizzes").delete().eq("id", survey.quiz_id);
+    const { error } = await supabase.from("quizzes").delete().eq("id", survey.quiz_id);
+    if (error) throw new Error(error.message);
     return;
   }
-  await supabase.from("surveys").delete().eq("id", surveyId);
+  const { error } = await supabase.from("surveys").delete().eq("id", surveyId);
+  if (error) throw new Error(error.message);
 }
 
 export async function duplicateRegistrationForm(surveyId: string): Promise<string | null> {

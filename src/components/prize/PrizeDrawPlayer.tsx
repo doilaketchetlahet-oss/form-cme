@@ -1,8 +1,12 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
+import Image from "next/image";
+import { ArrowRight, Check, Gift, Sparkles } from "lucide-react";
 import { PrizeWheel, nextWheelRotation } from "@/components/ui/PrizeWheel";
-import { prizeAvailability, type PrizeSnapshot } from "@/lib/prize-draw";
+import { prizeAvailability, prizeTextColor, type PrizeSnapshot } from "@/lib/prize-draw";
+import { PrizeImage } from "./PrizeImage";
+import styles from "./prize-studio.module.css";
 
 export function PrizeDrawPlayer({ id }: { id: string }) {
   const [data, setData] = useState<PrizeSnapshot | null>(null);
@@ -50,30 +54,34 @@ export function PrizeDrawPlayer({ id }: { id: string }) {
       setBusy(false); busyRef.current = false;
     }
   }
-  if (!data) return <main className="grid min-h-dvh place-items-center bg-slate-50 p-6 text-center"><div><p role="alert">{error || "Đang tải vòng quay…"}</p>{error && <button onClick={() => void load().then(() => setError("")).catch(e => setError(e.message))} className="mt-4 underline">Tải lại</button>}</div></main>;
+  if (!data) return <main className={`${styles.studio} ${styles.public} grid place-items-center p-6 text-center`}><div className={`${styles.card} p-8`}><p role="status">{error || "Đang tải vòng quay…"}</p>{error && <button onClick={() => void load().then(() => setError("")).catch(e => setError(e.message))} className={`${styles.secondary} mt-4`}>Tải lại</button>}</div></main>;
   const { campaign, items, entry } = data;
   const unavailable = prizeAvailability(campaign, items);
   const won = !busy && !!entry?.prize_id;
-  return <main className="min-h-dvh bg-slate-50 px-4 py-8 text-slate-900">
-    <div className="mx-auto max-w-lg space-y-6 text-center">
-      {campaign.is_demo && <p className="rounded-xl bg-amber-100 p-3 text-sm font-bold text-amber-900">BẢN DEMO · Quà mẫu, không có giá trị nhận quà thật</p>}
-      {campaign.banner_url && <img src={campaign.banner_url} alt="Banner chương trình" className="w-full rounded-2xl" />}
-      <header><p className="mb-2 text-xs font-bold uppercase tracking-widest" style={{ color: campaign.accent_color }}>Quay nhận quà</p><h1 className="text-2xl font-black sm:text-3xl">{campaign.name}</h1><p className="mt-3 text-sm text-slate-500">Một số điện thoại · Một lượt trong toàn chương trình</p></header>
-      {won ? <section aria-live="polite" className="rounded-3xl border bg-white p-6 shadow-lg" style={{ borderColor: entry.prize_color || campaign.accent_color }}>
-        <p className="text-4xl">🎁</p><h2 className="mt-3 text-xl font-bold">Bạn đã trúng {entry.prize_name}!</h2>
-        <p className="mt-5 text-sm text-slate-500">Mã nhận quà</p><p className="mt-1 break-all rounded-xl bg-slate-100 p-3 font-mono text-sm font-bold">{entry.claim_code}</p>
-        <p className="mt-4 whitespace-pre-wrap text-sm">{campaign.instructions}</p>
-        {campaign.track_redemption && <p className="mt-4 font-semibold" style={{ color: entry.redeemed_at ? "#15803d" : campaign.accent_color }}>{entry.redeemed_at ? "✓ Nhân viên đã xác nhận trao quà" : "Chưa xác nhận trao quà"}</p>}
-        <p className="mt-4 text-xs text-slate-500">Kết quả đã được lưu. Tải lại trang không tạo lượt mới.</p>
-        <button className="mt-4 text-sm underline" onClick={() => void load().catch(e => setError(e.message))}>Cập nhật trạng thái</button>
-      </section> : <>
-        <PrizeWheel items={items} rotation={rotation} center={busy ? "ĐANG QUAY" : "NHẬN QUÀ"} spinning={busy} />
-        {unavailable && <div className="rounded-xl bg-amber-50 p-4 text-amber-900"><p role="status">{unavailable}</p><button className="mt-2 text-sm underline" onClick={() => void load().catch(e => setError(e.message))}>Cập nhật trạng thái</button></div>}
-        {!entry ? <Link href={`/s/${campaign.survey_id}`} className="block rounded-xl p-4 font-bold text-on-brand" style={{ background: campaign.accent_color }}>Điền form để nhận lượt quay →</Link> : <button onClick={() => void spin()} disabled={busy || !!unavailable} className="w-full rounded-xl p-4 text-lg font-bold text-on-brand shadow-lg disabled:opacity-50" style={{ background: campaign.accent_color }}>{busy ? "Đang quay…" : "Quay nhận quà"}</button>}
-        <p className="text-xs text-slate-500">Mỗi lượt quay thành công có một quà khi còn hàng. Tỷ lệ theo tồn kho; kích thước ô chỉ để hiển thị.</p>
-      </>}
-      {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {!won && <ul className="grid grid-cols-2 gap-2 text-left">{items.map(item => <li key={item.id} className="rounded-xl border bg-white p-3 text-sm"><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: item.color }} />{item.name}{item.remaining === 0 && <span className="ml-2 text-xs text-slate-400">Hết quà</span>}</li>)}</ul>}
+  return <main className={`${styles.studio} ${styles.public} px-4 py-8 sm:py-12`} style={{ "--prize-primary": campaign.accent_color, "--prize-on-primary": prizeTextColor(campaign.accent_color) } as CSSProperties}>
+    <div className="mx-auto max-w-5xl space-y-8">
+      <div className="flex items-center gap-3"><span className="rounded-xl bg-sky-100 p-3 text-sky-800"><Gift size={24} aria-hidden="true" /></span><span className="text-sm font-bold tracking-wide">QUAY NHẬN QUÀ</span>{campaign.is_demo && <p className="ml-auto rounded-full bg-amber-100 px-3 py-2 text-xs font-bold text-amber-900">MERAP DEMO</p>}</div>
+      {campaign.banner_url && <Image src={campaign.banner_url} alt="Banner chương trình" width={1200} height={400} unoptimized priority className="max-h-64 w-full rounded-3xl object-cover" />}
+      <header className="text-center"><p className="mb-3 text-xs font-bold uppercase tracking-[.2em] text-sky-800">Một vòng quay · Ngàn niềm vui</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{campaign.name}</h1><p className="mt-3 text-sm leading-6 text-slate-600">Một số điện thoại · Một lượt trong toàn chương trình</p></header>
+      {won ? <section aria-live="polite" className={`${styles.card} mx-auto max-w-xl p-6 text-center sm:p-10`}>
+        <div className="mb-5 flex items-center justify-center gap-2 text-sm font-semibold text-emerald-700"><Sparkles size={20} aria-hidden="true" />Chúc mừng bạn!</div>
+        <PrizeImage src={entry.prize_image_url || items.find(p => p.id === entry.prize_id)?.image_url} name={entry.prize_name || "Phần quà của bạn"} className="mx-auto w-full max-w-64" priority />
+        <h2 className="mt-6 text-2xl font-bold">Bạn đã trúng {entry.prize_name}!</h2>
+        <p className="mt-6 text-xs font-semibold uppercase tracking-widest text-slate-500">Mã nhận quà</p><p className="mt-2 break-all rounded-xl border border-dashed border-sky-300 bg-sky-50 p-4 font-mono text-sm font-bold">{entry.claim_code}</p>
+        <p className="mt-5 whitespace-pre-wrap text-sm leading-6 text-slate-600">{campaign.instructions}</p>
+        {campaign.track_redemption && <p className="mt-5 flex items-center justify-center gap-2 text-sm font-semibold text-slate-700">{entry.redeemed_at && <Check className="text-emerald-700" size={18} aria-hidden="true" />}{entry.redeemed_at ? "Nhân viên đã xác nhận trao quà" : "Chưa xác nhận trao quà"}</p>}
+        <button className={`${styles.secondary} mt-5`} onClick={() => void load().catch(e => setError(e.message))}>Cập nhật trạng thái</button>
+        <p className="mt-5 text-xs leading-5 text-slate-500">Kết quả đã được lưu. Tải lại trang không tạo lượt mới.</p>
+      </section> : <div className="grid items-start gap-6 lg:grid-cols-[1.1fr_.9fr]">
+        <section className={`${styles.card} space-y-6 p-5 pt-8 text-center sm:p-8`}>
+          <PrizeWheel items={items} rotation={rotation} center={busy ? "ĐANG QUAY" : "NHẬN QUÀ"} spinning={busy} />
+          {unavailable && <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900"><p role="status">{unavailable}</p><button className={`${styles.secondary} mt-3`} onClick={() => void load().catch(e => setError(e.message))}>Cập nhật trạng thái</button></div>}
+          {!entry ? <Link href={`/prize-draw/${id}/register`} className={`${styles.primary} w-full`}>Điền form để nhận lượt quay<ArrowRight size={18} aria-hidden="true" /></Link> : <button onClick={() => void spin()} disabled={busy || !!unavailable} className={`${styles.primary} w-full py-4 text-lg`}>{busy ? "Đang quay…" : "Quay nhận quà"}<Sparkles size={20} aria-hidden="true" /></button>}
+          <p className="text-xs leading-5 text-slate-500">Mỗi lượt quay thành công có một quà khi còn hàng. Tỷ lệ theo tồn kho; kích thước ô chỉ để hiển thị.</p>
+        </section>
+        <section><h2 className="mb-4 flex items-center gap-2 text-lg font-bold"><Gift size={20} aria-hidden="true" />Những món quà đang chờ bạn</h2><ul className="grid grid-cols-2 gap-3">{items.map(item => <li key={item.id} className={`${styles.card} overflow-hidden p-3`}><PrizeImage src={item.image_url} name={item.name} /><p className="mt-3 text-sm font-semibold leading-6">{item.name}</p><p className={`mt-1 text-xs ${item.remaining ? "text-emerald-700" : "text-slate-500"}`}>{item.remaining ? "Sẵn sàng trao tặng" : "Hết quà"}</p></li>)}</ul></section>
+      </div>}
+      {error && <p role="alert" className="mx-auto max-w-xl rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</p>}
     </div>
   </main>;
 }

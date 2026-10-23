@@ -3,14 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createBoothServiceClient, checkPublicBoothRateLimit } from "@/lib/server/booth-public-access";
 import { prizeCookie, prizeHash, publicPrizeEntry, prizeError } from "@/lib/server/prize-draw";
 import { UUID_RE, validatePrizeAnswers } from "@/lib/prize-draw";
-import type { SurveyQuestion } from "@/lib/surveys";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 const tokenPattern = /^[a-f0-9]{64}$/;
-const campaignFields = "id,survey_id,phone_question_id,name,status,is_demo,starts_at,ends_at,accent_color,banner_url,instructions,track_redemption,revision";
-const entryFields = "id,prize_id,prize_name,prize_color,claim_code,drawn_at,redeemed_at";
+const campaignFields = "id,phone_question_id,form_fields,form_title,form_description,thank_you_message,name,status,is_demo,starts_at,ends_at,accent_color,banner_url,instructions,track_redemption,revision";
+const entryFields = "id,prize_id,prize_name,prize_color,prize_image_url,claim_code,drawn_at,redeemed_at";
 function fail(error: string, status = 400) { return NextResponse.json({ ok: false, error }, { status }); }
 
 export async function GET(request: NextRequest, context: Context) {
@@ -21,8 +20,8 @@ export async function GET(request: NextRequest, context: Context) {
   const oldToken = request.cookies.get(prizeCookie(id))?.value;
   const token = oldToken && tokenPattern.test(oldToken) ? oldToken : randomBytes(32).toString("hex");
   const [campaign, items, entry] = await Promise.all([
-    service.from("prize_campaigns").select(campaignFields).eq("id", id).maybeSingle(),
-    service.from("prize_items").select("id,name,color,total,remaining,position").eq("campaign_id", id).order("position"),
+    service.from("prize_campaigns").select(campaignFields).eq("id", id).is("deleted_at", null).maybeSingle(),
+    service.from("prize_items").select("id,name,color,image_url,total,remaining,position").eq("campaign_id", id).order("position"),
     service.from("prize_entries").select(entryFields).eq("campaign_id", id).eq("token_hash", prizeHash(token)).maybeSingle(),
   ]);
   const error = campaign.error || items.error || entry.error;
@@ -51,14 +50,12 @@ export async function POST(request: NextRequest, context: Context) {
   if (body.action === "spin") {
     result = await service.rpc("prize_draw_spin", { p_id: id, p_hash: prizeHash(token) });
   } else {
-    const { data: campaign, error } = await service.from("prize_campaigns").select("survey_id,phone_question_id").eq("id", id).maybeSingle();
+    const { data: campaign, error } = await service.from("prize_campaigns").select("phone_question_id,form_fields,revision").eq("id", id).is("deleted_at", null).maybeSingle();
     if (error) return prizeError(error);
     if (!campaign) return fail("Không tìm thấy chương trình.", 404);
-    const qs = await service.from("survey_questions").select("*").eq("survey_id", campaign.survey_id);
-    if (qs.error) return prizeError(qs.error);
     try {
-      const validated = validatePrizeAnswers(qs.data as SurveyQuestion[], campaign.phone_question_id, body.answers);
-      result = await service.rpc("prize_draw_register", { p_id: id, p_hash: prizeHash(token), p_phone: validated.phone, p_answers: validated.answers });
+      const validated = validatePrizeAnswers(campaign.form_fields, campaign.phone_question_id, body.answers);
+      result = await service.rpc("prize_draw_register_current", { p_id: id, p_hash: prizeHash(token), p_phone: validated.phone, p_answers: validated.answers, p_revision: campaign.revision });
     } catch (e) { return fail(e instanceof Error ? e.message : "Thông tin không hợp lệ."); }
   }
   if (result.error) return prizeError(result.error);

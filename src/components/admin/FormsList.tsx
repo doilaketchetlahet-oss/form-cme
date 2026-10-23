@@ -121,8 +121,12 @@ export function FormsList() {
   const handleDelete = async (form: RegistrationFormSummary) => {
     if (!canManageForms) return;
     if (!(await confirm({ title: `Xóa form "${form.title}"?`, description: "Tất cả câu hỏi và đăng ký liên quan sẽ bị xóa.", destructive: true, confirmText: "Xóa" }))) return;
-    await deleteRegistrationForm(form.id);
-    await refresh();
+    try {
+      await deleteRegistrationForm(form.id);
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không xóa được form. Vui lòng thử lại.");
+    }
   };
 
   const copyLink = (id: string) => {

@@ -1,167 +1,114 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { ArrowUpRight, Check, ClipboardList, Download, Gift, ImagePlus, Plus, QrCode, RefreshCw, Save, Settings2, Trash2, Users } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAdminAccess } from "@/components/auth/AdminAccessProvider";
-import { useAuth } from "@/hooks/useAuth";
+import { useConfirm } from "@/lib/ui/confirm";
 import { QRCodeView } from "@/components/ui/QRCodeView";
 import { buildPublicUrl } from "@/lib/site-url";
 import { formatAttendanceAnswer } from "@/lib/attendance-display";
-import { prizeCsvCell, type PrizeCampaign, type PrizeItem, type PrizeResult } from "@/lib/prize-draw";
-import type { SurveyQuestion } from "@/lib/surveys";
+import { prizeCsvCell, type PrizeCampaign, type PrizeItem, type PrizeResult, type PrizeField } from "@/lib/prize-draw";
+import { PrizeImage } from "@/components/prize/PrizeImage";
+import { PrizeFormEditor } from "@/components/prize/PrizeFormEditor";
+import styles from "@/components/prize/prize-studio.module.css";
 
 type Entry = PrizeResult & { phone: string; answers: Record<string, unknown>; created_at: string; redeemed_by: string | null };
-type Detail = { campaign: PrizeCampaign; items: PrizeItem[]; entries: Entry[]; questions: SurveyQuestion[] };
-const field = "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
-const button = "rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-on-brand disabled:opacity-50";
-const secondary = "rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50";
+type Detail = { campaign: PrizeCampaign; items: PrizeItem[]; entries: Entry[]; questions: PrizeField[] };
 const vnInput = (date: string) => new Date(Date.parse(date) + 7 * 3600000).toISOString().slice(0, 16);
-
+const tabs = [{ id: "settings", label: "Cài đặt", icon: Settings2 }, { id: "form", label: "Form đăng ký", icon: ClipboardList }, { id: "gifts", label: "Kho quà", icon: Gift }, { id: "entries", label: "Người tham gia", icon: Users }] as const;
+const statusNames = { draft: "Bản nháp", active: "Đang mở", paused: "Tạm dừng", closed: "Đã đóng" };
 async function api(id = "", body?: object) {
   const session = await supabase.auth.getSession();
-  const response = await fetch(`/api/admin/prize-draw${id ? `?id=${id}` : ""}`, {
-    method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${session.data.session?.access_token ?? ""}`, "Content-Type": "application/json" },
-    ...(body ? { body: JSON.stringify(body) } : {}), cache: "no-store",
-  });
+  const response = await fetch(`/api/admin/prize-draw${id ? `?id=${id}` : ""}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${session.data.session?.access_token ?? ""}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}), cache: "no-store" });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Không thực hiện được thao tác.");
   return data;
 }
-
 export function PrizeDrawManager() {
   const access = useAdminAccess();
-  if (!access.canAccessPrizeDraw) {
-    return <div className="p-6 sm:p-10">
-      <h1 className="text-xl font-semibold text-slate-900">Chưa được cấp quyền Vòng quay nhận quà</h1>
-      <p className="mt-3 text-sm text-slate-600">Liên hệ chủ sở hữu để bật quyền Vòng quay nhận quà cho tài khoản của bạn trong trang Phân quyền.</p>
-    </div>;
-  }
+  if (!access.canAccessPrizeDraw) return <div className="p-6 sm:p-10"><h1 className="text-xl font-semibold text-slate-900">Chưa được cấp quyền Vòng quay nhận quà</h1><p className="mt-3 text-sm text-slate-600">Liên hệ chủ sở hữu để bật quyền Vòng quay nhận quà cho tài khoản của bạn trong trang Phân quyền.</p></div>;
   return <PrizeDrawContent />;
 }
-
 function PrizeDrawContent() {
-  const { user } = useAuth();
+  const access = useAdminAccess(), confirm = useConfirm();
   const [campaigns, setCampaigns] = useState<PrizeCampaign[]>([]);
-  const [forms, setForms] = useState<{ id: string; title: string }[]>([]);
-  const [formId, setFormId] = useState("");
-  const [phones, setPhones] = useState<SurveyQuestion[]>([]);
-  const [phoneId, setPhoneId] = useState("");
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [draft, setDraft] = useState<PrizeCampaign | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null), [draft, setDraft] = useState<PrizeCampaign | null>(null);
   const [items, setItems] = useState<PrizeItem[]>([]);
-  const [role, setRole] = useState("viewer");
-  const [busy, setBusy] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(0);
-  const writable = role !== "viewer";
-  const lock = busy || !writable;
-  async function load(id = "") {
-    const result = await api(id);
-    setCampaigns(result.campaigns); setRole(result.role);
-    if (result.forms) setForms(result.forms);
-    if (result.campaign) { setDetail(result); setDraft(result.campaign); setItems(result.items); setDirty(false); setPage(0); }
-  }
+  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
+  const [dirty, setDirty] = useState(false), [creating, setCreating] = useState(false);
+  const [message, setMessage] = useState(""), [error, setError] = useState("");
+  const [search, setSearch] = useState(""), [page, setPage] = useState(0);
+  const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("settings");
+  const pending = useRef(false), lock = busy || access.role === "viewer";
+  function accept(result: Detail & { campaigns: PrizeCampaign[] }) { setCampaigns(result.campaigns); setDetail(result); setDraft(result.campaign); setItems(result.items); setDirty(false); setPage(0); }
+  async function load(id = "") { const result = await api(id); setCampaigns(result.campaigns); if (result.campaign) accept(result); }
   useEffect(() => {
     let cancelled = false;
-    if (user) void api().then(result => {
-      if (!cancelled) { setCampaigns(result.campaigns); setRole(result.role); setForms(result.forms); }
-    }).catch(e => { if (!cancelled) setError(e.message); });
+    void api().then(async result => { if (cancelled) return; setCampaigns(result.campaigns); if (result.campaigns[0]) { const first = await api(result.campaigns[0].id); if (!cancelled) accept(first); } }).catch(e => { if (!cancelled) setError(e.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [user]);
-  useEffect(() => {
-    let cancelled = false;
-    if (formId) void supabase.from("survey_questions").select("*").eq("survey_id", formId).eq("type", "phone").eq("required", true).is("show_if", null).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error) setError("Không tải được câu hỏi SĐT.");
-      else { setPhones(data ?? []); if (data?.length === 1) setPhoneId(data[0].id); }
-    });
-    return () => { cancelled = true; };
-  }, [formId]);
-  async function run(work: () => Promise<void>) {
-    if (busy) return;
-    setBusy(true); setError(""); setMessage("");
-    try { await work(); } catch (e) { setError(e instanceof Error ? e.message : "Thao tác thất bại."); }
-    finally { setBusy(false); }
-  }
+  }, []);
+  async function run(work: () => Promise<void>) { if (pending.current) return; pending.current = true; setBusy(true); setError(""); setMessage(""); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : "Thao tác thất bại."); } finally { setBusy(false); pending.current = false; } }
   const patch = (changes: Partial<PrizeCampaign>) => { setDraft(d => d ? { ...d, ...changes } : d); setDirty(true); };
-  function changeItem(index: number, changes: Partial<PrizeItem>) {
-    setItems(all => all.map((p, i) => i === index ? { ...p, ...changes } : p)); setDirty(true);
+  function changeItem(id: string, changes: Partial<PrizeItem>) { setItems(all => all.map(p => p.id === id ? { ...p, ...changes } : p)); setDirty(true); }
+  async function create(isDemo: boolean) { const result = await api("", { action: "create", is_demo: isDemo }); await load(result.id); setCreating(false); setTab("settings"); setMessage("Đã tạo chương trình nháp với form riêng và 300 phần quà mẫu."); }
+  async function save() { if (!draft) return; await api("", { action: "save", id: draft.id, data: { ...draft, items: items.map(item => ({ ...item, image_url: item.image_url || "" })) } }); await load(draft.id); setMessage("Đã lưu cấu hình."); }
+  async function remove() {
+    if (!draft || lock || dirty) return;
+    if (!(await confirm({ title: "Xóa chương trình này?", description: "Form và vòng quay sẽ ngừng truy cập, chương trình được gỡ khỏi danh sách. Lịch sử nhận quà được giữ để đối soát. Các form CME không bị ảnh hưởng.", confirmText: "Xóa chương trình", destructive: true }))) return;
+    await run(async () => { await api("", { action: "delete", id: draft.id, data: { revision: draft.revision } }); setDetail(null); setDraft(null); setItems([]); await load(); setMessage("Đã xóa chương trình khỏi danh sách và đóng trang tham gia."); });
   }
-  async function create(isDemo: boolean) {
-    const result = await api("", { action: "create", is_demo: isDemo, ...(formId ? { survey_id: formId, phone_question_id: phoneId } : {}) });
-    await load(); await load(result.id);
-    setFormId(""); setMessage("Đã tạo chương trình nháp với 300 phần quà mẫu. Kiểm tra cấu hình rồi lưu trạng thái Mở.");
-  }
-  async function save() {
+  async function upload(file: File, done: (url: string) => void) {
     if (!draft) return;
-    await api("", { action: "save", id: draft.id, data: { ...draft, items } });
-    await load(draft.id); setMessage("Đã lưu cấu hình.");
+    await run(async () => { if (file.size > 4 * 1024 * 1024) throw new Error("Ảnh tối đa 4 MB."); const session = await supabase.auth.getSession(); const body = new FormData(); body.set("file", file); body.set("campaign_id", draft.id); const response = await fetch("/api/admin/prize-draw/asset", { method: "POST", headers: { Authorization: `Bearer ${session.data.session?.access_token ?? ""}` }, body }); const result = await response.json(); if (!response.ok) throw new Error(result.error || "Không tải được ảnh."); done(result.url); setMessage("Đã tải ảnh. Bấm Lưu thay đổi để áp dụng."); });
   }
   function exportCsv() {
     if (!detail) return;
     const qs = detail.questions.filter(q => !["section", "image_banner"].includes(q.type));
-    const rows = [["SĐT", ...qs.map(q => q.text), "Quà", "Mã nhận quà", "Lúc quay", "Đã trao lúc", "Nhân viên"],
-      ...detail.entries.map(e => [e.phone, ...qs.map(q => formatAttendanceAnswer(e.answers[q.id], q)), e.prize_name, e.claim_code, e.drawn_at, e.redeemed_at, e.redeemed_by])];
-    const url = URL.createObjectURL(new Blob(["\uFEFF", rows.map(row => row.map(prizeCsvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" }));
-    const a = document.createElement("a"); a.href = url; a.download = `nhan-qua-${detail.campaign.id}.csv`; a.click(); URL.revokeObjectURL(url);
+    const rows = [["SĐT", ...qs.map(q => q.text), "Quà", "Mã nhận quà", "Lúc quay", "Đã trao lúc", "Nhân viên"], ...detail.entries.map(e => [e.phone, ...qs.map(q => formatAttendanceAnswer(e.answers[q.id], q)), e.prize_name, e.claim_code, e.drawn_at, e.redeemed_at, e.redeemed_by])];
+    const url = URL.createObjectURL(new Blob(["\uFEFF", rows.map(row => row.map(prizeCsvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" })); const a = document.createElement("a"); a.href = url; a.download = `nhan-qua-${detail.campaign.id}.csv`; a.click(); URL.revokeObjectURL(url);
   }
   const filtered = detail?.entries.filter(e => `${e.phone} ${e.claim_code} ${e.prize_name ?? ""} ${Object.values(e.answers).join(" ")}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())) ?? [];
   const allocated = detail?.items.reduce((n, p) => n + p.total - p.remaining, 0) ?? 0;
-  return <div className="mx-auto max-w-6xl space-y-6 p-4 text-slate-900 sm:p-6">
-    <header><h1 className="text-2xl font-bold">Vòng quay nhận quà</h1><p className="mt-2 text-sm text-slate-500">Form đăng ký → một lượt/SĐT → nhận quà. Kho quà dùng chung cho toàn chương trình.</p></header>
-    {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
-    {message && <p role="status" className="rounded-xl bg-green-50 p-4 text-green-800">{message}</p>}
-    <section className="space-y-4 rounded-2xl border bg-white p-5">
-      <div className="flex flex-wrap items-center gap-3"><select aria-label="Chọn chương trình" disabled={busy || dirty} value={detail?.campaign.id ?? ""} onChange={e => void run(() => load(e.target.value))} className={`${field} sm:max-w-md`}><option value="" disabled>Chọn chương trình đã tạo…</option>{campaigns.map(c => <option key={c.id} value={c.id}>{c.is_demo ? "[DEMO] " : ""}{c.name}</option>)}</select><button disabled={busy || dirty} onClick={() => void run(() => load(detail?.campaign.id))} className={secondary}>Tải lại</button></div>
-      {dirty && <p className="text-sm text-amber-700">Có thay đổi chưa lưu. Lưu hoặc bỏ thay đổi trước khi chuyển chương trình.</p>}
-      <details><summary className="cursor-pointer text-sm font-semibold">Tạo chương trình với dữ liệu mẫu</summary><div className="mt-4 space-y-3">
-        <label className="block text-sm">Form đăng ký<select className={`${field} mt-1`} disabled={lock || dirty} value={formId} onChange={e => { setFormId(e.target.value); setPhones([]); setPhoneId(""); }}><option value="">Tạo form mẫu mới (Họ tên, SĐT, Đơn vị)</option>{forms.map(f => <option key={f.id} value={f.id}>{f.title}</option>)}</select></label>
-        {formId && <label className="block text-sm">Câu hỏi SĐT bắt buộc<select className={`${field} mt-1`} disabled={lock} value={phoneId} onChange={e => setPhoneId(e.target.value)}><option value="">Chọn câu hỏi…</option>{phones.map(q => <option key={q.id} value={q.id}>{q.text}</option>)}</select></label>}
-        <p className="text-xs text-slate-500">Form có sẵn phải là khảo sát trống, chưa có phản hồi. Demo và chương trình thật có kho và danh sách riêng. Không thể đổi demo thành thật sau khi tạo.</p>
-        <div className="flex flex-wrap gap-2"><button disabled={lock || dirty || (!!formId && !phoneId)} onClick={() => void run(() => create(true))} className={button}>Tạo demo mẫu</button><button disabled={lock || dirty || (!!formId && !phoneId)} onClick={() => void run(() => create(false))} className={secondary}>Tạo chương trình thật (nháp)</button></div>
-      </div></details>
-    </section>
+  return <div className={`${styles.studio} mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-8 sm:py-10`}>
+    <header className="flex flex-wrap items-end justify-between gap-5"><div><p className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-[.18em] text-sky-800"><Gift size={17} aria-hidden="true" />Prize Studio</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Vòng quay nhận quà</h1><p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">Mỗi lượt quay, một kết nối. Quản lý form đăng ký, kho quà và người tham gia tại một nơi.</p></div><button className={styles.primary} disabled={lock || dirty} onClick={() => setCreating(!creating)} aria-expanded={creating}><Plus size={18} aria-hidden="true" />Tạo chương trình</button></header>
+    {error && <p role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+    {message && <p role="status" className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><Check size={18} aria-hidden="true" />{message}</p>}
+    {creating && <Panel title="Bắt đầu một chương trình"><p className="text-sm leading-6 text-slate-600">Có sẵn form Họ tên, SĐT, Đơn vị và 4 loại quà mẫu. Tuỳ chỉnh mọi nội dung trước khi mở. Demo có kho riêng và có thể thử ngay khi mở.</p><div className="flex flex-wrap gap-3"><button disabled={lock || dirty} onClick={() => void run(() => create(true))} className={styles.primary}>Tạo demo mẫu</button><button disabled={lock || dirty} onClick={() => void run(() => create(false))} className={styles.secondary}>Tạo chương trình thật (nháp)</button><button className={styles.secondary} onClick={() => setCreating(false)}>Đóng</button></div></Panel>}
+    <div className="flex flex-wrap items-center gap-3"><label className="min-w-0 flex-1 text-sm font-medium"><span className="sr-only">Chọn chương trình</span><select aria-label="Chọn chương trình" disabled={busy || dirty || loading} value={draft?.id ?? ""} onChange={e => void run(() => load(e.target.value))} className={`${styles.field} sm:max-w-xl`}><option value="" disabled>{loading ? "Đang tải…" : "Chọn chương trình…"}</option>{campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><button aria-label="Tải lại chương trình" disabled={busy || dirty} onClick={() => void run(() => load(draft?.id))} className={styles.secondary}><RefreshCw size={17} />Tải lại</button></div>
+    {loading && <div role="status" className={`${styles.card} p-10 text-center text-slate-600`}>Đang tải chương trình…</div>}
+    {!loading && !draft && <section className={`${styles.card} py-16 text-center`}><Gift size={48} className="mx-auto text-sky-700" aria-hidden="true" /><h2 className="mt-5 text-xl font-bold">Sẵn sàng trao những phần quà đầu tiên?</h2><p className="mx-auto mt-3 max-w-md px-4 text-sm leading-6 text-slate-600">Tạo chương trình mới hoặc chọn chương trình ở trên để bắt đầu.</p></section>}
     {draft && detail && <>
-      <div className={`rounded-xl p-4 text-sm ${draft.is_demo ? "bg-amber-100 text-amber-900" : "bg-sky-50 text-sky-900"}`}>{draft.is_demo ? "DEMO: dùng quà mẫu. Khi mở, có thể thử ngay, không cần chờ ngày sự kiện. Muốn thử lại cùng SĐT, tạo demo khác." : "CHƯƠNG TRÌNH THẬT: chỉ mở quay trong thời gian đã cấu hình. Mỗi SĐT chỉ một lượt, không reset mỗi ngày."}</div>
-      <div className="grid gap-6 lg:grid-cols-[1fr_260px]">
-        <section className="space-y-4 rounded-2xl border bg-white p-5">
-          <h2 className="font-bold">Cấu hình chương trình</h2>
-          <label className="block text-sm">Tên chương trình<input className={`${field} mt-1`} value={draft.name} disabled={lock} onChange={e => patch({ name: e.target.value })} maxLength={160} /></label>
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Trạng thái<select className={`${field} mt-1`} disabled={lock} value={draft.status} onChange={e => patch({ status: e.target.value as PrizeCampaign["status"] })}><option value="draft">Nháp</option><option value="active">Mở</option><option value="paused">Tạm dừng</option><option value="closed">Đóng</option></select></label><label className="text-sm">Màu chủ đạo<input type="color" className={`${field} mt-1 h-10`} value={draft.accent_color} disabled={lock} onChange={e => patch({ accent_color: e.target.value })} /></label></div>
-          <div className="grid gap-4 sm:grid-cols-2"><label className="text-sm">Bắt đầu (giờ Việt Nam)<input type="datetime-local" className={`${field} mt-1`} value={vnInput(draft.starts_at)} disabled={lock} onChange={e => e.target.value && patch({ starts_at: `${e.target.value}:00+07:00` })} /></label><label className="text-sm">Đóng từ thời điểm (giờ Việt Nam)<input type="datetime-local" className={`${field} mt-1`} value={vnInput(draft.ends_at)} disabled={lock} onChange={e => e.target.value && patch({ ends_at: `${e.target.value}:00+07:00` })} /></label></div>
-          <p className="text-xs text-slate-500">Mẫu: 12–24/11/2026; đóng lúc 00:00 ngày 25/11. Không chia hạn mức theo ngày.</p>
-          <label className="block text-sm">Ảnh banner (URL HTTPS)<input type="url" className={`${field} mt-1`} value={draft.banner_url} disabled={lock} onChange={e => patch({ banner_url: e.target.value })} placeholder="https://…" /></label>
-          <label className="block text-sm">Hướng dẫn nhận quà<textarea className={`${field} mt-1`} rows={3} value={draft.instructions} disabled={lock} onChange={e => patch({ instructions: e.target.value })} /></label>
-          <label className="flex gap-2 text-sm"><input type="checkbox" checked={draft.track_redemption} disabled={lock} onChange={e => patch({ track_redemption: e.target.checked })} />Nhân viên xác nhận đã trao quà</label>
-        </section>
-        <aside className="h-fit space-y-4 rounded-2xl border bg-white p-5 text-center"><h2 className="font-bold">QR vào form</h2><QRCodeView value={buildPublicUrl(`/s/${draft.survey_id}`)} size={180} /><div className="space-y-3 text-sm"><Link href={`/s/${draft.survey_id}`} target="_blank" className="block text-sky-700 underline">Mở form đăng ký ↗</Link><Link href={`/prize-draw/${draft.id}`} target="_blank" className="block text-sky-700 underline">Mở vòng quay ↗</Link><Link href={`/admin/forms/${draft.survey_id}`} className="block text-sky-700 underline">Sửa câu hỏi / banner form</Link></div><p className="text-xs text-slate-500">Giữ câu hỏi SĐT bắt buộc, luôn hiển thị. SĐT chưa xác thực OTP.</p></aside>
-      </div>
-      <section className="space-y-4 rounded-2xl border bg-white p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">Kho quà · Đã trúng {allocated} · Còn {detail.items.reduce((n, p) => n + p.remaining, 0)}</h2><button disabled={lock || items.length >= 12} className={secondary} onClick={() => { setItems(all => [...all, { id: crypto.randomUUID(), name: "Quà mới", color: "#16a34a", total: 10, remaining: 10, position: all.length }]); setDirty(true); }}>+ Thêm loại quà</button></div>
-        {items.map((item, index) => {
-          const saved = detail.items.find(p => p.id === item.id);
-          const used = saved ? saved.total - saved.remaining : 0;
-          return <div key={item.id} className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-[60px_1fr_120px_100px_60px]">
-            <label className="text-xs">Màu<input type="color" aria-label={`Màu quà ${index + 1}`} className={`${field} mt-1 h-10 px-1`} value={item.color} disabled={lock} onChange={e => changeItem(index, { color: e.target.value })} /></label>
-            <label className="text-xs">Tên quà<input aria-label={`Tên quà ${index + 1}`} className={`${field} mt-1`} value={item.name} disabled={lock} onChange={e => changeItem(index, { name: e.target.value })} /></label>
-            <label className="text-xs">Tổng số lượng<input type="number" aria-label={`Số lượng quà ${index + 1}`} className={`${field} mt-1`} min={used} max={100000} value={item.total} disabled={lock} onChange={e => changeItem(index, { total: Number(e.target.value) })} /></label>
-            <p className="pb-2 text-xs">Đã trúng {used}<br />Còn {item.total - used}</p><button aria-label={`Xóa quà ${index + 1}`} className="pb-2 text-xs text-red-600 disabled:opacity-30" disabled={lock || items.length === 1 || (!!saved && detail.entries.length > 0)} onClick={() => { setItems(all => all.filter(p => p.id !== item.id)); setDirty(true); }}>Xóa</button>
-          </div>;
-        })}
-        <p className="text-xs text-slate-500">Tỷ lệ theo số quà còn lại. Hết quà sẽ dừng quay; đăng ký chưa giữ suất. Tổng số lượng không được thấp hơn số đã trúng.</p>
-        <div className="flex gap-3"><button className={button} disabled={lock || !dirty} onClick={() => void run(save)}>{busy ? "Đang xử lý…" : "Lưu cấu hình"}</button><button className={secondary} disabled={busy || !dirty} onClick={() => { setDraft(detail.campaign); setItems(detail.items); setDirty(false); }}>Bỏ thay đổi</button></div>
-      </section>
-      <section className="space-y-4 rounded-2xl border bg-white p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold">Danh sách nhận quà ({detail.entries.length})</h2><button onClick={exportCsv} className={secondary}>Xuất CSV danh sách đang tải</button></div>
-        <p className="text-xs text-slate-500">Tối đa 1.000 đăng ký mới nhất. Số tồn kho phía trên tính toàn bộ chương trình. Tra cứu theo SĐT hoặc mã nhận quà.</p>
-        <input aria-label="Tìm khách nhận quà" className={field} placeholder="SĐT, tên khách hoặc mã nhận quà…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} />
-        <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-3 pr-4">SĐT / Thông tin</th><th className="pr-4">Quà / Mã</th><th>Trao quà</th></tr></thead><tbody>{filtered.slice(page * 25, page * 25 + 25).map(e => <tr key={e.id} className="border-b align-top"><td className="py-3 pr-4"><p className="font-semibold">{e.phone}</p><details className="mt-1 text-xs"><summary className="cursor-pointer">Xem thông tin</summary>{detail.questions.filter(q => !["section", "image_banner"].includes(q.type)).map(q => <p key={q.id} className="mt-1">{q.text}: {formatAttendanceAnswer(e.answers[q.id], q)}</p>)}</details></td><td className="py-3 pr-4">{e.prize_name || "Chưa quay"}{e.drawn_at && <><p className="mt-1 max-w-[200px] break-all font-mono text-xs">{e.claim_code}</p><p className="mt-1 text-xs text-slate-500">{new Date(e.drawn_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p></>}</td><td className="py-3">{e.redeemed_at ? <span className="text-green-700">Đã trao</span> : e.prize_id && detail.campaign.track_redemption ? <button className={secondary} disabled={lock || dirty} onClick={() => void run(async () => { await api("", { action: "redeem", id: draft.id, data: { entry_id: e.id } }); await load(draft.id); setMessage("Đã xác nhận trao quà."); })}>Xác nhận đã trao</button> : "—"}</td></tr>)}</tbody></table></div>
-        {!filtered.length && <p className="text-sm text-slate-500">Chưa có khách phù hợp.</p>}
-        <div className="flex items-center gap-3 text-sm"><button className={secondary} disabled={page === 0} onClick={() => setPage(p => p - 1)}>Trước</button><span>Trang {page + 1}/{Math.max(1, Math.ceil(filtered.length / 25))}</span><button className={secondary} disabled={(page + 1) * 25 >= filtered.length} onClick={() => setPage(p => p + 1)}>Sau</button></div>
-      </section>
+      <div className="grid gap-3 sm:grid-cols-3"><Metric label="Tổng kho quà" value={detail.items.reduce((n, p) => n + p.total, 0)} note={`${detail.items.length} loại quà`} /><Metric label="Đã trúng thưởng" value={allocated} note="Kết quả được lưu theo từng lượt" /><Metric label="Quà còn lại" value={detail.items.reduce((n, p) => n + p.remaining, 0)} note="Dùng chung toàn chương trình" /></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><nav aria-label="Quản lý chương trình" className="flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1.5">{tabs.map(t => <button key={t.id} aria-pressed={tab === t.id} onClick={() => setTab(t.id)} className={`flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold transition-colors ${tab === t.id ? "bg-sky-100 text-sky-900" : "text-slate-600 hover:bg-slate-50"}`}><t.icon size={17} aria-hidden="true" />{t.label}</button>)}</nav><div className="flex gap-2 text-xs font-semibold"><span className="rounded-full bg-slate-100 px-3 py-2">{draft.is_demo ? "DEMO" : "CHƯƠNG TRÌNH THẬT"}</span><span className={`rounded-full px-3 py-2 ${detail.campaign.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>{statusNames[detail.campaign.status]}</span></div></div>
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_270px]"><div className="min-w-0 space-y-5">
+        {tab === "settings" && <Panel title="Cài đặt chương trình" description={draft.is_demo ? "Demo đang mở có thể thử ngay, không cần chờ ngày sự kiện." : "Khách chỉ được quay trong thời gian chương trình mở."}>
+          <Field label="Tên chương trình"><input className={styles.field} value={draft.name} disabled={lock} onChange={e => patch({ name: e.target.value })} maxLength={160} /></Field>
+          <div className="grid gap-4 sm:grid-cols-2"><Field label="Trạng thái"><select className={styles.field} disabled={lock} value={draft.status} onChange={e => patch({ status: e.target.value as PrizeCampaign["status"] })}><option value="draft">Nháp</option><option value="active">Mở</option><option value="paused">Tạm dừng</option><option value="closed">Đóng</option></select></Field><Field label="Màu chủ đạo"><input type="color" className={`${styles.field} h-12`} value={draft.accent_color} disabled={lock} onChange={e => patch({ accent_color: e.target.value })} /></Field></div>
+          <div className="grid gap-4 sm:grid-cols-2"><Field label="Bắt đầu (giờ Việt Nam)"><input type="datetime-local" className={styles.field} value={vnInput(draft.starts_at)} disabled={lock} onChange={e => e.target.value && patch({ starts_at: `${e.target.value}:00+07:00` })} /></Field><Field label="Đóng từ thời điểm (giờ Việt Nam)"><input type="datetime-local" className={styles.field} value={vnInput(draft.ends_at)} disabled={lock} onChange={e => e.target.value && patch({ ends_at: `${e.target.value}:00+07:00` })} /></Field></div>
+          <p className="text-xs leading-5 text-slate-500">Mẫu: 12–24/11/2026; đóng lúc 00:00 ngày 25/11. Mỗi SĐT chỉ một lượt trong toàn chương trình.</p>
+          <AssetEditor label="Ảnh banner" value={draft.banner_url} disabled={lock} onChange={url => patch({ banner_url: url })} onUpload={file => void upload(file, url => patch({ banner_url: url }))} />
+          <Field label="Hướng dẫn nhận quà"><textarea className={styles.field} rows={3} maxLength={2000} value={draft.instructions} disabled={lock} onChange={e => patch({ instructions: e.target.value })} /></Field>
+          <label className="flex min-h-11 items-center gap-3 text-sm"><input type="checkbox" checked={draft.track_redemption} disabled={lock} onChange={e => patch({ track_redemption: e.target.checked })} />Nhân viên xác nhận đã trao quà</label>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5"><p className="max-w-sm text-xs leading-5 text-slate-500">Xóa sẽ đóng form và vòng quay, đồng thời gỡ chương trình khỏi danh sách.</p><button disabled={lock || dirty} onClick={() => void remove()} className={styles.secondary}><Trash2 size={16} aria-hidden="true" />Xóa chương trình</button></div>
+        </Panel>}
+        {tab === "form" && <Panel title="Form đăng ký riêng" description="Form và danh sách khách được quản lý độc lập trong chương trình này."><Field label="Tiêu đề form"><input className={styles.field} disabled={lock} maxLength={160} value={draft.form_title} onChange={e => patch({ form_title: e.target.value })} /></Field><Field label="Lời giới thiệu"><textarea className={styles.field} rows={3} disabled={lock} maxLength={2000} value={draft.form_description} onChange={e => patch({ form_description: e.target.value })} /></Field><Field label="Lời cảm ơn sau đăng ký"><textarea className={styles.field} rows={2} disabled={lock} maxLength={2000} value={draft.thank_you_message} onChange={e => patch({ thank_you_message: e.target.value })} /></Field><PrizeFormEditor campaign={draft} locked={lock || detail.entries.length > 0} onChange={fields => patch({ form_fields: fields })} /></Panel>}
+        {tab === "gifts" && <Panel title="Kho quà của chương trình" description="Thêm hình ảnh để khách nhìn thấy món quà trước và sau khi quay."><div className="grid gap-4 sm:grid-cols-2">{items.map((item, index) => {
+          const saved = detail.items.find(p => p.id === item.id), used = saved ? saved.total - saved.remaining : 0;
+          return <div key={item.id} className="min-w-0 space-y-4 rounded-2xl border border-slate-200 p-4"><AssetEditor label={`Ảnh quà ${index + 1}`} name={item.name} value={item.image_url || ""} disabled={lock} onChange={url => changeItem(item.id, { image_url: url })} onUpload={file => void upload(file, url => changeItem(item.id, { image_url: url }))} /><Field label={`Tên quà ${index + 1}`}><input className={styles.field} value={item.name} maxLength={100} disabled={lock} onChange={e => changeItem(item.id, { name: e.target.value })} /></Field><div className="grid grid-cols-[1fr_64px] gap-3"><Field label={`Số lượng quà ${index + 1}`}><input type="number" className={styles.field} min={used} max={100000} value={item.total} disabled={lock} onChange={e => changeItem(item.id, { total: Number(e.target.value) })} /></Field><Field label={`Màu ${index + 1}`}><input type="color" className={`${styles.field} h-12 px-1`} value={item.color} disabled={lock} onChange={e => changeItem(item.id, { color: e.target.value })} /></Field></div><div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-600">Đã trúng <b>{used}</b> · Còn <b>{item.total - used}</b></p><button aria-label={`Xóa quà ${index + 1}`} className={styles.secondary} disabled={lock || items.length === 1 || (!!saved && detail.entries.length > 0)} onClick={() => { setItems(all => all.filter(p => p.id !== item.id)); setDirty(true); }}><Trash2 size={16} /></button></div></div>;
+        })}</div><button disabled={lock || items.length >= 12} className={styles.secondary} onClick={() => { setItems(all => [...all, { id: crypto.randomUUID(), name: "Quà mới", color: "#0369a1", image_url: "", total: 10, remaining: 10, position: all.length }]); setDirty(true); }}><Plus size={16} aria-hidden="true" />Thêm loại quà</button><p className="text-xs leading-5 text-slate-500">Quà còn ít sẽ có tỷ lệ trúng thấp hơn; hết quà sẽ không trúng nữa. Không thể giảm tổng số lượng dưới số đã trúng.</p></Panel>}
+        {tab === "entries" && <Panel title={`Người tham gia (${detail.entries.length})`} description="Hiển thị tối đa 1.000 đăng ký mới nhất. Số tồn kho tính toàn bộ chương trình."><div className="flex flex-wrap gap-3"><input aria-label="Tìm khách nhận quà" className={`${styles.field} min-w-0 flex-1`} placeholder="SĐT, tên khách hoặc mã nhận quà…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} /><button onClick={exportCsv} className={styles.secondary}><Download size={16} aria-hidden="true" />Xuất CSV danh sách đang tải</button></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-3 pr-4">Khách tham gia</th><th className="pr-4">Quà / Mã nhận</th><th>Trao quà</th></tr></thead><tbody>{filtered.slice(page * 25, page * 25 + 25).map(e => <tr key={e.id} className="border-b border-slate-100 align-top"><td className="py-4 pr-4"><p className="font-semibold">{e.phone}</p><details className="mt-2 text-xs"><summary className="min-h-8">Xem thông tin</summary>{detail.questions.filter(q => !["section", "image_banner"].includes(q.type)).map(q => <p key={q.id} className="mt-2">{q.text}: {formatAttendanceAnswer(e.answers[q.id], q)}</p>)}</details></td><td className="py-4 pr-4">{e.prize_name || "Chưa quay"}{e.drawn_at && <><p className="mt-2 max-w-[180px] break-all font-mono text-xs text-slate-500">{e.claim_code}</p><p className="mt-2 text-xs text-slate-500">{new Date(e.drawn_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</p></>}</td><td className="py-4">{e.redeemed_at ? <span className="text-emerald-700">Đã trao</span> : e.prize_id && detail.campaign.track_redemption ? <button className={styles.secondary} disabled={lock || dirty} onClick={() => void run(async () => { await api("", { action: "redeem", id: draft.id, data: { entry_id: e.id } }); await load(draft.id); setMessage("Đã xác nhận trao quà."); })}>Xác nhận đã trao</button> : "—"}</td></tr>)}</tbody></table></div>
+          {!filtered.length && <p className="py-8 text-center text-sm text-slate-500">Chưa có khách phù hợp.</p>}<div className="flex items-center gap-3 text-sm"><button className={styles.secondary} disabled={page === 0} onClick={() => setPage(p => p - 1)}>Trước</button><span>Trang {page + 1}/{Math.max(1, Math.ceil(filtered.length / 25))}</span><button className={styles.secondary} disabled={(page + 1) * 25 >= filtered.length} onClick={() => setPage(p => p + 1)}>Sau</button></div>
+        </Panel>}
+      </div><aside className={`${styles.card} h-fit space-y-5 p-5 text-center`}><div className="flex items-center justify-center gap-2 text-sm font-bold"><QrCode size={18} aria-hidden="true" />Mời khách tham gia</div><div className="mx-auto w-fit rounded-2xl border border-slate-100 p-3"><QRCodeView value={buildPublicUrl(`/prize-draw/${draft.id}/register`)} size={180} /></div><p className="text-xs leading-5 text-slate-600">Quét mã → Đăng ký → Quay nhận quà</p><Link href={`/prize-draw/${draft.id}/register`} target="_blank" className={`${styles.primary} w-full`}>Mở form đăng ký<ArrowUpRight size={16} aria-hidden="true" /></Link><Link href={`/prize-draw/${draft.id}`} target="_blank" className={`${styles.secondary} w-full`}>Xem vòng quay<ArrowUpRight size={16} aria-hidden="true" /></Link><p className="text-xs leading-5 text-slate-500">Các thay đổi hiển thị cho khách sau khi lưu. SĐT không xác thực OTP.</p></aside></div>
+      {dirty && <div className="sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-white p-4 shadow-lg"><p className="text-sm font-semibold text-slate-700">Có thay đổi chưa lưu</p><div className="flex gap-2"><button className={styles.secondary} disabled={busy} onClick={() => { setDraft(detail.campaign); setItems(detail.items); setDirty(false); }}>Bỏ thay đổi</button><button className={styles.primary} disabled={lock} onClick={() => void run(save)}><Save size={16} aria-hidden="true" />{busy ? "Đang xử lý…" : "Lưu thay đổi"}</button></div></div>}
     </>}
   </div>;
+}
+function Panel({ title, description, children }: { title: string; description?: string; children: ReactNode }) { return <section className={`${styles.card} space-y-5 p-5 sm:p-6`}><div><h2 className="text-lg font-bold">{title}</h2>{description && <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>}</div>{children}</section>; }
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block space-y-2 text-sm font-medium"><span>{label}</span>{children}</label>; }
+function Metric({ label, value, note }: { label: string; value: number; note: string }) { return <div className={`${styles.card} p-5`}><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p><p className="my-2 text-3xl font-bold tabular-nums">{value.toLocaleString("vi-VN")}</p><p className="text-xs text-slate-500">{note}</p></div>; }
+function AssetEditor({ label, name, value, disabled, onChange, onUpload }: { label: string; name?: string; value: string; disabled: boolean; onChange: (url: string) => void; onUpload: (file: File) => void }) {
+  return <div className="space-y-3"><PrizeImage src={value} name={name || label} className="max-h-56 w-full" /><label className={`${styles.secondary} relative w-fit focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-sky-600 ${disabled ? "opacity-50" : "cursor-pointer"}`}><ImagePlus size={18} aria-hidden="true" /><span>{label} · Tải lên</span><input aria-label={`Tải ${label.toLowerCase()}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed" onChange={e => { const file = e.target.files?.[0]; if (file) onUpload(file); e.target.value = ""; }} /></label><Field label={`${label} (URL HTTPS)`}><input type="url" className={styles.field} value={value} disabled={disabled} onChange={e => onChange(e.target.value)} placeholder="https://…" /></Field><div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-500">JPG, PNG, WebP · tối đa 4 MB</p>{value && <button className={styles.secondary} disabled={disabled} onClick={() => onChange("")}>Bỏ ảnh</button>}</div></div>;
 }

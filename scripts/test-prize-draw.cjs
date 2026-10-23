@@ -69,9 +69,9 @@ test('public response redacts identity, token hashes and unearned claim codes', 
 
 test('public API requires origin/session; validates answers and returns only safe fields', async () => {
   const {NextRequest}=require('next/server');
-  const id=randomUUID(); let rpcCalls=[]; let campaign={survey_id:randomUUID(),phone_question_id:'phone'};
+  const id=randomUUID(); let rpcCalls=[]; let campaign={form_fields:fields,phone_question_id:'phone'};
   const service={
-    from(name) { const chain={select(){return chain;},eq(){return chain;},order(){return chain;},
+    from(name) { assert.notEqual(name,'survey_questions'); const chain={select(){return chain;},eq(){return chain;},is(){return chain;},order(){return chain;},
       maybeSingle:async()=>({data:name==='prize_campaigns'?campaign:null,error:null}),
       then(resolve,reject){return Promise.resolve({data:fields,error:null}).then(resolve,reject);}}; return chain; },
     async rpc(name,args){rpcCalls.push({name,args});return {data:{id:'safe',prize_id:null,phone:args.p_phone,token_hash:args.p_hash,answers:args.p_answers,claim_code:'hidden'},error:null};}

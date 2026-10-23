@@ -306,26 +306,32 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Run `supabase/prize-draw-permissions.sql` on existing installations; setup script,
   fresh schema and permissions bootstrap include it. Regression:
   `node --test scripts/test-prize-permissions.cjs` (same `PRIZE_TEST_DEPS`).
-- `/admin/tools/prize-draw` manages configurable registration-linked prize campaigns;
-  `/prize-draw/[id]` is the mobile wheel. Reuses `/s/[id]`, `ThankYouScreen`, QR,
-  normalization and admin auth; `PrizeWheel` is shared with Booth Draw.
+- `/admin/tools/prize-draw` is an independent tool within this website, retaining
+  the shared login and explicit tool permission. Tabs manage settings, a private
+  registration form, gifts and guests. Public registration is
+  `/prize-draw/[id]/register`; `/prize-draw/[id]` is the mobile wheel. Reuses QR,
+  normalization, field types, confirmation UI and admin auth; `PrizeWheel` is shared
+  with Booth Draw. New campaigns/registrations never create CME forms or responses.
 - Create a sample demo or a live draft. Defaults: 120 bottles, 90 bags, 60 umbrellas,
   30 special gifts; dates are Nov 12–24, 2026 in Vietnam (exclusive end Nov 25 00:00).
   Demos ignore the date window while active and have completely separate inventory.
-  Demo/live identity, survey and phone question cannot change. There is no reset.
+  Demo/live identity and phone question cannot change. There is no reset.
 - One normalized Vietnamese phone per campaign, one draw per entry. No OTP: this
   deduplicates supplied phone numbers, not verified people. Each campaign uses a
   scoped HttpOnly cookie; another device cannot reclaim an entry by entering its phone.
   Lost cookies require operator assistance; never issue a second draw automatically.
-- Public submission goes through `/api/prize-draw/[id]` and creates the form response
-  and secret-bound entry together. `prize_campaign_id` suppresses ordinary submission,
-  repeat-submission button, email/check-in and static redirect for linked forms.
-  Linked forms are feedback forms; existing forms must be empty. Supported questions:
-  text, paragraph, phone, choice, date, province, rating, NPS and decorative sections/images.
-  Phone must remain required/unconditional; SQL triggers guard these restrictions.
+- Form fields and presentation live in `prize_campaigns`; answers live only in
+  `prize_entries`. Public submission uses `/api/prize-draw/[id]` with a campaign
+  revision check under the SQL lock. Supported fields: text, paragraph, phone,
+  choice, date, province, rating, NPS and sections/images. The phone stays required
+  and unconditional. Fields can be added/reordered/removed before the first entry;
+  afterwards their structure is locked. Form title/introduction/thanks remain editable.
 - `prize_campaigns`, `prize_items`, `prize_entries` and draw/admin RPCs are service-only.
-  Restrictive RLS blocks public access to linked responses without changing unrelated
-  forms. Entry snapshots/phone uniqueness survive deletion of a form response.
+  Migration copies old form fields once, detaches CME foreign keys and preserves
+  all entries, awards and stock. Old CME forms are deletable independently; no old
+  form/response is automatically deleted. Restrictive RLS still protects archived
+  response copies. Printed `/s/[legacy_form_id]` links redirect to the private form
+  even after the CME form is deleted. A deleted campaign returns not-found.
 - All stock changes/draws lock the campaign. Weight is remaining quantity; zero-stock
   gifts never win. Registration does not reserve stock. Sold-out stops new registration
   and draws. Retries restore the first stored award, even after pause/close/end.
@@ -334,15 +340,24 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - Admin can edit branding, dates, gifts/counts, status and redemption instructions;
   look up guests and confirm handout. CSV escapes formula injection; list/export is
   explicitly limited to the latest 1,000 registrations. Stock stats use all awards.
-- Apply `supabase/prize-draw.sql` (also included in `schema.sql`) or run
+- Gift images accept HTTPS URLs or authorized uploads (JPG/PNG/WebP, up to 4 MB).
+  `/api/admin/prize-draw/asset` checks the tool permission, decodes/resizes with Sharp,
+  then stores normalized WebP in public `prize-assets`, with no browser write grant.
+  Sample gifts have local SVG illustrations. Winning entries snapshot the image URL.
+  Deleting a campaign closes public access and removes it from the list using
+  `deleted_at`; it preserves the ledger for reconciliation and requires confirmation.
+- Apply `prize-draw.sql`, `prize-draw-permissions.sql`, then
+  `supabase/prize-draw-standalone.sql` (all included in `schema.sql`), or run
   `node scripts/setup-prize-draw.cjs --seed-demo`. It creates only one sample demo,
   no guests/email, and never resets an existing demo. Optional `PRIZE_DB_POOLER_HOST`
   selects the project's known session-pooler host; password stays in `SUPABASE_DB_URL`.
-- Regression: `node --test scripts/test-prize-draw.cjs`; `PRIZE_TEST_DEPS` can point
+- Regression: `node --test scripts/test-prize-draw.cjs scripts/test-prize-permissions.cjs
+  scripts/test-prize-standalone.cjs`; `PRIZE_TEST_DEPS` can point
   to a temporary package folder with `@electric-sql/pglite` for actual SQL checks.
   `node scripts/test-prize-draw-ui.cjs` uses port 3111 (`PRIZE_E2E_BASE` override),
   Playwright from the same folder and optional `PLAYWRIGHT_CHANNEL=msedge`.
-  Browser tests mock all auth/data/writes, test mobile/desktop and never send email.
+  Browser tests mock all auth/data/writes, test portrait/landscape/desktop, independent
+  form editing, uploads, deletion and permission grants; they never send email.
 
 - `/admin/tools/booth-draw` - booth lucky draw (admin); public at `/booth-draw`.
 - `/admin/tools/flap` - MC console for the "Lắc điện thoại, Đại bàng tung cánh"

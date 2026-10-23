@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   // cannot follow. Include them (and the overlay fonts) in the lambdas that
   // compose invitation images.
   outputFileTracingIncludes: {
+    "/api/admin/prize-draw/asset": ["./node_modules/@img/**"],
     "/api/qr": ["./node_modules/@img/**", "./public/logo_qr.png"],
     "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
     "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],

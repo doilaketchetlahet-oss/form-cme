@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { PublicSurveyView } from "@/components/survey/PublicSurveyView";
+import { notFound, redirect } from "next/navigation";
+import { createBoothServiceClient } from "@/lib/server/booth-public-access";
+import { UUID_RE } from "@/lib/prize-draw";
 
 function getServerSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -46,5 +49,14 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function PublicSurveyPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ preview?: string }> }) {
   const { id } = await params;
   const query = await searchParams;
+  // Preserve printed QR links for campaigns migrated out of the CME form system.
+  if (UUID_RE.test(id) && query.preview !== "1") {
+    const service = createBoothServiceClient();
+    if (service) {
+      const { data: campaign } = await service.from("prize_campaigns").select("id,deleted_at").eq("legacy_form_id", id).maybeSingle();
+      if (campaign?.deleted_at) notFound();
+      if (campaign) redirect(`/prize-draw/${campaign.id}/register`);
+    }
+  }
   return <PublicSurveyView surveyId={id} preview={query.preview === "1"} />;
 }
