@@ -1,0 +1,125 @@
+// Start app on port 3111. PRIZE_TEST_DEPS supplies Playwright.
+// Auth, registrations, stock and API writes are mocked; no real records/emails.
+const assert=require('node:assert/strict');
+const {randomUUID}=require('node:crypto');
+const {createRequire}=require('node:module');
+const {mkdirSync}=require('node:fs');
+const {tmpdir}=require('node:os');
+const path=require('node:path');
+const deps=process.env.PRIZE_TEST_DEPS?createRequire(path.join(process.env.PRIZE_TEST_DEPS,'package.json')):require;
+const {chromium}=deps('playwright');
+require('@next/env').loadEnvConfig(process.cwd(),false,{info(){},error(){}});
+const base=process.env.PRIZE_E2E_BASE || 'http://localhost:3111';
+const host=new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).host;
+const shots=path.join(tmpdir(),'form-cme-prize-ui');mkdirSync(shots,{recursive:true});
+const user={id:randomUUID(),email:'admin@example.test',aud:'authenticated',role:'authenticated',user_metadata:{},app_metadata:{}};
+const exp=Math.floor(Date.now()/1000)+3600;
+const token=`${Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:user.id,exp})).toString('base64url')}.test-only`;
+const session={access_token:token,refresh_token:'test-only',token_type:'bearer',expires_in:3600,expires_at:exp,user};
+let browser;
+async function run(viewport) {
+  const id=randomUUID(),sid=randomUUID();
+  const questions=['Họ và tên','Số điện thoại','Đơn vị / Công ty'].map((text,i)=>({id:randomUUID(),survey_id:sid,text,type:i===1?'phone':'text',position:i,required:i<2,options:null,allow_multiple:false,show_if:null}));
+  let campaign={id,survey_id:sid,phone_question_id:questions[1].id,name:'DEMO · Merap · Vòng quay nhận quà',status:'active',is_demo:true,starts_at:'2026-11-12T00:00:00+07:00',ends_at:'2026-11-25T00:00:00+07:00',accent_color:'#0284c7',banner_url:'',instructions:'Vui lòng đưa mã nhận quà cho nhân viên tại booth.',track_redemption:true,revision:1};
+  let items=['Bình nước','Túi vải','Ô cầm tay','Bộ quà đặc biệt'].map((name,i)=>({id:randomUUID(),name,color:['#0284c7','#7c3aed','#db2777','#d97706'][i],total:[120,90,60,30][i],remaining:[120,90,60,30][i],position:i}));
+  const survey={id:sid,form_type:'feedback',title:'Đăng ký nhận quà Merap',prize_campaign_id:id,thank_you_message:'Cảm ơn bạn! Mời bạn quay nhận quà.',accent_color:'#0284c7',redirect_url:'https://must-not-redirect.invalid',redirect_delay:1};
+  let entry=null,records=[],spins=0,registrations=0,dropSpin=false,failSnapshot=false,role='owner',creates=0;
+  const context=await browser.newContext({viewport,reducedMotion:'reduce',hasTouch:viewport.width<600});
+  const errors=[];const blockedWrites=[];
+  try {
+    await context.addInitScript(({host,session})=>localStorage.setItem(`sb-${host.split('.')[0]}-auth-token`,JSON.stringify(session)),{host,session});
+    await context.route('**/*',async route=>{
+      const req=route.request(),url=new URL(req.url());let data;
+      if(url.host===host) {
+        if(req.method()!=='GET'){blockedWrites.push(url.pathname);return route.abort();}
+        if(url.pathname.endsWith('/surveys'))data=survey;
+        else if(url.pathname.endsWith('/survey_questions'))data=questions;
+        else if(url.pathname.endsWith('/admin_members'))data={role,active:true};
+        else if(url.pathname.endsWith('/user'))data=user;
+        else data=[];
+      } else if(url.pathname===`/api/prize-draw/${id}`) {
+        if(req.method()==='GET') {
+          if(failSnapshot)return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Mất kết nối thử nghiệm'})});
+          data={ok:true,campaign,items,entry};
+        } else {
+          const body=req.postDataJSON();
+          if(body.action==='register') {
+            registrations++;
+            if(!entry){entry={id:randomUUID(),prize_id:null,claim_code:'',drawn_at:null,redeemed_at:null};records=[{...entry,phone:'0900123456',answers:body.answers,created_at:new Date().toISOString()}];}
+            data={ok:true,entry};
+          } else if(body.action==='spin') {
+            spins++;
+            if(!entry.prize_id){entry={...entry,prize_id:items[0].id,prize_name:items[0].name,prize_color:items[0].color,claim_code:'ABCDEF0123456789ABCDEF0123456789',drawn_at:new Date().toISOString()};items[0].remaining--;records[0]={...records[0],...entry};}
+            if(dropSpin){dropSpin=false;return route.abort('failed');}
+            data={ok:true,entry};
+          } else throw new Error('Unexpected public write');
+        }
+      } else if(url.pathname==='/api/admin/prize-draw') {
+        if(req.method()==='POST') {
+          assert.notEqual(role,'viewer');const body=req.postDataJSON();
+          if(body.action==='create'){creates++;data={ok:true,id};}
+          else if(body.action==='save'){campaign={...campaign,...body.data,revision:campaign.revision+1};items=body.data.items.map(p=>({...p,remaining:p.total-(items.find(s=>s.id===p.id)?.total-items.find(s=>s.id===p.id)?.remaining||0)}));data={ok:true,id};}
+          else if(body.action==='redeem'){entry.redeemed_at=new Date().toISOString();records[0].redeemed_at=entry.redeemed_at;data={ok:true,id};}
+          else throw new Error('Unexpected admin write');
+        } else data=url.searchParams.has('id')?{ok:true,campaigns:[campaign],campaign,items,entries:records,questions,role}:{ok:true,campaigns:[campaign],forms:[],role};
+      } else if(url.pathname==='/api/qr') {
+        return route.fulfill({status:200,contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="white"/></svg>'});
+      } else if(url.pathname.startsWith('/api/')) {
+        blockedWrites.push(url.pathname);return route.abort();
+      } else if(url.origin===new URL(base).origin)return route.continue();
+      else return route.abort();
+      return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});
+    });
+    const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(`${base}/s/${sid}`);
+    await page.getByRole('button',{name:'Gửi khảo sát'}).waitFor();
+    await page.locator('input[type="text"]').first().fill('Nguyễn An');
+    await page.locator('input[type="tel"]').fill('0900123456');
+    await page.getByRole('button',{name:'Gửi khảo sát'}).click();
+    await page.getByRole('link',{name:'Quay nhận quà →'}).waitFor();
+    assert.equal(registrations,1);assert.equal(await page.getByRole('button',{name:'Gửi lượt khác'}).count(),0);
+    await page.waitForTimeout(1200);assert.ok(page.url().endsWith(`/s/${sid}`));
+    await page.reload();await page.getByRole('link',{name:'Quay nhận quà →'}).waitFor();
+    await page.getByRole('link',{name:'Quay nhận quà →'}).click();
+    await page.getByRole('button',{name:'Quay nhận quà',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Quay nhận quà',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(255, 255, 255)');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.screenshot({path:path.join(shots,`wheel-${viewport.width}.png`),fullPage:true});
+    dropSpin=true; // Response lost AFTER server allocated. GET must recover it.
+    await page.getByRole('button',{name:'Quay nhận quà',exact:true}).click();
+    await page.getByRole('heading',{name:'Bạn đã trúng Bình nước!'}).waitFor();
+    assert.equal(spins,1);assert.equal(items[0].remaining,119);
+    await page.reload();await page.getByRole('heading',{name:'Bạn đã trúng Bình nước!'}).waitFor();assert.equal(spins,1);
+    await page.screenshot({path:path.join(shots,`result-${viewport.width}.png`),fullPage:true});
+    await page.goto(`${base}/admin/tools/prize-draw`);
+    await page.getByLabel('Chọn chương trình').selectOption(id);
+    await page.getByLabel('Tên chương trình',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Đóng từ thời điểm (giờ Việt Nam)').inputValue(),'2026-11-25T00:00');
+    await page.getByLabel('Tên chương trình',{exact:true}).fill('Merap tùy chỉnh');
+    await page.getByLabel('Số lượng quà 1').fill('150');
+    assert.equal(await page.getByLabel('Chọn chương trình').isDisabled(),true);
+    await page.getByRole('button',{name:'Lưu cấu hình'}).click();await page.getByText('Đã lưu cấu hình.',{exact:true}).waitFor();
+    assert.equal(items[0].remaining,149);assert.equal(campaign.name,'Merap tùy chỉnh');
+    await page.getByRole('button',{name:'Xác nhận đã trao',exact:true}).click();await page.getByText('Đã xác nhận trao quà.',{exact:true}).waitFor();assert.ok(entry.redeemed_at);
+    const download=page.waitForEvent('download');await page.getByRole('button',{name:'Xuất CSV danh sách đang tải'}).click();assert.match((await download).suggestedFilename(),/\.csv$/);
+    await page.screenshot({path:path.join(shots,`admin-${viewport.width}.png`),fullPage:true});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.getByText('Tạo chương trình với dữ liệu mẫu',{exact:true}).click();
+    await page.getByRole('button',{name:'Tạo demo mẫu',exact:true}).click();await page.getByText(/Đã tạo chương trình nháp/).waitFor();assert.equal(creates,1);
+    role='viewer';await page.reload();await page.getByLabel('Chọn chương trình').selectOption(id);await page.getByLabel('Tên chương trình',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Tên chương trình',{exact:true}).isDisabled(),true);
+    // Sold-out, time window and missing registration states.
+    entry=null;items=items.map(p=>({...p,remaining:0}));
+    await page.goto(`${base}/prize-draw/${id}`);await page.getByText('Quà đã hết. Cảm ơn bạn đã tham gia!',{exact:true}).waitFor();
+    campaign={...campaign,is_demo:false,starts_at:'2099-11-12T00:00:00Z',ends_at:'2099-11-25T00:00:00Z'};
+    await page.reload();await page.getByText('Chương trình chưa đến giờ bắt đầu.',{exact:true}).waitFor();
+    failSnapshot=true;await page.reload();await page.getByRole('button',{name:'Tải lại',exact:true}).waitFor();failSnapshot=false;await page.getByRole('button',{name:'Tải lại',exact:true}).click();await page.getByRole('link',{name:'Điền form để nhận lượt quay →'}).waitFor();
+    assert.deepEqual(errors,[]);assert.deepEqual(blockedWrites,[]);
+    console.log(`PASS ${viewport.width}px: registration, reload, lost response recovery, stock config, redemption, CSV, viewer, sold-out, schedule, error retry.`);
+  } finally {await context.close();}
+}
+(async()=>{
+  browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});
+  try {for(const viewport of [{width:390,height:844},{width:1440,height:1000}])await run(viewport);console.log('Screenshots:',shots);}
+  finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

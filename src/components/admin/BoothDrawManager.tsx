@@ -1,5 +1,7 @@
 "use client";
 
+import { PrizeWheel, nextWheelRotation } from "@/components/ui/PrizeWheel";
+
 import {
   createContext,
   useCallback,
@@ -1134,7 +1136,6 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
   const companies = current.companies.filter((item) => item.pool_id === activePoolId && item.active && !assignedCompanies.has(item.id));
   const booths = current.booths.filter((item) => item.pool_id === activePoolId && item.active && !assignedBooths.has(item.id) && !drawnBooths.has(item.id));
   const selectedCompanyId = companies.some((item) => item.id === companyId) ? companyId : companies[0]?.id ?? "";
-  const wheelGradient = booths.length > 0 ? `conic-gradient(${booths.map((_, index) => `${index % 2 === 0 ? pool?.color ?? "#0ea5e9" : "#e0f2fe"} ${index / booths.length * 100}% ${(index + 1) / booths.length * 100}%`).join(",")})` : "#e2e8f0";
 
   useEffect(() => {
     const handleFullscreen = () => setFullscreen(document.fullscreenElement === drawScreenRef.current);
@@ -1160,12 +1161,7 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
       result = response.result;
       if (!result) throw new Error("Không nhận được kết quả quay.");
       const selectedIndex = Math.max(0, booths.findIndex((item) => item.id === result.booth_id));
-      const segment = 360 / Math.max(1, booths.length);
-      setRotation((value) => {
-        const normalized = ((value % 360) + 360) % 360;
-        const target = (360 - selectedIndex * segment - segment / 2 + 360) % 360;
-        return value + 1800 + (target - normalized + 360) % 360;
-      });
+      setRotation(value => nextWheelRotation(value, selectedIndex, booths.length));
       await new Promise((resolve) => window.setTimeout(resolve, 3600));
       // Always render the result against coordinates read after the draw. This
       // also covers a position save that was still in flight when the user
@@ -1221,21 +1217,7 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
             </div>
           </div>
           <div className="mx-auto flex max-w-2xl flex-col items-center">
-            <div className="relative w-full max-w-[480px]">
-              <div className="absolute -top-3 left-1/2 z-20 h-0 w-0 -translate-x-1/2 border-x-[16px] border-t-[28px] border-x-transparent border-t-red-500 drop-shadow" />
-              <div className="relative aspect-square w-full rounded-full border-[10px] border-white shadow-2xl transition-transform duration-[3500ms] ease-[cubic-bezier(.12,.8,.18,1)]" style={{ background: wheelGradient, transform: `rotate(${rotation}deg)` }}>
-                {booths.length <= 36 && booths.map((booth, index) => (
-                  <span
-                    key={booth.id}
-                    className="absolute left-1/2 top-1/2 z-10 w-[47%] origin-left -translate-y-1/2 pr-2 text-right text-[9px] font-black text-slate-900 sm:text-[11px]"
-                    style={{ transform: `translateY(-50%) rotate(${(index + 0.5) * 360 / booths.length - 90}deg)` }}
-                  >
-                    <span className="rounded bg-white/75 px-1 py-0.5 shadow-sm">{booth.booth_code}</span>
-                  </span>
-                ))}
-                <div className="absolute inset-[36%] z-20 grid place-items-center rounded-full border-8 border-white bg-slate-900 text-center text-white shadow-xl"><Dices size={30} /><span className="mt-1 text-[10px] font-bold uppercase tracking-wider">{pool?.name ?? "Pool"}</span></div>
-              </div>
-            </div>
+            <PrizeWheel items={booths.map((booth, index) => ({ id: booth.id, name: booths.length <= 36 ? booth.booth_code : "", color: index % 2 === 0 ? pool?.color ?? "#0ea5e9" : "#64748b" }))} rotation={rotation} center={pool?.name ?? "Pool"} spinning={spinning} />
             <div className="mt-7 flex max-h-28 flex-wrap justify-center gap-2 overflow-auto">{booths.map((booth) => <span key={booth.id} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">{booth.booth_code}</span>)}</div>
           </div>
         </section>

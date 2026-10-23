@@ -10,6 +10,9 @@ const { randomUUID } = require("node:crypto");
 const ts = require("typescript");
 
 function loadSource(file, mocks = {}) {
+  if (file === "src/app/api/admin/forms/[id]/save/route.ts") {
+    mocks["@/lib/prize-draw"] = loadSource("src/lib/prize-draw.ts", { "./normalize": loadSource("src/lib/normalize.ts") });
+  }
   const { outputText } = ts.transpileModule(readFileSync(path.join(__dirname, "..", file), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX }, fileName: file,
   });

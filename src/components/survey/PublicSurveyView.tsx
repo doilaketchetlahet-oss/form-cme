@@ -100,7 +100,14 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
       const closedNow = !!loadedSurvey.is_closed
         || (!!loadedSurvey.close_at && new Date(loadedSurvey.close_at).getTime() <= Date.now());
       if (!preview && closedNow) setClosed(true);
-      if (!preview && isCheckinForm(loadedSurvey) && hasSubmittedSurvey(surveyId)) {
+      if (!preview && loadedSurvey.prize_campaign_id) {
+        try {
+          const response = await fetch(`/api/prize-draw/${loadedSurvey.prize_campaign_id}`, { cache: "no-store" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Không tải được chương trình quay quà.");
+          if (data.entry) setSubmitted(true);
+        } catch (e) { setError(e instanceof Error ? e.message : "Không tải được chương trình quay quà."); }
+      } else if (!preview && isCheckinForm(loadedSurvey) && hasSubmittedSurvey(surveyId)) {
         setSubmitted(true);
       }
       // Load quiz logo/brand (best-effort, may fail due to RLS)
@@ -216,6 +223,21 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
     for (const [qId, val] of Object.entries(answers)) {
       const q = questions.find((x) => x.id === qId);
       normalized[qId] = q ? normalizeAnswer(val, q.type) : val;
+    }
+
+    if (survey.prize_campaign_id) {
+      try {
+        const response = await fetch(`/api/prize-draw/${survey.prize_campaign_id}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "register", answers: normalized }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Không đăng ký được lượt quay.");
+        localStorage.removeItem(DRAFT_KEY(surveyId));
+        setSubmitted(true);
+      } catch (e) { setError(e instanceof Error ? e.message : "Mất kết nối. Vui lòng thử lại trên thiết bị này."); }
+      finally { setSubmitting(false); }
+      return;
     }
 
     const allowCheckin = isCheckinForm(survey);
@@ -801,7 +823,8 @@ function ThankYouScreen({
   allowCheckin: boolean;
   onSubmitAnother: () => void;
 }) {
-  const redirectUrl = survey?.redirect_url?.trim() || null;
+  const prizeUrl = survey?.prize_campaign_id ? `/prize-draw/${survey.prize_campaign_id}` : null;
+  const redirectUrl = prizeUrl ? null : survey?.redirect_url?.trim() || null;
   const initialDelay = survey?.redirect_delay ?? 5;
   const [countdown, setCountdown] = useState(initialDelay);
 
@@ -845,7 +868,12 @@ function ThankYouScreen({
       </p>
 
       {/* Check-in QR code */}
-      {checkinUrl && !redirectUrl && (
+      {prizeUrl && <div className="mb-6 space-y-3">
+        <a href={prizeUrl} className="inline-block rounded-xl px-6 py-4 font-bold text-on-brand shadow-lg" style={{ background: accent }}>Quay nhận quà →</a>
+        <p className="max-w-sm text-sm text-slate-500">Một SĐT có một lượt cho toàn chương trình. Quà được xác định khi quay, trong giới hạn tồn kho.</p>
+      </div>}
+
+      {checkinUrl && !redirectUrl && !prizeUrl && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -900,7 +928,7 @@ function ThankYouScreen({
         </motion.div>
       )}
 
-      {!allowCheckin && !redirectUrl && (
+      {!allowCheckin && !redirectUrl && !prizeUrl && (
         <button
           type="button"
           onClick={onSubmitAnother}

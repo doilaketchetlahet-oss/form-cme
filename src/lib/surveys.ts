@@ -15,6 +15,7 @@ export interface PaymentConfig {
 
 export interface Survey {
   id: string;
+  prize_campaign_id?: string | null;
   quiz_id: string;
   form_type: SurveyFormType;
   position: number;

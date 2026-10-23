@@ -4,6 +4,7 @@ import type { RegistrationFormSave } from "@/lib/forms";
 import type { SurveyQuestionUpsert } from "@/lib/surveys";
 import { normalizeSessionConfig, sessionQuestionChanged, validateSessionConfig } from "@/lib/checkin-sessions";
 import type { CheckinTheme, SurveyQuestion } from "@/lib/surveys";
+import { prizeFormError } from "@/lib/prize-draw";
 
 export const runtime = "nodejs";
 
@@ -60,7 +61,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { data: survey, error: loadError } = await supabase
     .from("surveys")
-    .select("quiz_id, checkin_theme")
+    .select("*")
     .eq("id", surveyId)
     .single();
 
@@ -70,6 +71,19 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!survey?.quiz_id) {
     return NextResponse.json({ ok: false, error: "Không tìm thấy form." }, { status: 404 });
+  }
+
+  if (survey.prize_campaign_id) {
+    if (payload!.form_type !== "feedback" || payload!.payment_config?.enabled || payload!.vip_checkin_enabled) {
+      return NextResponse.json({ ok: false, error: "Form đang gắn vòng quay nhận quà: giữ loại khảo sát, không bật thanh toán hoặc khuôn mặt." }, { status: 400 });
+    }
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) return NextResponse.json({ ok: false, error: "Thiếu cấu hình server để kiểm tra form quay quà." }, { status: 503 });
+    const service = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const campaign = await service.from("prize_campaigns").select("phone_question_id").eq("id", survey.prize_campaign_id).maybeSingle();
+    if (campaign.error || !campaign.data) return NextResponse.json({ ok: false, error: "Không kiểm tra được chương trình quay quà. Vui lòng thử lại." }, { status: 503 });
+    const invalid = prizeFormError(payload!.questions as SurveyQuestion[], campaign.data.phone_question_id);
+    if (invalid) return NextResponse.json({ ok: false, error: invalid }, { status: 400 });
   }
 
   const oldConfig = normalizeSessionConfig((survey.checkin_theme as CheckinTheme | null)?.sessionConfig);
