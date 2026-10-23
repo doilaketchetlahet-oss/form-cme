@@ -14,15 +14,19 @@ require('@next/env').loadEnvConfig(process.cwd(), false, { info() {}, error() {}
 const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).host;
 const base = process.env.ATTENDANCE_E2E_BASE || 'http://localhost:3107';
 const surveyId = randomUUID(), program = randomUUID(), cme = randomUUID(), name = randomUUID();
+const degree = randomUUID(), role = randomUUID(), job = randomUUID();
 const config = { questionId: program, sessions: [
   { id: 'conference', name: 'Hội thảo', hall: 'Trung tâm hội nghị', checkHall: true, optionIndexes: [0, 2] },
   { id: 'gala', name: 'Gala dinner', hall: 'Nhà hàng', optionIndexes: [1, 2] }
 ] };
 const survey = { id: surveyId, title: 'Kiểm tra tham dự', checkin_pin: '', checkin_theme: { sessionsEnabled: true, sessionConfig: config } };
 const questions = [
-  { id: name, text: 'Họ tên', type: 'text', options: null },
+  { id: job, text: 'Chức danh', type: 'text', options: null },
+  { id: degree, text: 'Học hàm học vị', type: 'text', options: null },
   { id: program, text: 'Bạn tham dự chương trình nào?', type: 'choice', required: true, options: ['Chỉ hội thảo', 'Chỉ Gala dinner', 'Cả hội thảo và Gala dinner'] },
   { id: cme, text: 'Đăng ký cấp CME', type: 'choice', options: ['Có', 'Không'] },
+  { id: role, text: 'Vai trò', type: 'choice', options: ['Báo cáo viên', 'Đại biểu'] },
+  { id: name, text: 'Họ và tên', type: 'text', options: null },
 ].map((q, position) => ({ required: false, allow_multiple: false, is_hall_selector: false, show_if: null, ...q, position }));
 let records = [], writes = 0, confirmations = 0;
 const dir = mkdtempSync(path.join(tmpdir(), 'attendance-ui-'));
@@ -74,10 +78,10 @@ let browser;
   await page.getByRole('heading', { name: survey.title }).waitFor();
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
-    ['Họ tên', 'Email', 'Hội trường', 'Gala', 'CME'],
-    ['Nguyễn An', 'an@example.test', 'A', 'x', '1'],
-    ['Trần Bình', 'binh@example.test', 'B', 'Không', 'Có'],
-    ['Khách lỗi', 'loi@example.test', 'A', '', 'Không'],
+    ['Họ tên', 'Email', 'Hội trường', 'Gala', 'CME', 'Học hàm học vị', 'Vai trò', 'Chức danh'],
+    ['Nguyễn An', 'an@example.test', 'A', 'x', '1', 'BS', 'Báo cáo viên', 'Trưởng khoa'],
+    ['Trần Bình', 'binh@example.test', 'B', 'Không', 'Có', 'ThS', 'Đại biểu', 'Bác sĩ'],
+    ['Khách lỗi', 'loi@example.test', 'A', '', 'Không', '', '', ''],
   ]), 'Guests');
   await page.locator('input[type=file]').setInputFiles({ name: 'guests.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) });
   await page.getByText('Ghép cột tham dự và CME', { exact: true }).waitFor();
@@ -123,8 +127,16 @@ let browser;
   assert.equal(confirmations, 0);
   await page.screenshot({ path: path.join(dir, 'wrong-hall-mobile.png'), fullPage: true });
   await scan(records[0].id, 'conference', 'A');
+  const pending = page.getByRole('heading', { name: 'Xác nhận check-in', exact: true }).locator('..');
+  await pending.waitFor();
+  assert.deepEqual((await pending.locator('span.text-slate-500').allTextContents()).slice(0, 4), ['Họ và tên:', 'Học hàm học vị:', 'Vai trò:', 'Chức danh:']);
+  assert.equal(await pending.getByText('Hội trường được phân:', { exact: true }).count(), 0);
   await page.getByRole('button', { name: '✓ Check-in', exact: true }).click();
-  await page.waitForFunction(() => document.body.textContent.includes('Chào mừng'), null, { timeout: 3000 }).catch(() => {});
+  const welcome = page.getByRole('status', { name: 'Check-in thành công', exact: true });
+  await welcome.waitFor();
+  assert.equal(await welcome.getByRole('heading').textContent(), 'Nguyễn An');
+  assert.deepEqual(await welcome.locator('dt').allTextContents(), ['Học hàm học vị: ', 'Vai trò: ', 'Chức danh: ']);
+  assert.equal((await welcome.textContent()).includes('🏛'), false);
   assert.equal(confirmations, 1);
   await scan(records[0].id, 'gala', 'B');
   await page.getByRole('button', { name: '✓ Check-in', exact: true }).click();
@@ -135,6 +147,25 @@ let browser;
   await page.getByRole('heading', { name: 'Chưa thể check-in', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: '✓ Check-in', exact: true }).count(), 0);
   assert.equal(confirmations, 2);
+  // A real hall-selector field enables the assigned hall, independently of
+  // the session's shared venue or the operator's selected hall.
+  const hallQuestion = randomUUID();
+  questions.push({ id: hallQuestion, text: 'Hội trường đăng ký', type: 'choice', options: ['A', 'B'], is_hall_selector: true, required: false, position: questions.length });
+  const extra = { ...records[0], id: randomUUID(), session_checkins: {}, answers: { ...records[0].answers, [hallQuestion]: 0 } };
+  records.push(extra);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await scan(extra.id, 'gala', 'B');
+  await page.getByRole('heading', { name: 'Xác nhận check-in', exact: true }).waitFor();
+  assert.equal(await page.getByText('Hội trường được phân:', { exact: true }).count(), 1);
+  await page.getByRole('button', { name: '✓ Check-in', exact: true }).click();
+  await welcome.waitFor();
+  assert.equal(await welcome.getByRole('heading').textContent(), 'Nguyễn An');
+  assert.ok((await welcome.textContent()).includes('🏛 A'));
+  assert.equal(confirmations, 3);
   assert.deepEqual(errors, []);
   console.log(`Attendance UI passed: XLSX import/export, desktop/mobile, QR rights, wrong hall, independent check-ins. Screenshots: ${dir}`);
-})().catch((e) => { console.error(e); process.exitCode = 1; }).finally(async () => { await browser?.close(); });
+})().catch(async (e) => {
+  console.error(e); console.error('Browser errors:', errors);
+  for (const context of browser?.contexts() ?? []) for (const page of context.pages()) console.error((await page.locator('body').innerText()).slice(-2500));
+  process.exitCode = 1;
+}).finally(async () => { await browser?.close(); });

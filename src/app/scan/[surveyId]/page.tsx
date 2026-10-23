@@ -10,7 +10,8 @@ import { logCheckinEvent } from "@/lib/checkinLogs";
 import QrScanner from "qr-scanner";
 import { canAttendSession, normalizeSessionConfig } from "@/lib/checkin-sessions";
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
-import { attendanceDetails, type DisplayQuestion } from "@/lib/attendance-display";
+import { assignedHallForDisplay, attendanceDetails, attendanceQuestionPriority, formatAttendanceAnswer, type DisplayQuestion } from "@/lib/attendance-display";
+import { findAttendeeName } from "@/lib/email-template";
 
 function getInitialScanQuery() {
   if (typeof window === "undefined") return { hall: "", session: "" };
@@ -25,6 +26,8 @@ interface PendingCheckin {
   responseId: string;
   name: string;
   answers: { label: string; value: string }[];
+  assignedHall: string;
+  identityDetails: { label: string; value: string }[];
   alreadyCheckedIn: boolean;
   wrongHall?: string | null;
   notCheckedInGeneral?: boolean;
@@ -68,7 +71,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const initialQuery = getInitialScanQuery();
   const [surveyTitle, setSurveyTitle] = useState("");
   const questionsRef = useRef<DisplayQuestion[]>([]);
-  const orderRef = useRef<string[]>([]);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [pending, setPending] = useState<PendingCheckin | null>(null);
   const [checkedCount, setCheckedCount] = useState(0);
@@ -76,7 +78,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const [hall, setHall] = useState<string>(initialQuery.hall); // current hall filter
   const [assignedHalls, setAssignedHalls] = useState<string[]>([]);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
-  const [welcome, setWelcome] = useState<{ name: string; hall: string } | null>(null);
+  const [welcome, setWelcome] = useState<{ name: string; hall: string; details: { label: string; value: string }[] } | null>(null);
   const [session] = useState<string>(initialQuery.session);
   const [theme, setTheme] = useState<CheckinTheme | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -106,7 +108,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     surveyIdRef.current = id;
     Promise.all([
       supabase.from("surveys").select("title, checkin_theme").eq("id", id).single(),
-      supabase.from("survey_questions").select("id, text, position, type, options").eq("survey_id", id).order("position"),
+      supabase.from("survey_questions").select("id, text, position, type, options, is_hall_selector").eq("survey_id", id).order("position"),
     ]).then(([{ data: survey, error }, { data: questions, error: questionError }]) => {
       if (error || questionError || !survey) {
         setScanResult({ type: "error", message: "Không tải được cấu hình check-in. Tải lại trang để thử lại." });
@@ -117,7 +119,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       sessionConfigRef.current = normalizeSessionConfig(survey.checkin_theme?.sessionConfig);
       surveyReadyRef.current = true;
       questionsRef.current = questions ?? [];
-      orderRef.current = (questions ?? []).map((q) => q.id);
     });
   }, [surveyId]);
 
@@ -147,14 +148,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     const interval = setInterval(fetchCount, 5000);
     return () => clearInterval(interval);
   }, [surveyId, hall, session, sessionConfig]);
-
-  const getFirstTextField = (answers: Record<string, unknown>): string => {
-    for (const k of orderRef.current) {
-      const v = answers[k];
-      if (typeof v === "string" && v.length > 1 && v.length < 50 && !/^https?:/.test(v) && !/^\d+$/.test(v)) return v;
-    }
-    return "";
-  };
 
   const handleScan = async (responseId: string) => {
     if (!surveyReadyRef.current) return;
@@ -186,9 +179,16 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       return;
     }
 
-    const name = getFirstTextField(resp.answers as Record<string, unknown>) || resp.id.slice(0, 8).toUpperCase();
+    const name = findAttendeeName(resp.answers, questionsRef.current) || resp.id.slice(0, 8).toUpperCase();
 
     const answersArr = attendanceDetails(questionsRef.current, resp, sessionConfigRef.current);
+    const identityDetails = [...questionsRef.current].sort((a, b) => attendanceQuestionPriority(a) - attendanceQuestionPriority(b)).flatMap((question) => {
+      const rank = attendanceQuestionPriority(question);
+      const value = resp.answers[question.id];
+      return rank >= 1 && rank <= 3 && value != null && value !== ""
+        ? [{ label: question.text, value: formatAttendanceAnswer(value, question) }] : [];
+    });
+    const attendee = { responseId, name, answers: answersArr, assignedHall: assignedHallForDisplay(questionsRef.current, resp), identityDetails };
 
     const currentHall = hallRef.current;
     const currentSession = sessionRef.current;
@@ -196,7 +196,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     // Check hall mismatch (applies in both modes)
     if (!sessionConfigRef.current && currentHall && resp.hall && resp.hall !== currentHall) {
       playBeep(false);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: false, wrongHall: resp.hall });
+      setPending({ ...attendee, alreadyCheckedIn: false, wrongHall: resp.hall });
       return;
     }
 
@@ -205,25 +205,25 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       const result = await recordSessionCheckin(sid, responseId, currentSession, "preview", "qr", currentHall);
       if (!result.ok) {
         playBeep(false);
-        setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: false, blockedReason: result.error ?? "Không được tham dự buổi này." });
+        setPending({ ...attendee, alreadyCheckedIn: false, blockedReason: result.error ?? "Không được tham dự buổi này." });
         return;
       }
       const alreadyInSession = result.code === "already";
       playBeep(!alreadyInSession);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: alreadyInSession, checkedInAt: result.checkedInAt });
+      setPending({ ...attendee, alreadyCheckedIn: alreadyInSession, checkedInAt: result.checkedInAt });
       return;
     }
 
     // GENERAL/HALL MODE (original logic)
     if (resp.checked_in && !currentHall) {
       playBeep(false);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: true });
+      setPending({ ...attendee, alreadyCheckedIn: true });
     } else if (!resp.checked_in && currentHall) {
       playBeep(true);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: false, notCheckedInGeneral: true });
+      setPending({ ...attendee, alreadyCheckedIn: false, notCheckedInGeneral: true });
     } else {
       playBeep(true);
-      setPending({ responseId, name, answers: answersArr, alreadyCheckedIn: false });
+      setPending({ ...attendee, alreadyCheckedIn: false });
     }
   };
 
@@ -254,7 +254,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     setConfirming(false);
     lastScannedRef.current = pending.responseId;
     setTimeout(() => { lastScannedRef.current = ""; }, 3000);
-    setWelcome({ name: pending.name, hall: sessionName || currentHall });
+    setWelcome({ name: pending.name, hall: pending.assignedHall, details: pending.identityDetails });
     setTimeout(() => setWelcome(null), 2000);
     setPending(null);
   };
@@ -475,7 +475,9 @@ function ScanInner({ surveyId }: { surveyId: string }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-sky-500 via-cyan-600 to-teal-700 px-6"
+            role="status"
+            aria-label="Check-in thành công"
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center overflow-y-auto bg-gradient-to-br from-sky-500 via-cyan-600 to-teal-700 px-6 py-6"
           >
             <motion.div
               initial={{ scale: 0 }}
@@ -501,14 +503,17 @@ function ScanInner({ surveyId }: { surveyId: string }) {
             >
               {welcome.name}
             </motion.h1>
-            <motion.p
+            {welcome.details.length > 0 && <motion.dl initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mb-3 w-full max-w-md space-y-1 text-center text-white/95">
+              {welcome.details.map((item, index) => <div key={index} className="text-sm sm:text-base"><dt className="inline text-white/75">{item.label}: </dt><dd className="inline font-medium">{item.value}</dd></div>)}
+            </motion.dl>}
+            {(welcome.hall || surveyTitle) && <motion.p
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.4 }}
+              transition={{ delay: 0.5 }}
               className="text-white/90 text-lg text-center"
             >
               {welcome.hall ? `🏛 ${welcome.hall}` : surveyTitle}
-            </motion.p>
+            </motion.p>}
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -522,11 +527,4 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       </AnimatePresence>
     </CheckinThemeLayer>
   );
-}
-
-function findName(answers: Record<string, unknown>): string {
-  for (const v of Object.values(answers)) {
-    if (typeof v === "string" && v.length > 1 && v.length < 50 && !/^https?:/.test(v) && !/^\d+$/.test(v)) return v;
-  }
-  return "";
 }

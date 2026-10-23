@@ -133,8 +133,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Reapplying mappings rereads the source file and replaces preview edits.
   Unmapped headers are visible. Import adds new registrations; it does not update
   an existing record with the same email.
-- QR confirmation shows assigned hall, every session's registration/check-in
-  status and decoded choice answers including CME. Denied guests still show
+- QR confirmation shows assigned hall when the form has a hall-selector field,
+  every session's registration/check-in status and decoded choice answers
+  including CME. Identity fields always precede other details: full name, academic
+  title/degree, role, job title, independently of form/answer order. The QR welcome
+  screen uses the labeled full name and these nonempty identity details, and only
+  shows an assigned hall for forms with a hall selector (not the session venue).
+  Denied guests still show
   details without a confirm button. Excel (.xlsx) and CSV export include assigned
   hall, question answers and separate eligibility/check-in columns per session.
 - A session's venue is separate from assigned hall. Enable its hall check only

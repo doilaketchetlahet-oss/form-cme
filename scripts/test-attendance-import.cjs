@@ -9,11 +9,11 @@ function load(file) {
   const mod = { exports: {} };
   new Function('require', 'module', 'exports', ts.transpileModule(readFileSync(path.join(__dirname, '../src/lib', file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
-  }).outputText)((name) => name === './checkin-sessions' ? load('checkin-sessions.ts') : require(name), mod, mod.exports);
+  }).outputText)((name) => name === './checkin-sessions' ? load('checkin-sessions.ts') : name === './email-template' ? load('email-template.ts') : require(name), mod, mod.exports);
   return mod.exports;
 }
 const { parseSurveyImportRows, parseSpreadsheetFile, readImportSheets, suggestHeaderRow, importColumnLabel, validateImportRows, buildImportPayload } = load('csv-import.ts');
-const { attendanceDetails } = load('attendance-display.ts');
+const { attendanceDetails, assignedHallForDisplay } = load('attendance-display.ts');
 const config = { questionId: 'program', sessions: [
   { id: 'conference', name: 'Hội thảo', hall: 'Venue', optionIndexes: [0, 2], checkHall: true },
   { id: 'gala', name: 'Gala dinner', hall: 'Dinner venue', optionIndexes: [1, 2] }
@@ -83,10 +83,35 @@ test('multi-choice attendance uses option indexes and round trips into readable 
   const questions = Object.entries(meta).map(([id, q]) => ({ ...q, id, text: questionLabels[id] }));
   const details = attendanceDetails(questions, { ...p.rows[0], session_checkins: { conference: '2026-10-22T01:00:00Z' } }, multiConfig);
   assert.equal(details.find((d) => d.label === 'Đăng ký cấp CME').value, 'Có');
-  assert.equal(details.find((d) => d.label === 'Hội trường được phân').value, 'A');
+  assert.equal(details.some((d) => d.label === 'Hội trường được phân'), false);
   assert.equal(details.find((d) => d.label === 'Hội thảo').value, 'Có đăng ký · Đã check-in');
   assert.equal(details.find((d) => d.label === 'Gala dinner').value, 'Có đăng ký · Chưa check-in');
   assert.equal(details.find((d) => d.label === questionLabels.program).value, 'Hội thảo, Gala');
+});
+
+test('check-in fields prioritize full name, degree, role and job title independently of form and answer order', () => {
+  const fields = [
+    { id: 'note', text: 'Ghi chú', type: 'text' },
+    { id: 'job', text: 'Chức danh', type: 'text' },
+    { id: 'cme', text: 'Đăng ký cấp CME', type: 'choice', options: ['Có', 'Không'] },
+    { id: 'role', text: 'Vai trò', type: 'choice', options: ['Báo cáo viên', 'Đại biểu'] },
+    { id: 'degree', text: 'Học hàm học vị', type: 'text' },
+    { id: 'name', text: 'Họ và tên', type: 'text' },
+    { id: 'other', text: 'Đơn vị', type: 'text' },
+  ].map((q) => ({ options: null, ...q }));
+  const response = { hall: 'Old hall', answers: { degree: 'BS', job: 'Trưởng khoa', name: 'Nguyễn An', role: 0, cme: 1, note: 'Ghi chú A', other: 'Đơn vị A' }, session_checkins: {} };
+  const initialOrder = fields.map((q) => q.id);
+  const details = attendanceDetails(fields, response, null);
+  assert.deepEqual(details.map((d) => d.label), ['Họ và tên', 'Học hàm học vị', 'Vai trò', 'Chức danh', 'Đăng ký cấp CME', 'Ghi chú', 'Đơn vị']);
+  assert.equal(details[0].value, 'Nguyễn An'); assert.equal(details[2].value, 'Báo cáo viên');
+  assert.deepEqual(fields.map((q) => q.id), initialOrder);
+  assert.equal(assignedHallForDisplay(fields, response), '');
+  const withHall = [...fields, { id: 'hall', text: 'Bạn chọn hội trường nào?', type: 'choice', options: ['A', 'B'], is_hall_selector: true }];
+  const hallDetails = attendanceDetails(withHall, { ...response, hall: 'A' }, null);
+  assert.equal(hallDetails[0].label, 'Họ và tên');
+  assert.deepEqual(hallDetails.at(-1), { label: 'Hội trường được phân', value: 'A' });
+  assert.equal(hallDetails.filter((d) => /hội trường/i.test(d.label)).length, 1);
+  assert.equal(assignedHallForDisplay(withHall, { ...response, hall: null, answers: { ...response.answers, hall: 1 } }), 'B');
 });
 
 test('missing assigned halls and conflicting CME columns remain invalid; unrelated columns are disclosed', () => {
