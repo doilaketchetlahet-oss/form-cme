@@ -38,7 +38,7 @@ const sample=load('src/lib/prize-draw.ts',{'./normalize':load('src/lib/normalize
       if(!id) {
         const owner=(await db.query("select email from admin_members where active and role='owner' order by created_at limit 1")).rows[0]?.email;
         if(!owner) throw new Error('An active owner is required to seed the demo.');
-        const created=await db.query('select prize_draw_admin($1,null,$2,$3) id',['create',{name:'DEMO · Merap · Vòng quay nhận quà',is_demo:true,starts_at:sample.PRIZE_SAMPLE_START,ends_at:sample.PRIZE_SAMPLE_END,items:sample.PRIZE_SAMPLE_ITEMS},owner]);
+        const created=await db.query('select prize_draw_admin($1,null,$2,$3) id',['create',{name:'DEMO · Merap · Vòng quay nhận quà',is_demo:true,items:sample.PRIZE_SAMPLE_ITEMS},owner]);
         id=created.rows[0].id;
         const c=(await db.query('select * from prize_campaigns where id=$1',[id])).rows[0];
         const items=(await db.query('select * from prize_items where campaign_id=$1 order by position',[id])).rows;

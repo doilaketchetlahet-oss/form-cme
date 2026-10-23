@@ -21,7 +21,7 @@ test('real SQL: migrate existing awards, release CME deletion, standalone create
       ${read('supabase/prize-draw.sql')}`);
     const admin=async(action,id,data)=>(await db.query('select prize_draw_admin($1,$2,$3,$4) id',[action,id,data,'synthetic@example.test'])).rows[0].id;
     const snap=async id=>({...(await db.query('select * from prize_campaigns where id=$1',[id])).rows[0],items:(await db.query('select * from prize_items where campaign_id=$1 order by position',[id])).rows});
-    const seed=()=>admin('create',null,{name:'Synthetic',is_demo:true,starts_at:lib.PRIZE_SAMPLE_START,ends_at:lib.PRIZE_SAMPLE_END,items:lib.PRIZE_SAMPLE_ITEMS});
+    const seed=()=>admin('create',null,{name:'Synthetic',is_demo:true,starts_at:'2026-11-12T00:00:00+07:00',ends_at:'2026-11-25T00:00:00+07:00',items:lib.PRIZE_SAMPLE_ITEMS});
     const hash=n=>createHash('sha256').update(String(n)).digest('hex');
     const register=async(id,n)=>{const c=await snap(id);return (await db.query('select prize_draw_register($1,$2,$3,$4) entry',[id,hash(n),'09000'+String(n).padStart(5,'0'),{[c.phone_question_id]:'09000'+String(n).padStart(5,'0')}])).rows[0].entry;};
     const spin=async(id,n)=>(await db.query('select prize_draw_spin($1,$2) entry',[id,hash(n)])).rows[0].entry;
@@ -42,6 +42,20 @@ test('real SQL: migrate existing awards, release CME deletion, standalone create
     // The old form is now deletable without impacting the independent ledger.
     await db.query('delete from surveys where id=$1',[sid]);assert.equal((await spin(legacy,1)).prize_id,award.prize_id);
     const before=(await db.query('select count(*)::int n from surveys')).rows[0].n;
+    // New live campaigns need no schedule; historical future/past windows are inert.
+    const manual=await admin('create',null,{name:'Manual live',is_demo:false,items:lib.PRIZE_SAMPLE_ITEMS});
+    let m=await snap(manual);assert.equal(m.starts_at,null);assert.equal(m.ends_at,null);
+    await admin('save',manual,{...m,status:'active',starts_at:undefined,ends_at:undefined});
+    await db.query("update prize_campaigns set starts_at='2099-01-01',ends_at='2100-01-01' where id=$1",[manual]);
+    await register(manual,10);await spin(manual,10);
+    await db.query("update prize_campaigns set starts_at='2000-01-01',ends_at='2001-01-01' where id=$1",[manual]);
+    await register(manual,11);await spin(manual,11);await register(manual,12);
+    for(const status of ['draft','paused','closed']) {
+      m=await snap(manual);await admin('save',manual,{...m,status});
+      await assert.rejects(register(manual,13),/NOT_ACTIVE/);await assert.rejects(spin(manual,12),/NOT_ACTIVE/);
+      assert.ok((await spin(manual,10)).prize_id);
+    }
+    m=await snap(manual);await admin('save',manual,{...m,status:'active'});await spin(manual,12);
     const fresh=await seed();let f=await snap(fresh);assert.equal(f.survey_id,null);assert.equal(f.form_fields.length,3);
     assert.equal((await db.query('select count(*)::int n from surveys')).rows[0].n,before);
     await admin('save',fresh,{...f,status:'active',items:f.items.map(p=>({...p,image_url:'https://images.example.test/gift.webp'}))});

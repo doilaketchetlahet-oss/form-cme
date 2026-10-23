@@ -20,6 +20,9 @@ do $$begin
 end$$;
 alter table prize_entries add column if not exists prize_image_url text;
 alter table prize_campaigns alter column survey_id drop not null;
+-- Campaigns now open/close manually. Retain historical dates without enforcing them.
+alter table prize_campaigns alter column starts_at drop not null;
+alter table prize_campaigns alter column ends_at drop not null;
 alter table prize_campaigns drop constraint if exists prize_campaigns_survey_id_fkey;
 alter table prize_campaigns drop constraint if exists prize_campaigns_phone_question_id_fkey;
 alter table prize_entries drop constraint if exists prize_entries_response_id_fkey;
@@ -72,8 +75,8 @@ begin
       jsonb_build_object('id',gen_random_uuid(),'position',0,'type','text','text','Họ và tên','required',true,'allow_multiple',false,'options',null,'show_if',null),
       jsonb_build_object('id',q,'position',1,'type','phone','text','Số điện thoại','required',true,'allow_multiple',false,'options',null,'show_if',null),
       jsonb_build_object('id',gen_random_uuid(),'position',2,'type','text','text','Đơn vị / Công ty','required',false,'allow_multiple',false,'options',null,'show_if',null));
-    insert into prize_campaigns(phone_question_id,name,is_demo,starts_at,ends_at,created_by,form_fields,form_title)
-      values(q,p_data->>'name',coalesce((p_data->>'is_demo')::boolean,true),(p_data->>'starts_at')::timestamptz,(p_data->>'ends_at')::timestamptz,p_actor,fields,'Đăng ký nhận quà') returning * into c;
+    insert into prize_campaigns(phone_question_id,name,is_demo,created_by,form_fields,form_title)
+      values(q,p_data->>'name',coalesce((p_data->>'is_demo')::boolean,true),p_actor,fields,'Đăng ký nhận quà') returning * into c;
   else
     select * into c from prize_campaigns where id=p_id for update;
     if not found or c.deleted_at is not null then raise exception 'NOT_FOUND'; end if;
@@ -99,7 +102,6 @@ begin
     update prize_campaigns set form_fields=fields,form_title=coalesce(p_data->>'form_title',c.form_title),
       form_description=coalesce(p_data->>'form_description',c.form_description),
       thank_you_message=coalesce(p_data->>'thank_you_message',c.thank_you_message),name=p_data->>'name',status=p_data->>'status',
-      starts_at=(p_data->>'starts_at')::timestamptz,ends_at=(p_data->>'ends_at')::timestamptz,
       accent_color=p_data->>'accent_color',banner_url=p_data->>'banner_url',instructions=p_data->>'instructions',
       track_redemption=(p_data->>'track_redemption')::boolean,revision=revision+1 where id=c.id;
   end if;
@@ -136,7 +138,6 @@ begin
   if found then return to_jsonb(e); end if;
   if exists(select 1 from prize_entries where campaign_id=c.id and phone=p_phone) then raise exception 'PHONE_USED'; end if;
   if c.status<>'active' then raise exception 'NOT_ACTIVE'; end if;
-  if not c.is_demo and (now()<c.starts_at or now()>=c.ends_at) then raise exception 'OUTSIDE_WINDOW'; end if;
   if not exists(select 1 from prize_items where campaign_id=c.id and remaining>0) then raise exception 'SOLD_OUT'; end if;
   if p_answers->>c.phone_question_id::text is distinct from p_phone then raise exception 'PHONE_QUESTION_INVALID'; end if;
   insert into prize_entries(campaign_id,phone,token_hash,answers)
@@ -156,7 +157,6 @@ begin
   if not found then raise exception 'REGISTRATION_REQUIRED'; end if;
   if e.prize_id is not null then return to_jsonb(e); end if;
   if c.status<>'active' then raise exception 'NOT_ACTIVE'; end if;
-  if not c.is_demo and (now()<c.starts_at or now()>=c.ends_at) then raise exception 'OUTSIDE_WINDOW'; end if;
   select sum(remaining) into total_left from prize_items where campaign_id=c.id;
   if coalesce(total_left,0)=0 then raise exception 'SOLD_OUT'; end if;
   ticket := floor(random()*total_left)::bigint;

@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 const tokenPattern = /^[a-f0-9]{64}$/;
-const campaignFields = "id,phone_question_id,form_fields,form_title,form_description,thank_you_message,name,status,is_demo,starts_at,ends_at,accent_color,banner_url,instructions,track_redemption,revision";
+const campaignFields = "id,phone_question_id,form_fields,form_title,form_description,thank_you_message,name,status,is_demo,accent_color,banner_url,instructions,track_redemption,revision";
 const entryFields = "id,prize_id,prize_name,prize_color,prize_image_url,claim_code,drawn_at,redeemed_at";
 function fail(error: string, status = 400) { return NextResponse.json({ ok: false, error }, { status }); }
 

@@ -112,7 +112,7 @@ async function run(viewport) {
     await page.screenshot({path:path.join(shots,`result-${viewport.width}.png`),fullPage:true});
     await page.goto(`${base}/admin/tools/prize-draw`);
     await page.getByLabel('Tên chương trình',{exact:true}).waitFor();
-    assert.equal(await page.getByLabel('Đóng từ thời điểm (giờ Việt Nam)').inputValue(),'2026-11-25T00:00');
+    assert.equal(await page.locator('input[type="datetime-local"]').count(),0);
     await page.getByLabel('Tên chương trình',{exact:true}).fill('Merap tùy chỉnh');
     await page.getByRole('button',{name:'Kho quà',exact:true}).click();
     await page.getByLabel('Số lượng quà 1').fill('150');
@@ -155,11 +155,11 @@ async function run(viewport) {
     await page.waitForFunction(()=>!document.querySelector('a[href="/admin/tools/prize-draw"]'));
     assert.equal(toolAllowed,false);assert.equal(permissionWrites,2);
     role='admin';await page.reload();await permission.waitFor();assert.equal(await permission.isDisabled(),true);
-    // Sold-out, time window and missing registration states.
+    // Sold-out, manual pause and missing registration states.
     entry=null;items=items.map(p=>({...p,remaining:0}));
     await page.goto(`${base}/prize-draw/${id}`);await page.getByText('Quà đã hết. Cảm ơn bạn đã tham gia!',{exact:true}).waitFor();
-    campaign={...campaign,is_demo:false,starts_at:'2099-11-12T00:00:00Z',ends_at:'2099-11-25T00:00:00Z'};
-    await page.reload();await page.getByText('Chương trình chưa đến giờ bắt đầu.',{exact:true}).waitFor();
+    campaign={...campaign,is_demo:false,status:'paused'};
+    await page.reload();await page.getByText('Chương trình đang tạm dừng.',{exact:true}).waitFor();
     failSnapshot=true;await page.reload();await page.getByRole('button',{name:'Tải lại',exact:true}).waitFor();failSnapshot=false;await page.getByRole('button',{name:'Tải lại',exact:true}).click();await page.getByRole('link',{name:'Điền form để nhận lượt quay',exact:true}).waitFor();
     // Empty campaign form is independently editable; deletion requires the dialog.
     role='owner';toolAllowed=true;records=[];
@@ -181,7 +181,7 @@ async function run(viewport) {
     await page.getByText('Đã xóa chương trình khỏi danh sách và đóng trang tham gia.',{exact:true}).waitFor();assert.equal(deletes,1);
     await page.goto(`${base}/prize-draw/${id}/register`);await page.getByText('Không tìm thấy chương trình.',{exact:true}).waitFor();
     assert.deepEqual(errors,[]);assert.deepEqual(blockedWrites,[]);
-    console.log(`PASS ${viewport.width}px: registration, reload, lost response recovery, stock config, redemption, CSV, viewer, permission grant/revoke, denied menu/page/search, sold-out, schedule, error retry.`);
+    console.log(`PASS ${viewport.width}px: registration, reload, lost response recovery, stock config, redemption, CSV, viewer, permission grant/revoke, denied menu/page/search, sold-out, manual pause, error retry.`);
   } finally {await context.close();}
 }
 (async()=>{

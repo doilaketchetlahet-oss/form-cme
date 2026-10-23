@@ -37,16 +37,15 @@ test('normalizes phones and rejects missing, malformed, hidden-identity or impos
   assert.throws(() => lib.validatePrizeAnswers([...fields,q('r','rating')],'phone',{...valid,r:6}));
 });
 
-test('Vietnam inclusive start/exclusive end, demo and sold-out rules; CSV injection protection', () => {
-  const campaign = { status:'active', is_demo:false, starts_at:lib.PRIZE_SAMPLE_START, ends_at:lib.PRIZE_SAMPLE_END };
+test('availability follows manual status and stock, ignoring all legacy dates; CSV protection', () => {
+  const campaign = { status:'active', is_demo:false, starts_at:'2026-11-12T00:00:00+07:00', ends_at:'2026-11-25T00:00:00+07:00' };
   const items=[{remaining:1}];
-  assert.ok(lib.prizeAvailability(campaign,items,Date.parse('2026-11-11T23:59:59+07:00')));
-  assert.equal(lib.prizeAvailability(campaign,items,Date.parse('2026-11-12T00:00:00+07:00')),null);
-  assert.equal(lib.prizeAvailability(campaign,items,Date.parse('2026-11-24T23:59:59+07:00')),null);
-  assert.ok(lib.prizeAvailability(campaign,items,Date.parse('2026-11-25T00:00:00+07:00')));
-  assert.equal(lib.prizeAvailability({...campaign,is_demo:true},items,0),null);
-  assert.ok(lib.prizeAvailability({...campaign,is_demo:true},[{remaining:0}],0));
-  assert.ok(lib.prizeAvailability({...campaign,is_demo:true,status:'paused'},items,0));
+  for(const dates of [{starts_at:'2099-01-01',ends_at:'2100-01-01'},{starts_at:'2000-01-01',ends_at:'2001-01-01'},{starts_at:null,ends_at:null}]) {
+    assert.equal(lib.prizeAvailability({...campaign,...dates},items),null);
+  }
+  assert.equal(lib.prizeAvailability({...campaign,is_demo:true},items),null);
+  assert.ok(lib.prizeAvailability(campaign,[{remaining:0}]));
+  for(const status of ['draft','paused','closed']) assert.ok(lib.prizeAvailability({...campaign,status},items));
   assert.match(lib.prizeCsvCell('=HYPERLINK("bad")'),/^"'/);
 });
 
@@ -102,7 +101,7 @@ test('admin API rejects viewers and malformed stock before calling SQL', async (
   });
   const post=body=>route.POST(new Request('https://test.local/api/admin/prize-draw',{method:'POST',body:JSON.stringify(body)}));
   assert.equal((await post({action:'create'})).status,403);writable=true;
-  assert.equal((await post({action:'save',id:randomUUID(),data:{revision:1,name:'Test',status:'active',starts_at:lib.PRIZE_SAMPLE_START,ends_at:lib.PRIZE_SAMPLE_END,accent_color:'#123456',instructions:'',banner_url:'',track_redemption:true,items:[{name:'Gift',color:'#123456',total:-1}]}})).status,400);
+  assert.equal((await post({action:'save',id:randomUUID(),data:{revision:1,name:'Test',status:'active',starts_at:'2026-11-12T00:00:00+07:00',ends_at:'2026-11-25T00:00:00+07:00',accent_color:'#123456',instructions:'',banner_url:'',track_redemption:true,items:[{name:'Gift',color:'#123456',total:-1}]}})).status,400);
   assert.equal(calls,0);assert.equal((await post({action:'create'})).status,200);assert.equal(calls,1);
 });
 
@@ -123,7 +122,7 @@ test('real SQL: atomic stock, retries, phone dedupe, live windows, edits, redemp
       ${migration}`);
     await db.exec(migration); // safe re-run
     const admin=async(action,id,data)=>(await db.query('select prize_draw_admin($1,$2,$3,$4) id',[action,id,data,'test@example.test'])).rows[0].id;
-    const seed=async(demo=true)=>admin('create',null,{name:'Synthetic test',is_demo:demo,starts_at:lib.PRIZE_SAMPLE_START,ends_at:lib.PRIZE_SAMPLE_END,items:lib.PRIZE_SAMPLE_ITEMS.map(p=>({...p,total:1}))});
+    const seed=async(demo=true)=>admin('create',null,{name:'Synthetic test',is_demo:demo,starts_at:'2026-11-12T00:00:00+07:00',ends_at:'2026-11-25T00:00:00+07:00',items:lib.PRIZE_SAMPLE_ITEMS.map(p=>({...p,total:1}))});
     const hash=n=>createHash('sha256').update(String(n)).digest('hex');
     const snapshot=async id=>({...(await db.query('select * from prize_campaigns where id=$1',[id])).rows[0],items:(await db.query('select * from prize_items where campaign_id=$1 order by position',[id])).rows});
     const register=async(id,n,phone=`09000${String(n).padStart(5,'0')}`)=>{

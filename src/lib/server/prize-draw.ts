@@ -15,7 +15,6 @@ export function prizeError(error: { message?: string; code?: string } | null, fa
     NOT_FOUND: "Không tìm thấy chương trình hoặc lượt quay.",
     PHONE_USED: "SĐT này đã đăng ký chương trình. Hãy mở trên thiết bị đã đăng ký hoặc liên hệ nhân viên; không được cấp thêm lượt.",
     NOT_ACTIVE: "Chương trình chưa mở hoặc đã tạm dừng/đóng.",
-    OUTSIDE_WINDOW: "Ngoài thời gian diễn ra chương trình.",
     SOLD_OUT: "Quà đã hết. Cảm ơn bạn đã tham gia!",
     FORM_CLOSED: "Form đã đóng đăng ký.",
     REGISTRATION_REQUIRED: "Vui lòng điền form trên thiết bị này trước khi quay.",

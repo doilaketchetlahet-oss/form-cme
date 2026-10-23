@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authorizeAdminApi } from "@/lib/server/admin-api";
 import { prizeError } from "@/lib/server/prize-draw";
-import { PRIZE_SAMPLE_ITEMS, PRIZE_SAMPLE_START, PRIZE_SAMPLE_END, UUID_RE, validatePrizeFields, validPrizeImage } from "@/lib/prize-draw";
+import { PRIZE_SAMPLE_ITEMS, UUID_RE, validatePrizeFields, validPrizeImage } from "@/lib/prize-draw";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   let data = body.data;
   if (body.action === "create") {
     data = { name: body.is_demo === false ? "Merap · Vòng quay nhận quà" : "DEMO · Merap · Vòng quay nhận quà", is_demo: body.is_demo !== false,
-      starts_at: PRIZE_SAMPLE_START, ends_at: PRIZE_SAMPLE_END, items: PRIZE_SAMPLE_ITEMS };
+      items: PRIZE_SAMPLE_ITEMS };
     if (body.survey_id || body.phone_question_id) return fail("Form đăng ký được quản lý riêng trong tool.");
   } else if (body.action === "delete") {
     if (!data || !Number.isInteger(data.revision)) return fail("Hãy tải lại chương trình trước khi xóa.");
@@ -51,7 +51,6 @@ export async function POST(request: Request) {
     if (!data || typeof data !== "object" || !Number.isInteger(data.revision)) return fail("Cấu hình không hợp lệ.");
     if (typeof data.name !== "string" || !data.name.trim() || data.name.length > 160) return fail("Tên chương trình cần có 1–160 ký tự.");
     if (!["draft", "active", "paused", "closed"].includes(data.status)) return fail("Trạng thái không hợp lệ.");
-    if (typeof data.starts_at !== "string" || typeof data.ends_at !== "string" || !Number.isFinite(Date.parse(data.starts_at)) || !Number.isFinite(Date.parse(data.ends_at)) || Date.parse(data.ends_at) <= Date.parse(data.starts_at)) return fail("Thời gian kết thúc phải sau thời gian bắt đầu.");
     if (typeof data.accent_color !== "string" || !/^#[0-9a-f]{6}$/i.test(data.accent_color) || typeof data.instructions !== "string" || data.instructions.length > 2000 || typeof data.track_redemption !== "boolean") return fail("Giao diện hoặc hướng dẫn không hợp lệ.");
     if (typeof data.banner_url !== "string" || data.banner_url.length > 2000 || (data.banner_url && !/^https:\/\/[^\s]+$/i.test(data.banner_url))) return fail("Ảnh banner cần là URL HTTPS.");
     if (!Array.isArray(data.items) || data.items.length < 1 || data.items.length > 12) return fail("Cần từ 1 đến 12 loại quà.");

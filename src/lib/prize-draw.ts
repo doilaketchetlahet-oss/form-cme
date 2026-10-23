@@ -7,7 +7,7 @@ export type PrizeCampaign = {
   id: string; phone_question_id: string; name: string;
   form_fields: PrizeField[]; form_title: string; form_description: string; thank_you_message: string;
   status: "draft" | "active" | "paused" | "closed"; is_demo: boolean;
-  starts_at: string; ends_at: string; accent_color: string; banner_url: string;
+  accent_color: string; banner_url: string;
   instructions: string; track_redemption: boolean; revision: number;
 };
 export type PrizeResult = {
@@ -22,9 +22,6 @@ export const PRIZE_SAMPLE_ITEMS = [
   { name: "Ô cầm tay", color: "#db2777", image_url: "/prize-draw/gifts/umbrella.svg", total: 60 },
   { name: "Bộ quà đặc biệt", color: "#d97706", image_url: "/prize-draw/gifts/gift.svg", total: 30 },
 ];
-export const PRIZE_SAMPLE_START = "2026-11-12T00:00:00+07:00";
-// Exclusive end: includes all of November 24 in Vietnam.
-export const PRIZE_SAMPLE_END = "2026-11-25T00:00:00+07:00";
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const validPrizeImage = (url: unknown): url is string => typeof url === "string" && url.length <= 2000 && (!url || /^https:\/\/[^\s]+$/.test(url) || /^\/prize-draw\/gifts\/(bottle|bag|umbrella|gift)\.svg$/.test(url));
 export function prizeTextColor(hex: string) {
@@ -142,10 +139,8 @@ export function validatePrizeAnswers(questions: PrizeField[], phoneId: string, r
   return { answers, phone: normalizePhone(String(answers[phoneId] ?? "")) };
 }
 
-export function prizeAvailability(campaign: PrizeCampaign, items: PrizeItem[], now = Date.now()) {
+export function prizeAvailability(campaign: PrizeCampaign, items: PrizeItem[]) {
   if (campaign.status !== "active") return campaign.status === "draft" ? "Chương trình chưa mở." : campaign.status === "paused" ? "Chương trình đang tạm dừng." : "Chương trình đã đóng.";
-  if (!campaign.is_demo && now < Date.parse(campaign.starts_at)) return "Chương trình chưa đến giờ bắt đầu.";
-  if (!campaign.is_demo && now >= Date.parse(campaign.ends_at)) return "Chương trình đã kết thúc.";
   return items.some(p => p.remaining > 0) ? null : "Quà đã hết. Cảm ơn bạn đã tham gia!";
 }
 

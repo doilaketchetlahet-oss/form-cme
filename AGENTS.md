@@ -313,8 +313,11 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   normalization, field types, confirmation UI and admin auth; `PrizeWheel` is shared
   with Booth Draw. New campaigns/registrations never create CME forms or responses.
 - Create a sample demo or a live draft. Defaults: 120 bottles, 90 bags, 60 umbrellas,
-  30 special gifts; dates are Nov 12–24, 2026 in Vietnam (exclusive end Nov 25 00:00).
-  Demos ignore the date window while active and have completely separate inventory.
+  30 special gifts. Both demo and live campaigns open/pause/close manually through
+  status; there are no start/end controls or date-window restrictions. Historical
+  `starts_at`/`ends_at` values are retained but ignored; new campaigns leave them null.
+  Re-run `scripts/setup-prize-draw.cjs` to update the SQL functions on existing installs.
+  Demo and live campaigns have completely separate inventory.
   Demo/live identity and phone question cannot change. There is no reset.
 - One normalized Vietnamese phone per campaign, one draw per entry. No OTP: this
   deduplicates supplied phone numbers, not verified people. Each campaign uses a
@@ -334,7 +337,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   even after the CME form is deleted. A deleted campaign returns not-found.
 - All stock changes/draws lock the campaign. Weight is remaining quantity; zero-stock
   gifts never win. Registration does not reserve stock. Sold-out stops new registration
-  and draws. Retries restore the first stored award, even after pause/close/end.
+  and draws. Retries restore the first stored award, even after pause/close.
   Save uses revision checks; quantities cannot fall below awarded counts; after any
   entry, old prize IDs cannot be removed. Redemption is optional and idempotent.
 - Admin can edit branding, dates, gifts/counts, status and redemption instructions;
