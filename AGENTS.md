@@ -125,6 +125,14 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   manual edits instead of forcing a file reread. Cancel writes nothing. Required
   fields, choices, session rights, halls and latest email duplicates are still
   validated before insertion. Unmapped columns remain visible.
+  An old unsaved preview can be recovered in a new tab through “Khôi phục bảng
+  đã sửa từ tab cũ”: finish editing, clear search, copy the entire old page, then
+  paste into the recovery box. Clipboard HTML is parsed in an inert template,
+  never rendered. Recovery checks the source form, question headers and total row
+  count, decodes displayed choice labels only when unambiguous, then revalidates
+  the reconstructed preview. It performs no database writes until Import. Keep
+  the old tab until verified. The sheet UI test covers text/email/CME restoration,
+  wrong-form rejection and incomplete copies without touching the OS clipboard.
   Regression: `node scripts/test-attendance-sheets-ui.cjs` with the same port and
   Playwright setup as attendance UI tests. Unit tests optionally compare a local
   source workbook via `ATTENDANCE_SOURCE_XLSX`; fixture data stays outside Git.

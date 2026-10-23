@@ -10,11 +10,12 @@ const { chromium } = uiRequire('playwright');
 require('@next/env').loadEnvConfig(process.cwd(), false, { info() {}, error() {} });
 const base = process.env.ATTENDANCE_E2E_BASE || 'http://localhost:3107';
 const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).host;
-const surveyId = randomUUID(), name = randomUUID(), email = randomUUID(), report = randomUUID();
-const questions = [{ id: name, text: 'Họ và tên' }, { id: email, text: 'Email' }, { id: report, text: 'Tên báo cáo' }]
-  .map((q, position) => ({ ...q, type: 'text', options: null, position, required: q.id === name, is_hall_selector: false, show_if: null }));
+const surveyId = randomUUID(), name = randomUUID(), email = randomUUID(), report = randomUUID(), cme = randomUUID();
+const questions = [{ id: name, text: 'Họ và tên' }, { id: email, text: 'Email' }, { id: report, text: 'Tên báo cáo' }, { id: cme, text: 'Đăng ký cấp CME', type: 'choice', options: ['Có', 'Không'] }]
+  .map((q, position) => ({ type: 'text', options: null, ...q, position, required: q.id === name, is_hall_selector: false, show_if: null }));
 const header = Array(14).fill('');
 header[1] = 'TÊN BÁO CÁO'; header[5] = header[8] = 'Họ và tên'; header[6] = header[12] = 'Email';
+header[9] = 'Đăng ký cấp CME';
 const row = (title, speaker, address) => { const r = Array(14).fill(''); r[1] = title; r[5] = 'Người liên hệ'; r[6] = 'contact@example.test'; r[8] = speaker; r[12] = address; return r; };
 const book = XLSX.utils.book_new();
 const archive = XLSX.utils.aoa_to_sheet([[], ['ARCHIVE'], ['Họ và tên', 'Email'], ['Khách cũ', 'old@example.test']]);
@@ -104,9 +105,9 @@ async function runEditedPreview(viewport) {
   let writes = 0;
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
-    ['Họ và tên', 'Email', 'Email', 'Tên báo cáo'],
-    ...Array.from({ length: 119 }, (_, index) => [`Khách ${index + 1}`, 'contact@example.test', 'speaker@example.test', `Bài ${index + 1}`]),
-    ['', '', '', 'Dòng thiếu tên'],
+    ['Họ và tên', 'Email', 'Email', 'Tên báo cáo', 'Đăng ký cấp CME'],
+    ...Array.from({ length: 119 }, (_, index) => [`Khách ${index + 1}`, 'contact@example.test', 'speaker@example.test', `Bài ${index + 1}`, 'Có']),
+    ['', '', '', 'Dòng thiếu tên', 'Không'],
   ]), 'Guests');
   try {
     await context.route('**/*', async (route) => {
@@ -141,11 +142,41 @@ async function runEditedPreview(viewport) {
     await firstRow.getByRole('button').first().click();
     await firstRow.locator('input').nth(0).fill('edited@example.test');
     await firstRow.locator('input').nth(2).fill('Tên đã sửa thủ công');
+    await firstRow.locator('select').selectOption('1');
     await firstRow.getByRole('button', { name: 'Xong', exact: true }).click();
 
     // Changing a mapping must not force an XLSX reread that loses manual edits.
     await page.getByLabel('Ghép trường Họ và tên', { exact: true }).selectOption('1');
     assert.equal(await importButton.isEnabled(), true);
+    // Simulate the HTML format produced when copying the old page. The native
+    // clipboard is not touched, so a user's real recovery copy stays intact.
+    const copiedHtml = await page.locator('html').evaluate((node) => node.outerHTML);
+    const restored = await context.newPage();
+    await restored.goto(`${base}/attendees/${surveyId}/import`);
+    await restored.getByRole('heading', { name: 'Edited preview test' }).waitFor();
+    await restored.getByText('Khôi phục bảng đã sửa từ tab cũ', { exact: true }).click();
+    const paste = (html) => restored.getByLabel('Dán bảng từ tab cũ', { exact: true }).evaluate((target, html) => {
+      const data = new DataTransfer(); data.setData('text/html', html);
+      target.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+    }, html);
+    await paste(copiedHtml.replaceAll(`/attendees/${surveyId}`, '/attendees/wrong-form'));
+    assert.match(await restored.locator('main').getByRole('alert').textContent(), /đúng form/);
+    const incompleteHtml = await page.locator('html').evaluate((node) => {
+      const copy = node.cloneNode(true); copy.querySelector('tbody tr').remove(); return copy.outerHTML;
+    });
+    await paste(incompleteHtml);
+    assert.match(await restored.locator('main').getByRole('alert').textContent(), /chưa đủ dòng/);
+    await paste(copiedHtml);
+    await restored.getByRole('button', { name: 'Khôi phục 120 dòng vào bảng', exact: true }).click();
+    assert.equal(await restored.getByRole('button', { name: 'Import 119 người', exact: true }).isEnabled(), true);
+    const recovered = restored.locator('tbody tr').first();
+    assert.equal(await recovered.getByText('Tên đã sửa thủ công', { exact: true }).count(), 1);
+    assert.equal(await recovered.getByText('edited@example.test', { exact: true }).count(), 1);
+    assert.equal(await recovered.getByText('Không', { exact: true }).count(), 1);
+    assert.equal(await restored.locator('tbody tr').nth(1).getByText('Có', { exact: true }).count(), 1);
+    assert.equal(await restored.locator('tbody tr').count(), 120);
+    assert.equal(writes, 0);
+    await restored.close();
     await importButton.click();
     await dialog.waitFor();
     assert.match(await dialog.textContent(), /ghép cột chưa áp dụng sẽ không được dùng/);
@@ -153,6 +184,7 @@ async function runEditedPreview(viewport) {
     await page.getByText('Đã import 119 người vào danh sách.', { exact: true }).waitFor();
     assert.equal(writes, 1); assert.equal(records.length, 119);
     assert.deepEqual([records[0].answers[name], records[0].email], ['Tên đã sửa thủ công', 'edited@example.test']);
+    assert.equal(records[0].answers[cme], 1);
     assert.equal(records[1].answers[name], 'Khách 2');
     assert.equal(records[1].email, undefined); // No guess from either unresolved email column.
     assert.ok(records.every((record) => record.answers[report] !== 'Dòng thiếu tên'));
