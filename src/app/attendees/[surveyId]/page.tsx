@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useConfirm } from "@/lib/ui/confirm";
@@ -15,6 +15,7 @@ import type { QRBranding } from "@/lib/surveys";
 import { arrivalSummary, canAttendSession, normalizeSessionConfig, sessionLabel, type CheckinSessionConfig } from "@/lib/checkin-sessions";
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
 import { fetchBrandedQrPng, qrExportLabel, uniqueQrFilename } from "@/lib/qr-export";
+import { assignedHallForDisplay, attendanceQuestionPriority, formatAttendanceAnswer } from "@/lib/attendance-display";
 
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
@@ -149,14 +150,18 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const findName = (answers: Record<string, unknown>): string => {
-    // Use question order to get first text-like field (usually name)
-    for (const k of questionOrder) {
-      const v = answers[k];
-      if (typeof v === "string" && v.length > 1 && v.length < 50 && !/^https?:/.test(v) && !/^\d+$/.test(v)) return v;
-    }
-    return "";
-  };
+  const displayQuestions = useMemo(() => questionOrder.map((id) => ({
+    id, text: questionLabels[id] || id, type: questionMeta[id]?.type || "text",
+    options: questionMeta[id]?.options ?? null, is_hall_selector: !!questionMeta[id]?.isHall,
+  })).sort((a, b) => attendanceQuestionPriority(a) - attendanceQuestionPriority(b)), [questionOrder, questionLabels, questionMeta]);
+  const identityQuestions = displayQuestions.filter((q) => {
+    const priority = attendanceQuestionPriority(q);
+    return priority >= 1 && priority <= 3;
+  });
+  const hasHallSelector = displayQuestions.some((q) => q.is_hall_selector);
+  const findName = (response: SurveyResponse): string => qrExportLabel({
+    ...response, id: response.id.slice(0, 8).toUpperCase(),
+  }, displayQuestions);
 
   const findEmail = (r: SurveyResponse): string | undefined => {
     return r.email || (Object.values(r.answers).find((v) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) as string | undefined);
@@ -412,7 +417,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   // Stats: check-in by hour, by hall
   const checkinRate = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
-  const hallStats = halls.map((h) => {
+  const hallStats = (hasHallSelector ? halls : []).map((h) => {
     const inHall = responses.filter((r) => r.hall === h);
     const checked = inHall.filter(hasArrival).length;
     return { hall: h, total: inHall.length, checked };
@@ -483,7 +488,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       return new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime();
     }
     if (sortBy === "name") {
-      return (findName(a.answers) || "").localeCompare(findName(b.answers) || "", "vi");
+      return findName(a).localeCompare(findName(b), "vi");
     }
     if (sortBy === "checkin") {
       const aChecked = sessionFilter ? !!a.session_checkins?.[sessionFilter] : hasArrival(a);
@@ -707,7 +712,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   };
 
   const printBadge = (r: SurveyResponse) => {
-    const name = findName(r.answers) || r.id.slice(0, 8);
+    const name = findName(r);
     const checkinUrl = buildPublicUrl(`/checkin/${r.id}`);
     const qrImg = buildPublicUrl(buildQrImagePath(checkinUrl, 180, qrBranding));
     const w = window.open("", "_blank");
@@ -735,7 +740,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     const w = window.open("", "_blank");
     if (!w) return;
     const cards = list.map((r) => {
-      const name = findName(r.answers) || r.id.slice(0, 8);
+      const name = findName(r);
       const checkinUrl = buildPublicUrl(`/checkin/${r.id}`);
       const qrImg = buildPublicUrl(buildQrImagePath(checkinUrl, 140, qrBranding));
       return `<div class="badge">
@@ -979,9 +984,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 <option value="oldest">Cũ nhất</option>
                 <option value="name">Tên A-Z</option>
                 <option value="checkin">Chưa check-in trước</option>
-                <option value="hall">Theo hội trường</option>
+                {hasHallSelector && <option value="hall">Theo hội trường</option>}
               </select>
-              {halls.length > 0 && (
+              {hasHallSelector && halls.length > 0 && (
                 <select value={hallFilter} onChange={(e) => setHallFilter(e.target.value)}
                   className="admin-dark-select admin-field min-w-44 flex-1 rounded-xl px-3 py-3 text-sm focus:outline-none lg:flex-none">
                   <option value="">Tất cả hội trường được phân</option>
@@ -1061,7 +1066,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
           <div className="glass-strong mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 px-4 py-2.5">
             <span className="text-sm font-semibold text-indigo-700">{selectedIds.size} đã chọn</span>
             <button onClick={bulkCheckin} className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-sky-400">Check-in tất cả</button>
-            {!sessionConfig && <button onClick={() => {
+            {hasHallSelector && !sessionConfig && <button onClick={() => {
               const name = prompt("Tên hội trường:");
               if (name) bulkAssignHall(name);
             }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-on-brand" style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>Gán hội trường</button>}
@@ -1076,7 +1081,14 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         <div className="glass-strong divide-y divide-[color:var(--border)] overflow-hidden rounded-2xl">
           {filtered.slice(0, visibleLimit).map((r) => {
             const rowChecked = sessionFilter ? !!r.session_checkins?.[sessionFilter] : hasArrival(r);
-            const name = findName(r.answers) || r.id.slice(0, 8).toUpperCase();
+            const name = findName(r);
+            const hall = assignedHallForDisplay(displayQuestions, r);
+            const identityDetails = identityQuestions.flatMap((q) => {
+              const raw = r.answers[q.id];
+              if (raw == null || raw === "" || (typeof raw === "string" && !raw.trim()) || (Array.isArray(raw) && !raw.length)) return [];
+              const value = formatAttendanceAnswer(raw, q);
+              return value ? [{ id: q.id, label: q.text, value }] : [];
+            });
             const time = new Date(r.submitted_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
             const rowTone = selectedIds.has(r.id)
               ? "bg-sky-50/80 hover:bg-sky-50"
@@ -1092,7 +1104,12 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                     {rowChecked ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{name}{r.hall && <span className="text-xs text-indigo-500 ml-2">🏛 {r.hall}</span>}</p>
+                    <p className="text-sm font-medium text-slate-800 truncate" title={name}>{name}{hall && <span className="text-xs text-indigo-500 ml-2">🏛 {hall}</span>}</p>
+                    {identityDetails.length > 0 && <dl className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600">
+                      {identityDetails.map((detail) => <div key={detail.id}>
+                        <dt className="sr-only">{detail.label}</dt><dd>{detail.value}</dd>
+                      </div>)}
+                    </dl>}
                     <p className="text-xs text-slate-500">
                       {time}
                       {r.checked_in_at && <span className="text-emerald-600 ml-2">✓ {new Date(r.checked_in_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>}
@@ -1152,6 +1169,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               className="glass-strong rounded-2xl p-5 w-full max-w-lg shadow-2xl max-h-[85vh] overflow-y-auto"
+              role="dialog" aria-modal="true" aria-label="Chi tiết người tham dự"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Status badges */}
@@ -1165,12 +1183,12 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
               {/* Name */}
               <h2 className="text-xl font-bold text-slate-800 mb-4">
-                {findName(selectedResponse.answers) || selectedResponse.id.slice(0, 8).toUpperCase()}
+                {findName(selectedResponse)}
               </h2>
 
               {/* Fields */}
               <div className="space-y-3 mb-5">
-                {questionOrder.map((k) => {
+                {displayQuestions.map(({ id: k }) => {
                   const meta = questionMeta[k];
                   const isChoice = meta?.type === "choice" && meta.options;
                   return (
@@ -1205,9 +1223,8 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                             if (typeof v === "string" && v.startsWith("http")) return <a href={v} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">Xem file</a>;
                             // Choice → show option label instead of raw index
                             if (isChoice) {
-                              const idx = Array.isArray(v) ? v[0] : v;
-                              const label = typeof idx === "number" ? meta!.options![idx] : undefined;
-                              return label ?? <span className="text-slate-400 italic">—</span>;
+                              if (v == null || v === "" || (Array.isArray(v) && !v.length)) return <span className="text-slate-400 italic">—</span>;
+                              return formatAttendanceAnswer(v, meta);
                             }
                             return v != null && v !== "" ? String(v) : <span className="text-slate-400 italic">—</span>;
                           })()}
@@ -1229,7 +1246,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 <div className="mb-4 rounded-xl border border-cyan-100 bg-cyan-50/70 p-3">
                   <p className="mb-2 text-xs font-semibold text-cyan-800">Đối chiếu thanh toán</p>
                   <div className="space-y-1 text-xs text-slate-700">
-                    <p><span className="text-slate-500">Tên đăng ký:</span> {findName(selectedResponse.answers) || "—"}</p>
+                    <p><span className="text-slate-500">Tên đăng ký:</span> {findName(selectedResponse)}</p>
                     <p><span className="text-slate-500">Tên tài khoản chuyển:</span> {selectedResponse.payment_payer_name || "Chưa có từ PayOS"}</p>
                     <p><span className="text-slate-500">Ngân hàng:</span> {selectedResponse.payment_payer_bank || "—"}</p>
                     <p><span className="text-slate-500">Số TK chuyển:</span> {selectedResponse.payment_payer_account || "—"}</p>
@@ -1318,7 +1335,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                 )}
 
                 {/* Hall assignment */}
-                {editingId !== selectedResponse.id && (
+                {hasHallSelector && editingId !== selectedResponse.id && (
                   <div className="mt-1 flex w-full items-center gap-2 border-t border-slate-100 pt-3">
                     <span className="text-xs text-slate-500">Hội trường:</span>
                     <input

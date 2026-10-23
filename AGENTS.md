@@ -171,6 +171,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Regression: `node --test scripts/test-checkin-email-name.cjs` uses the real
   email renderer with mocked providers; it never sends a real message.
 
+- Attendee lists, detail fields and check-in displays prioritize full name,
+  academic degree, role, then job title independently of form question order.
+  List names fall back to email, phone, another visible answer, then response ID.
+  Assigned hall UI appears only when the form declares a hall-selector question.
+  Regression: `node scripts/test-attendees-display-ui.cjs` (port 3107, same
+  Playwright setup as attendance tests; mocked data, no writes or email).
+
 - Editor sortable question cards must remain direct children of the question
   list: `restrictToParentElement` otherwise locks dragging inside a card wrapper.
   CME scroll/focus uses the same sortable root. Regression: start on port 3109,
