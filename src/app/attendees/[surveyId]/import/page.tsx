@@ -10,7 +10,10 @@ import {
   buildImportPayload,
   findResponseEmail,
   parseCsv,
-  parseSpreadsheetFile,
+  readImportSheets,
+  suggestHeaderRow,
+  normalizeHeader,
+  type ImportSheet,
   parseSurveyImportRows,
   validateImportRows,
   type AttendanceColumnMapping,
@@ -61,6 +64,11 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   const [cmeQuestionId, setCmeQuestionId] = useState("");
   const [cmeColumn, setCmeColumn] = useState<number | null>(null);
   const [mappingDirty, setMappingDirty] = useState(false);
+  const [sheets, setSheets] = useState<ImportSheet[]>([]);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [headerRow, setHeaderRow] = useState(1);
+  const [questionColumns, setQuestionColumns] = useState<Record<string, number | null>>({});
+  const [emailColumn, setEmailColumn] = useState<number | null | undefined>(undefined);
 
   const questionOrder = useMemo(() => questions.map((q) => q.id), [questions]);
   const questionLabels = useMemo(() => Object.fromEntries(questions.map((q) => [q.id, q.text])), [questions]);
@@ -124,33 +132,44 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
     });
   }, [preview, query]);
 
+  const readRows = (allRows: string[][], firstRow: number) => {
+    const rows = allRows.slice(firstRow - 1);
+    setHeaderRow(firstRow);
+    setSourceRows(rows);
+    setSeparateColumns(false);
+    setAttendanceColumns({});
+    setCmeQuestionId("");
+    setCmeColumn(null);
+    setQuestionColumns({});
+    setEmailColumn(undefined);
+    setMappingDirty(false);
+    setEditingId(null);
+    setQuery("");
+    setResult(null);
+    setPreview(parseSurveyImportRows({ rows, questionOrder, questionLabels, questionMeta, existingEmails, sessionConfig, sourceRowOffset: firstRow - 1 }));
+  };
+
   const handleFile = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) { setResult("File tối đa 10 MB."); return; }
     setParsing(true);
     setResult(null);
     try {
       const isExcel = /\.xlsx?$/i.test(file.name);
-      const rows = isExcel ? await parseSpreadsheetFile(file) : parseCsv(await file.text());
-      setSourceRows(rows);
-      setSeparateColumns(false);
-      setAttendanceColumns({});
-      setCmeColumn(null);
-      setMappingDirty(false);
-      const parsed = parseSurveyImportRows({
-        rows,
-        questionOrder,
-        questionLabels,
-        questionMeta,
-        existingEmails,
-        sessionConfig,
-      });
+      const nextSheets = isExcel ? await readImportSheets(file) : [{ name: "CSV", hidden: false, rows: parseCsv(await file.text()) }];
+      const index = Math.max(0, nextSheets.findIndex((sheet) => !sheet.hidden));
+      if (!nextSheets[index]) throw new Error("Workbook không có sheet");
+      setSheets(nextSheets);
+      setSheetIndex(index);
+      readRows(nextSheets[index].rows, suggestHeaderRow(nextSheets[index].rows));
       setFileName(file.name);
-      setPreview(parsed);
     } catch {
       setPreview(null);
       setSourceRows([]);
+      setSheets([]);
       setResult("Không đọc được file. Kiểm tra định dạng Excel / CSV và thử lại.");
     } finally {
       setParsing(false);
+      if (inputRef.current) inputRef.current.value = "";
     }
   };
 
@@ -188,6 +207,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   const clearPreview = () => {
     setPreview(null);
     setSourceRows([]);
+    setSheets([]);
     setFileName("");
     setResult(null);
     setQuery("");
@@ -195,7 +215,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   };
 
   const doImport = async () => {
-    if (!preview || stats.ready === 0 || importing || mappingDirty) return;
+    if (!preview || stats.ready === 0 || importing || parsing || mappingDirty || preview.mappingIssues?.length) return;
     setImporting(true);
     setResult(null);
     try {
@@ -215,6 +235,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       setResult(`Đã import ${data?.length ?? payload.length} người vào danh sách.`);
       setPreview({ ...preview, rows: validated.filter((row) => row.status !== "ready") });
       setSourceRows([]);
+      setSheets([]);
     } finally {
       setImporting(false);
     }
@@ -245,13 +266,14 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
             <div className="flex gap-2">
               <button
                 onClick={() => inputRef.current?.click()}
+                disabled={parsing || importing}
                 className="inline-flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 <Upload size={16} /> Chọn file Excel / CSV
               </button>
               <button
                 onClick={doImport}
-                disabled={!preview || stats.ready === 0 || importing || mappingDirty}
+                disabled={!preview || stats.ready === 0 || importing || parsing || mappingDirty || !!preview.mappingIssues?.length}
                 className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {importing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
@@ -273,6 +295,25 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       </div>
 
       <main className="max-w-6xl mx-auto px-4 py-5">
+        {sheets.length > 0 && <fieldset disabled={parsing || importing} className="mb-5 rounded-2xl border border-slate-200 bg-white p-4">
+          <legend className="px-2 font-bold text-slate-900">Nguồn dữ liệu</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="min-w-0 text-sm font-medium">Sheet để import
+              <select aria-label="Sheet để import" value={sheetIndex} onChange={(event) => {
+                const index = Number(event.target.value); setSheetIndex(index); readRows(sheets[index].rows, suggestHeaderRow(sheets[index].rows));
+              }} className="mt-1 block w-full rounded-lg border p-2">
+                {sheets.map((sheet, index) => <option key={index} value={index}>{sheet.name}{sheet.hidden ? " (sheet ẩn)" : ""}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-medium">Dòng chứa tên cột
+              <input aria-label="Dòng chứa tên cột" type="number" min={1} max={Math.max(1, sheets[sheetIndex].rows.length)} value={headerRow} onChange={(event) => {
+                const row = Number(event.target.value);
+                if (Number.isInteger(row) && row >= 1 && row <= Math.max(1, sheets[sheetIndex].rows.length)) readRows(sheets[sheetIndex].rows, row);
+              }} className="mt-1 block w-full rounded-lg border p-2" />
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">Mặc định chọn sheet đang hiển thị trong Excel. Đổi sheet hoặc dòng tiêu đề sẽ đọc lại dữ liệu và thay thế ghép cột, chỉnh sửa trong bảng xem trước.</p>
+        </fieldset>}
         <div className="grid gap-3 md:grid-cols-4">
           <StatCard label="Tổng dòng" value={stats.total} tone="slate" />
           <StatCard label="Sẵn sàng import" value={stats.ready} tone="emerald" />
@@ -281,6 +322,17 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
         </div>
 
         {sourceRows.length > 0 && <AttendanceImportMapping headers={sourceRows[0]} config={sessionConfig} questions={questions}
+          questionColumns={questionColumns} emailColumn={emailColumn}
+          onQuestionColumn={(id, value) => { setQuestionColumns((current) => { const next = { ...current }; if (value === undefined) delete next[id]; else next[id] = value; return next; }); setMappingDirty(true); }}
+          onEmailColumn={(value) => {
+            setEmailColumn(value);
+            setQuestionColumns((current) => {
+              const next = { ...current };
+              questions.filter((question) => /^(email|e mail|dia chi email)$/.test(normalizeHeader(question.text))).forEach((question) => { if (value === undefined) delete next[question.id]; else next[question.id] = value; });
+              return next;
+            });
+            setMappingDirty(true);
+          }}
           separate={separateColumns} mappings={attendanceColumns} cmeQuestionId={cmeQuestionId} cmeColumn={cmeColumn} dirty={mappingDirty} disabled={importing}
           onSeparate={(value) => { setSeparateColumns(value); setMappingDirty(true); }}
           onMappings={(value) => { setAttendanceColumns(value); setMappingDirty(true); }}
@@ -288,7 +340,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           onCmeColumn={(value) => { setCmeColumn(value); setMappingDirty(true); }}
           onApply={() => {
             setPreview(parseSurveyImportRows({ rows: sourceRows, questionOrder, questionLabels, questionMeta, existingEmails, sessionConfig,
-              attendanceColumns: separateColumns ? attendanceColumns : undefined, cmeQuestionId, cmeColumn }));
+              attendanceColumns: separateColumns ? attendanceColumns : undefined, cmeQuestionId, cmeColumn, questionColumns, emailColumn, sourceRowOffset: headerRow - 1 }));
             setMappingDirty(false);
             setResult("Đã đọc lại file theo cách ghép cột đã chọn. Kiểm tra các dòng trước khi import.");
           }} />}
@@ -297,7 +349,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
           <div className="border-b border-slate-100 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="min-w-0">
-                <p className="text-sm font-bold text-slate-900">{fileName || "Chưa chọn file"}</p>
+                <p className="text-sm font-bold text-slate-900">{fileName || "Chưa chọn file"}{sheets[sheetIndex] ? ` · ${sheets[sheetIndex].name}` : ""}</p>
                 <p className="text-xs text-slate-500 mt-1">
                   {preview ? `Đã đọc ${preview.totalRows} dòng dữ liệu. Chỉ các dòng sẵn sàng mới được import.` : "Chọn file Excel / CSV để xem trước danh sách."}
                 </p>
@@ -320,6 +372,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               )}
             </div>
             {result && <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">{result}</p>}
+            {!!preview?.mappingIssues?.length && <div role="alert" className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800"><p className="font-semibold">Cần chọn cột trước khi import:</p><ul className="list-disc pl-5">{preview.mappingIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
             {!!preview?.unmappedHeaders?.length && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Cột chưa ghép (sẽ không lưu theo tên cột): {preview.unmappedHeaders.join(", ")}. Ghép các cột Gala/CME phía trên hoặc tạo câu hỏi tương ứng trong form.</p>}
           </div>
 
@@ -334,7 +387,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               </p>
               <button
                 onClick={() => inputRef.current?.click()}
-                disabled={parsing}
+                disabled={parsing || importing}
                 className="mt-5 inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-on-brand hover:bg-sky-500 disabled:opacity-60"
               >
                 {parsing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}

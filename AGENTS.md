@@ -112,6 +112,17 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   combinations and conflicting program columns are invalid, never auto-granted.
   The mapping produces the existing attendance-question answer; no second
   registration or QR is created. CME maps independently to a form question.
+- Attendee import defaults to the first visible Excel sheet and lets operators
+  select any sheet (hidden sheets are labeled) and the physical header row.
+  Formatting-only trailing rows/columns are ignored; internal blank rows and
+  original row/column coordinates are preserved. Changing the source resets
+  mappings and preview edits. Generic per-question mappings and an Email-for-QR
+  selector distinguish duplicate headers by Excel column letters. Ambiguous
+  automatic matches block import until mapped; a selected blank email never
+  falls back to a different contact's column. Unmapped columns remain visible.
+  Regression: `node scripts/test-attendance-sheets-ui.cjs` with the same port and
+  Playwright setup as attendance UI tests. Unit tests optionally compare a local
+  source workbook via `ATTENDANCE_SOURCE_XLSX`; fixture data stays outside Git.
 - Invalid choices, missing attendance, missing required assigned halls and
   duplicate emails are checked; editing/deleting a row revalidates the preview.
   Reapplying mappings rereads the source file and replaces preview edits.

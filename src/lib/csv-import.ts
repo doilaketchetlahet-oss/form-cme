@@ -25,6 +25,7 @@ export type CsvImportPreview = {
   rows: CsvImportRow[];
   totalRows: number;
   unmappedHeaders?: string[];
+  mappingIssues?: string[];
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -78,17 +79,36 @@ export function validateImportRows(rows: CsvImportRow[], meta: Record<string, Im
   });
 }
 
-export function parseSpreadsheetFile(file: File): Promise<string[][]> {
-  return file.arrayBuffer().then((buffer) => {
-    const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-    if (!firstSheet) return [];
-    return XLSX.utils.sheet_to_json<string[]>(firstSheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-    }) as string[][];
+export type ImportSheet = { name: string; hidden: boolean; rows: string[][] };
+
+export async function readImportSheets(file: File): Promise<ImportSheet[]> {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+  return workbook.SheetNames.map((name) => {
+    const sheet = workbook.Sheets[name];
+    // Excel's used range often includes hundreds of formatting-only rows.
+    // Keep internal blank rows and leading columns so source coordinates stay exact.
+    const range = sheet["!ref"] ? { s: { r: 0, c: 0 }, e: XLSX.utils.decode_range(sheet["!ref"]).e } : undefined;
+    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: "", range, blankrows: true });
+    while (rows.length && !rows[rows.length - 1].some((value) => String(value).trim())) rows.pop();
+    let width = 0;
+    rows.forEach((row) => row.forEach((value, index) => { if (String(value).trim()) width = Math.max(width, index + 1); }));
+    return { name, hidden: !!workbook.Workbook?.Sheets?.find((item) => item.name === name)?.Hidden,
+      rows: rows.map((row) => Array.from({ length: width }, (_, index) => String(row[index] ?? ""))) };
   });
+}
+
+export async function parseSpreadsheetFile(file: File): Promise<string[][]> {
+  const sheets = await readImportSheets(file);
+  return (sheets.find((sheet) => !sheet.hidden) ?? sheets[0])?.rows ?? [];
+}
+
+export function suggestHeaderRow(rows: string[][]): number {
+  const index = rows.findIndex((row) => row.filter((cell) => cell.trim()).length > 1);
+  return index >= 0 ? index + 1 : Math.max(1, rows.findIndex((row) => row.some((cell) => cell.trim())) + 1);
+}
+
+export function importColumnLabel(header: string, index: number): string {
+  return `${XLSX.utils.encode_col(index)} · ${header || "(chưa có tên cột)"}`;
 }
 
 export function parseCsv(text: string): string[][] {
@@ -150,8 +170,8 @@ export function buildQuestionHeaderMap(questionOrder: string[], questionLabels: 
     const normalizedLabel = normalizeHeader(label);
     questionByHeader.set(normalizedLabel, qid);
 
-    if (/(ho ten|ten khach|ten nguoi|full name|name)/.test(normalizedLabel)) {
-      ["ho ten", "hoten", "ten", "name", "full name", "hovaten"].forEach((alias) => questionByHeader.set(alias, qid));
+    if (/(ho va ten|ho ten|ten khach|ten nguoi|full name|name)/.test(normalizedLabel)) {
+      ["ho va ten", "ho ten", "hoten", "ten", "name", "full name", "hovaten"].forEach((alias) => questionByHeader.set(alias, qid));
     }
     if (/(dien thoai|so dien thoai|phone|sdt)/.test(normalizedLabel)) {
       ["dien thoai", "so dien thoai", "sdt", "phone", "mobile"].forEach((alias) => questionByHeader.set(alias, qid));
@@ -174,6 +194,9 @@ export function parseSurveyImportRows(params: {
   attendanceColumns?: AttendanceColumnMapping;
   cmeQuestionId?: string;
   cmeColumn?: number | null;
+  questionColumns?: Record<string, number | null>;
+  emailColumn?: number | null;
+  sourceRowOffset?: number;
 }) {
   const rows = params.rows;
   if (rows.length < 2) {
@@ -181,7 +204,7 @@ export function parseSurveyImportRows(params: {
   }
 
   const headers = rows[0].map((header) => header.trim());
-  const dataRows = rows.slice(1).map((row, index) => ({ row, sourceRow: index + 2 })).filter(({ row }) => row.some((cell) => cell.trim()));
+  const dataRows = rows.slice(1).map((row, index) => ({ row, sourceRow: index + 2 + (params.sourceRowOffset ?? 0) })).filter(({ row }) => row.some((cell) => cell.trim()));
   const questionByHeader = buildQuestionHeaderMap(params.questionOrder, params.questionLabels);
   const hallQuestions = params.questionOrder.filter((id) => params.questionMeta[id]?.isHall);
   if (hallQuestions.length === 1) {
@@ -189,6 +212,26 @@ export function parseSurveyImportRows(params: {
       if (!questionByHeader.has(header)) questionByHeader.set(header, hallQuestions[0]);
     }
   }
+
+  const mappingIssues: string[] = [];
+  const questionColumns = new Map<string, number | null>();
+  params.questionOrder.forEach((id) => {
+    if (Object.hasOwn(params.questionColumns ?? {}, id)) {
+      questionColumns.set(id, params.questionColumns![id]);
+      return;
+    }
+    const candidates = headers.flatMap((header, index) => questionByHeader.get(normalizeHeader(header)) === id ? [index] : []);
+    if (candidates.length > 1) mappingIssues.push(`Chọn cột cho “${params.questionLabels[id]}”: ${candidates.map((index) => importColumnLabel(headers[index], index)).join(", ")}.`);
+    questionColumns.set(id, candidates.length === 1 ? candidates[0] : null);
+  });
+  const emailCandidates = headers.flatMap((header, index) => /^(email|e mail|dia chi email)$/.test(normalizeHeader(header)) ? [index] : []);
+  // A manually mapped form Email field also selects the address receiving the QR.
+  const mappedEmail = params.questionOrder.find((id) => /^(email|e mail|dia chi email)$/.test(normalizeHeader(params.questionLabels[id] ?? "")) && Object.hasOwn(params.questionColumns ?? {}, id));
+  const explicitEmail = params.emailColumn !== undefined ? params.emailColumn : mappedEmail ? params.questionColumns![mappedEmail] : undefined;
+  const emailColumn = explicitEmail !== undefined ? explicitEmail : emailCandidates.length === 1 ? emailCandidates[0] : undefined;
+  if (explicitEmail === undefined && emailCandidates.length > 1) mappingIssues.push("Có nhiều cột Email. Chọn cột Email nhận QR hoặc ghép trường Email trong form.");
+  const usedColumns = new Set([...questionColumns.values()].filter((value): value is number => value !== null));
+  if (typeof emailColumn === "number") usedColumns.add(emailColumn);
 
   const previewRows = dataRows.map(({ row, sourceRow }, index) => {
     const answers: SurveyResponse["answers"] = {};
@@ -200,8 +243,8 @@ export function parseSurveyImportRows(params: {
       if (!raw) return;
 
       const normalizedHeader = normalizeHeader(header);
-      const qid = questionByHeader.get(normalizedHeader);
-      if (qid) {
+      for (const [qid, mappedColumn] of questionColumns) {
+        if (mappedColumn !== cellIndex) continue;
         const meta = params.questionMeta[qid];
         if (meta?.type === "choice" && meta.options) {
           const flag = parseAttendanceFlag(raw);
@@ -215,7 +258,7 @@ export function parseSurveyImportRows(params: {
         }
       }
 
-      if (!email && (normalizedHeader.includes("email") || emailPattern.test(raw))) {
+      if (emailColumn === cellIndex || (emailColumn === undefined && emailCandidates.length === 0 && !email && emailPattern.test(raw))) {
         email = raw.toLowerCase();
       }
       if (!hall && (normalizedHeader.includes("hoi truong") || normalizedHeader === "hall")) {
@@ -267,9 +310,10 @@ export function parseSurveyImportRows(params: {
     headers,
     rows: validateImportRows(previewRows, params.questionMeta, params.questionLabels, params.existingEmails, params.sessionConfig),
     totalRows: dataRows.length,
+    mappingIssues,
     unmappedHeaders: headers.filter((header, index) => {
       const normalized = normalizeHeader(header);
-      return !questionByHeader.has(normalized) && !normalized.includes("email") && !normalized.includes("hoi truong") && normalized !== "hall"
+      return !usedColumns.has(index) && !normalized.includes("hoi truong") && normalized !== "hall"
         && !Object.values(params.attendanceColumns ?? {}).some((mapping) => mapping.column === index)
         && !(params.cmeQuestionId && params.cmeColumn === index);
     }),

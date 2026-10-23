@@ -12,7 +12,7 @@ function load(file) {
   }).outputText)((name) => name === './checkin-sessions' ? load('checkin-sessions.ts') : require(name), mod, mod.exports);
   return mod.exports;
 }
-const { parseSurveyImportRows, parseSpreadsheetFile, validateImportRows, buildImportPayload } = load('csv-import.ts');
+const { parseSurveyImportRows, parseSpreadsheetFile, readImportSheets, suggestHeaderRow, importColumnLabel, validateImportRows, buildImportPayload } = load('csv-import.ts');
 const { attendanceDetails } = load('attendance-display.ts');
 const config = { questionId: 'program', sessions: [
   { id: 'conference', name: 'Hội thảo', hall: 'Venue', optionIndexes: [0, 2], checkHall: true },
@@ -104,4 +104,54 @@ test('standard Hall column populates a differently named hall selector without l
     questionMeta: { ...questionMeta, venue: { type: 'choice', options: ['A', 'B'], isHall: true, required: true } },
   });
   assert.equal(p.rows[0].status, 'ready'); assert.equal(p.rows[0].answers.venue, 0); assert.equal(p.rows[0].hall, 'A');
+});
+
+test('Excel selects the visible sheet and keeps source coordinates, formatted values and internal gaps', async () => {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['Old data'], ['Wrong sheet']]), 'Archive');
+  const sheet = XLSX.utils.aoa_to_sheet([['Họ và tên', 'SĐT'], ['Khách A', 1234], [], ['Khách B', '00999']], { origin: 'B3' });
+  sheet.C4.z = '000000'; sheet['!ref'] = 'B3:Z900';
+  XLSX.utils.book_append_sheet(book, sheet, 'Speakers');
+  XLSX.utils.book_append_sheet(book, {}, 'Empty');
+  book.Workbook = { Sheets: [{ name: 'Archive', Hidden: 1 }, { name: 'Speakers', Hidden: 0 }, { name: 'Empty', Hidden: 0 }] };
+  const file = new File([XLSX.write(book, { type: 'buffer', bookType: 'xlsx' })], 'multi.xlsx');
+  const sheets = await readImportSheets(file);
+  assert.deepEqual(sheets.map((s) => [s.name, s.hidden]), [['Archive', true], ['Speakers', false], ['Empty', false]]);
+  const rows = await parseSpreadsheetFile(file);
+  assert.deepEqual(rows, sheets[1].rows);
+  assert.equal(rows.length, 6); assert.equal(rows[0].length, 3);
+  assert.equal(rows[3][2], '001234'); assert.equal(rows[4][1], '');
+  assert.equal(suggestHeaderRow(rows), 3);
+  assert.equal(importColumnLabel('SĐT', 2), 'C · SĐT');
+  assert.deepEqual(sheets[2].rows, []);
+  const parsed = parseSurveyImportRows({ rows: rows.slice(2), sourceRowOffset: 2, questionOrder: ['name'], questionLabels: { name: 'Họ tên' }, questionMeta: { name: { type: 'text' } }, existingEmails: new Set() });
+  assert.deepEqual(parsed.rows.map((r) => [r.sourceRow, r.answers.name]), [[4, 'Khách A'], [6, 'Khách B']]);
+});
+
+test('duplicate name/email columns require explicit mapping and never mix two contacts', () => {
+  const args = { rows: [['Họ và tên', 'Email', 'Họ và tên', 'Email', 'Bài báo'], ['Liên hệ', 'contact@example.test', 'Báo cáo viên', 'speaker@example.test', 'Bài A'], ['Liên hệ 2', 'other@example.test', 'Báo cáo viên 2', '', 'Bài B']],
+    questionOrder: ['name', 'email', 'report'], questionLabels: { name: 'Họ tên', email: 'Email', report: 'Tên báo cáo' }, questionMeta: { name: { type: 'text' }, email: { type: 'text' }, report: { type: 'text' } }, existingEmails: new Set() };
+  const ambiguous = parseSurveyImportRows(args);
+  assert.equal(ambiguous.mappingIssues.length, 3);
+  assert.equal(ambiguous.rows[0].answers.name, undefined);
+  assert.equal(ambiguous.rows[0].email, '');
+  const mapped = parseSurveyImportRows({ ...args, questionColumns: { name: 2, email: 3, report: 4 } });
+  assert.deepEqual(mapped.mappingIssues, []);
+  assert.deepEqual(mapped.rows.map((r) => [r.answers.name, r.email, r.answers.report]), [['Báo cáo viên', 'speaker@example.test', 'Bài A'], ['Báo cáo viên 2', '', 'Bài B']]);
+  assert.deepEqual(mapped.unmappedHeaders, ['Họ và tên', 'Email']);
+  const skipped = parseSurveyImportRows({ ...args, questionColumns: { name: 2, email: null }, emailColumn: null });
+  assert.equal(skipped.rows[0].email, '');
+});
+
+test('optional supplied workbook check compares every selected source cell without printing personal data', { skip: !process.env.ATTENDANCE_SOURCE_XLSX }, async () => {
+  const sheets = await readImportSheets(new File([readFileSync(process.env.ATTENDANCE_SOURCE_XLSX)], 'source.xlsx'));
+  const sheet = sheets.find((s) => !s.hidden);
+  assert.equal(sheet.name, 'Báo cáo viên');
+  const columns = { name: 8, email: 12, report: 1, degree: 9, phone: 13 };
+  const p = parseSurveyImportRows({ rows: sheet.rows, questionOrder: Object.keys(columns), questionLabels: { name: 'Họ và tên', email: 'Email', report: 'Tên báo cáo', degree: 'Học hàm học vị', phone: 'SĐT' }, questionMeta: Object.fromEntries(Object.keys(columns).map((id) => [id, { type: 'text' }])), questionColumns: columns, existingEmails: new Set() });
+  assert.equal(p.totalRows, 121); assert.deepEqual(p.mappingIssues, []);
+  for (const row of p.rows) {
+    for (const [id, index] of Object.entries(columns)) assert.ok((row.answers[id] ?? '') === sheet.rows[row.sourceRow - 1][index].trim(), 'Mapped cell must match the source');
+    assert.ok(row.email === sheet.rows[row.sourceRow - 1][12].trim().toLowerCase(), 'QR email must match column M');
+  }
 });

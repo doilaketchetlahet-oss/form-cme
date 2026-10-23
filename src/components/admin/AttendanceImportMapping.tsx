@@ -1,20 +1,37 @@
 "use client";
 
-import type { AttendanceColumnMapping } from "@/lib/csv-import";
+import { importColumnLabel, type AttendanceColumnMapping } from "@/lib/csv-import";
 import type { CheckinSessionConfig } from "@/lib/checkin-sessions";
 
-export function AttendanceImportMapping({ headers, config, questions, separate, mappings, cmeQuestionId, cmeColumn, dirty, disabled, onSeparate, onMappings, onCmeQuestion, onCmeColumn, onApply }: {
+export function AttendanceImportMapping({ headers, config, questions, separate, mappings, cmeQuestionId, cmeColumn, dirty, disabled, questionColumns, emailColumn, onQuestionColumn, onEmailColumn, onSeparate, onMappings, onCmeQuestion, onCmeColumn, onApply }: {
   headers: string[]; config: CheckinSessionConfig | null;
   questions: { id: string; text: string; type: string; is_hall_selector: boolean }[];
   separate: boolean; mappings: AttendanceColumnMapping; cmeQuestionId: string; cmeColumn: number | null;
   dirty: boolean; disabled: boolean;
+  questionColumns: Record<string, number | null>; emailColumn: number | null | undefined;
+  onQuestionColumn: (id: string, value: number | null | undefined) => void;
+  onEmailColumn: (value: number | null | undefined) => void;
   onSeparate: (value: boolean) => void; onMappings: (value: AttendanceColumnMapping) => void;
   onCmeQuestion: (value: string) => void; onCmeColumn: (value: number | null) => void; onApply: () => void;
 }) {
-  const columns = headers.map((header, index) => <option key={index} value={index}>{index + 1}. {header}</option>);
+  const columns = headers.map((header, index) => <option key={index} value={index}>{importColumnLabel(header, index)}</option>);
+  const valueOf = (value: string) => value === "auto" ? undefined : value === "skip" ? null : Number(value);
   return <fieldset disabled={disabled} className="mt-5 space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
     <legend className="px-2 font-bold text-slate-900">Ghép cột tham dự và CME</legend>
-    <p className="text-sm text-slate-600">Cột thông thường khớp tên câu hỏi trong form. Cột đánh dấu nhận Có/Không, Yes/No, 1/0, x/✓. Ô trống cần được bổ sung; không tự cấp quyền tham dự.</p>
+    <p className="text-sm text-slate-600">Ghép cột Excel với từng trường trong form. Nếu tên cột bị trùng, chọn theo chữ cột A, B, C… Cột chưa có trường tương ứng sẽ không được lưu; hãy thêm trường vào form nếu cần giữ thông tin đó.</p>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="min-w-0 text-sm font-medium">Email nhận QR
+        <select aria-label="Cột Email nhận QR" value={emailColumn === undefined ? "auto" : emailColumn === null ? "skip" : emailColumn} onChange={(event) => onEmailColumn(valueOf(event.target.value))} className="mt-1 block w-full rounded-lg border p-2">
+          <option value="auto">Tự nhận diện / theo trường Email đã ghép</option><option value="skip">Không nhập Email nhận QR</option>{columns}
+        </select>
+      </label>
+      {questions.map((question) => <label key={question.id} className="min-w-0 text-sm font-medium">{question.text}
+        <select aria-label={`Ghép trường ${question.text}`} value={!Object.hasOwn(questionColumns, question.id) ? "auto" : questionColumns[question.id] === null ? "skip" : questionColumns[question.id]!} onChange={(event) => onQuestionColumn(question.id, valueOf(event.target.value))} className="mt-1 block w-full rounded-lg border p-2">
+          <option value="auto">Tự ghép theo tên cột</option><option value="skip">Không ghép cột</option>{columns}
+        </select>
+      </label>)}
+    </div>
+    <p className="text-sm text-slate-600">Cột đánh dấu nhận Có/Không, Yes/No, 1/0, x/✓. Ô trống cần được bổ sung; không tự cấp quyền tham dự.</p>
     {!config?.questionId && <p className="text-sm text-amber-700">Để dùng cột buổi riêng, mở chỉnh sửa form → Check-in → Tạo mẫu Hội thảo + Gala, lưu rồi tải lại trang này.</p>}
     {config?.questionId && <>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={separate} onChange={(e) => onSeparate(e.target.checked)} />File có cột Có/Không riêng cho từng buổi</label>
