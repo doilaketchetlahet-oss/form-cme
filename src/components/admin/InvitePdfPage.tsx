@@ -17,11 +17,21 @@ import {
 } from "@/lib/email-template";
 import { buildPublicUrl } from "@/lib/site-url";
 import { resolveOverlayFont } from "@/lib/overlay-fonts";
+import { ensureCustomFontFace, fetchCustomFonts } from "@/lib/custom-fonts-client";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 
 /** Nạp font của thiệp vào trình duyệt để canvas vẽ đúng (chỉ 1 lần mỗi font). */
 const loadedFonts = new Set<string>();
 async function ensureOverlayFont(fontId: string | undefined, bold: boolean | undefined) {
+  if (fontId?.startsWith("custom:")) {
+    const fonts = await fetchCustomFonts();
+    const custom = fonts.find((font) => font.id === fontId.slice(7));
+    if (custom) {
+      const family = await ensureCustomFontFace(custom);
+      if (family) return family;
+    }
+    return "Arial";
+  }
   const font = resolveOverlayFont(fontId);
   const weight = bold ? "Bold" : "Regular";
   const key = `${font.file}-${weight}`;

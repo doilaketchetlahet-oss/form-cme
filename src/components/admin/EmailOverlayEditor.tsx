@@ -13,6 +13,7 @@ import {
   type OverlayField,
 } from "@/lib/email-template";
 import { DEFAULT_OVERLAY_FONT, OVERLAY_FONTS, resolveOverlayFont } from "@/lib/overlay-fonts";
+import { ensureAllCustomFonts, fetchCustomFonts, type ClientCustomFont } from "@/lib/custom-fonts-client";
 
 type Props = {
   body: string;
@@ -30,6 +31,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
   const [overlay, setOverlay] = useState<EmailOverlay | null>(() => parsed.overlay ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(parsed.overlay?.fields[0]?.id ?? null);
   const [uploading, setUploading] = useState(false);
+  const [customFonts, setCustomFonts] = useState<ClientCustomFont[]>([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; mode: "move" | "resize"; startX: number; startY: number; field: OverlayField } | null>(null);
   const overlayRef = useRef(overlay);
@@ -44,6 +46,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      // Font có sẵn trong bundle
       for (const font of OVERLAY_FONTS) {
         for (const weight of ["Regular", "Bold"] as const) {
           if (cancelled) return;
@@ -58,12 +61,22 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
           }
         }
       }
+      // Font khách tải lên
+      const custom = await fetchCustomFonts();
+      if (cancelled) return;
+      setCustomFonts(custom);
+      await ensureAllCustomFonts(custom);
     };
     void load();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const previewFamily = (field: OverlayField) =>
+    field.fontFamily?.startsWith("custom:")
+      ? customFonts.find((font) => font.id === field.fontFamily!.slice(7))?.family ?? "Noto Sans"
+      : resolveOverlayFont(field.fontFamily).family;
 
   const commit = (next: EmailOverlay | null) => {
     setOverlay(next);
@@ -176,6 +189,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
   };
 
   const selected = overlay?.fields.find((field) => field.id === selectedId) ?? null;
+  const customFontId = selected?.fontFamily?.startsWith("custom:") ? selected.fontFamily.slice(7) : "";
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start">
@@ -229,7 +243,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                       color: field.color || "#0f172a",
                       fontWeight: field.bold ? 700 : 400,
                       fontSize: Math.max(10, (field.fontSize || 24) * 0.35),
-                      fontFamily: `"${resolveOverlayFont(field.fontFamily).family}", sans-serif`,
+                      fontFamily: `"${previewFamily(field)}", sans-serif`,
                     }}
                   >
                     {field.kind === "qr" ? <QrCode size={18} /> : label}
@@ -290,7 +304,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                 <label className="block text-[11px] text-slate-500">
                   Font chữ
                   <select
-                    value={selected.fontFamily || DEFAULT_OVERLAY_FONT}
+                    value={selected.fontFamily?.startsWith("custom:") ? `custom:${customFontId}` : selected.fontFamily || DEFAULT_OVERLAY_FONT}
                     onChange={(event) => updateField(selected.id, { fontFamily: event.target.value })}
                     className="admin-field mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
                   >
@@ -299,7 +313,23 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                         {font.label} — {font.hint}
                       </option>
                     ))}
+                    {customFonts.length > 0 && (
+                      <optgroup label="Font tải lên">
+                        {customFonts.map((font) => (
+                          <option key={font.id} value={`custom:${font.id}`}>
+                            {font.family} ({font.weight === "bold" ? "Bold" : "Regular"})
+                            {font.hasVietnamese ? "" : " — thiếu dấu tiếng Việt"}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
+                  <a href="/admin/settings/fonts" className="mt-1 inline-block text-[11px] font-semibold text-sky-700">
+                    Tải lên font thương hiệu
+                  </a>
+                  {customFonts.length === 0 && (
+                    <span className="mt-1 block text-[11px] text-slate-400">Chưa có font tải lên.</span>
+                  )}
                 </label>
                 <label className="block text-[11px] text-slate-500">
                   Cỡ chữ

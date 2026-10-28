@@ -4,6 +4,8 @@ import sharp from "sharp";
 import QRCode from "qrcode";
 import type { EmailAttachment, EmailOverlay, OverlayField } from "@/lib/email-template";
 import { overlayFontFile, resolveOverlayFont } from "@/lib/overlay-fonts";
+import { createSupabaseAdmin } from "@/lib/server/supabase-admin";
+import { resolveCustomFontFile } from "@/lib/server/custom-fonts";
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
@@ -58,6 +60,19 @@ function fontFile(fontId: string | null | undefined, bold?: boolean) {
   return overlayFontFile(fontId, bold, FONT_DIR);
 }
 
+/** Font tải lên dùng id dạng `custom:<uuid>`; font có sẵn dùng id tĩnh. */
+async function resolveFontSources(fontId: string | null | undefined, bold?: boolean) {
+  const value = fontId ?? "";
+  if (value.startsWith("custom:")) {
+    const admin = createSupabaseAdmin();
+    const found = admin ? await resolveCustomFontFile(admin, value.slice("custom:".length)) : null;
+    if (found) return { file: found.file, family: found.family };
+    // Font bị xoá: rơi về Noto Sans để thiệp vẫn xuất được.
+  }
+  const font = resolveOverlayFont(value);
+  return { file: fontFile(value, bold), family: font.family };
+}
+
 async function renderTextField(
   field: OverlayField,
   value: string,
@@ -76,12 +91,12 @@ async function renderTextField(
 
   // Pango markup: size is in 1024ths of a point; at 72dpi 1pt === 1px.
   const markup = `<span foreground="${color}" size="${Math.round(fontSize * 1024)}">${escapeXml(text)}</span>`;
-  const font = resolveOverlayFont(field.fontFamily);
+  const font = await resolveFontSources(field.fontFamily, field.bold);
   let textImage = await sharp({
     text: {
       text: markup,
       font: font.family,
-      fontfile: fontFile(field.fontFamily, field.bold),
+      fontfile: font.file,
       dpi: 72,
       rgba: true,
     },

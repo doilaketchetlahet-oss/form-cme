@@ -59,6 +59,18 @@ export function SettingsView() {
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-6 mb-4">
+        <h2 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
+          <Mail size={14} /> Font thiệp mời
+        </h2>
+        <p className="mb-3 text-sm text-slate-600">
+          Tải font thương hiệu (TTF/OTF) để dùng cho tên và QR trên thiệp PNG/PDF.
+        </p>
+        <a href="/admin/settings/fonts" className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-sky-700 hover:bg-sky-50">
+          Quản lý font
+        </a>
+      </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-2xl p-6 mb-4">
         <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
           <User size={14} /> Thông tin tài khoản
         </h2>
