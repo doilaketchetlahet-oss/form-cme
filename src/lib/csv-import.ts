@@ -327,7 +327,8 @@ export function parseSurveyImportCsv(params: Omit<Parameters<typeof parseSurveyI
   });
 }
 
-export function buildImportPayload(surveyId: string, rows: CsvImportRow[]) {
+export function buildImportPayload(surveyId: string, rows: CsvImportRow[], batch?: string | null) {
+  const batchName = batch?.trim().slice(0, 120) || null;
   return rows
     .filter((row) => row.status === "ready")
     .map((row) => ({
@@ -335,5 +336,6 @@ export function buildImportPayload(surveyId: string, rows: CsvImportRow[]) {
       answers: row.answers,
       ...(row.email ? { email: row.email, email_status: "pending" as const } : {}),
       ...(row.hall ? { hall: row.hall } : {}),
+      ...(batchName ? { import_batch: batchName } : {}),
     }));
 }

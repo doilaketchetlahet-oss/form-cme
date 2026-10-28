@@ -100,6 +100,8 @@ export interface SurveyResponse {
   checked_in?: boolean;
   checked_in_at?: string | null;
   hall?: string | null;
+  /** Tên đợt import (nhóm người từ cùng một file Excel/CSV). */
+  import_batch?: string | null;
   email?: string | null;
   email_status?: "pending" | "sent" | "failed" | null;
   email_sent_at?: string | null;

@@ -44,6 +44,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [selectedLogs, setSelectedLogs] = useState<CheckinLog[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [hallFilter, setHallFilter] = useState<string>("");
+  const [batchFilter, setBatchFilter] = useState<string>("");
   const [halls, setHalls] = useState<string[]>([]);
   const [resending, setResending] = useState(false);
   const [sessions, setSessions] = useState<string[]>([]);
@@ -348,6 +349,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       "Check-in",
       "Thời gian check-in",
       ...sessions.flatMap((s) => [`Quyền tham dự: ${sessionLabel(sessionConfig, s)}`, `Check-in: ${sessionLabel(sessionConfig, s)}`]),
+      "Đợt import",
       "Thời gian đăng ký",
     ];
     const rows = responses.map((r, i) => {
@@ -382,6 +384,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
         hasArrival(r) ? "Có" : "Chưa",
         arrival.checked_in_at ? new Date(arrival.checked_in_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
         ...sessionFields,
+        r.import_batch ?? "",
         new Date(r.submitted_at).toLocaleString("vi-VN"),
       ];
     });
@@ -465,7 +468,18 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     return [...set].sort((a, b) => a.localeCompare(b, "vi"));
   })();
 
+  /** Danh sách đợt import đã có (mới nhất trước) để lọc/chọn nhanh. */
+  const importBatches = (() => {
+    const set = new Set<string>();
+    responses.forEach((r) => {
+      const batch = (r.import_batch ?? "").trim();
+      if (batch) set.add(batch);
+    });
+    return [...set].sort((a, b) => b.localeCompare(a, "vi"));
+  })();
+
   const filtered = responses.filter((r) => {
+    if (batchFilter && (r.import_batch ?? "") !== batchFilter) return false;
     if (sessionFilter && !canAttendSession(sessionConfig, sessionFilter, r.answers)) return false;
     const admitted = sessionConfig?.sessions.filter((session) => canAttendSession(sessionConfig, session.id, r.answers)) ?? [];
     if (participationFilter === "multiple" && admitted.length < 2) return false;
@@ -1011,6 +1025,24 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                   <option value="">Tất cả hội trường được phân</option>
                   {halls.map((h) => <option key={h} value={h}>{h}</option>)}
                 </select>
+              )}
+              {importBatches.length > 0 && (
+                <>
+                  <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}
+                    className="admin-dark-select admin-field min-w-44 flex-1 rounded-xl px-3 py-3 text-sm focus:outline-none lg:flex-none">
+                    <option value="">Tất cả đợt import</option>
+                    {importBatches.map((batch) => <option key={batch} value={batch}>{batch}</option>)}
+                  </select>
+                  {batchFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds(new Set(filtered.map((r) => r.id)))}
+                      className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50"
+                    >
+                      Chọn cả đợt ({filtered.length})
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

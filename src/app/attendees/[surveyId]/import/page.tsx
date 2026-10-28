@@ -26,6 +26,15 @@ import { formatAttendanceAnswer } from "@/lib/attendance-display";
 import { AttendanceImportMapping } from "@/components/admin/AttendanceImportMapping";
 import { useConfirm } from "@/lib/ui/confirm";
 
+/** Tên đợt gợi ý từ tên file + ngày import, để dễ lọc/chọn cả đợt sau này. */
+function defaultBatchName(fileName: string) {
+  const base = fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${base || "Import"} · ${day}/${month}/${now.getFullYear()}`.slice(0, 120);
+}
+
 type QuestionInfo = {
   id: string;
   text: string;
@@ -60,6 +69,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<string | null>(null);
+  const [batchName, setBatchName] = useState("");
   const [sessionConfig, setSessionConfig] = useState<CheckinSessionConfig | null>(null);
   const [sourceRows, setSourceRows] = useState<string[][]>([]);
   const [separateColumns, setSeparateColumns] = useState(false);
@@ -166,6 +176,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       setSheetIndex(index);
       readRows(nextSheets[index].rows, suggestHeaderRow(nextSheets[index].rows));
       setFileName(file.name);
+      setBatchName((current) => current.trim() || defaultBatchName(file.name));
     } catch {
       setPreview(null);
       setSourceRows([]);
@@ -240,7 +251,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
       const latestEmails = new Set((latest ?? []).map((response) => findResponseEmail(response)?.toLowerCase()).filter((email): email is string => !!email));
       const validated = validateImportRows(preview.rows, questionMeta, questionLabels, latestEmails, sessionConfig);
       setPreview({ ...preview, rows: validated });
-      const payload = buildImportPayload(surveyId, validated);
+      const payload = buildImportPayload(surveyId, validated, batchName);
       if (!payload.length) { setResult("Không còn dòng hợp lệ để import. Kiểm tra email trùng và quyền tham dự."); return; }
       const { data, error } = await supabase.from("survey_responses").insert(payload).select("*");
       if (error) {
@@ -248,7 +259,7 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
         return;
       }
       setResponses((prev) => [...((data ?? []) as SurveyResponse[]), ...prev]);
-      setResult(`Đã import ${data?.length ?? payload.length} người vào danh sách.`);
+      setResult(`Đã import ${data?.length ?? payload.length} người${batchName.trim() ? ` vào đợt “${batchName.trim()}”` : ""}.`);
       setPreview({ ...preview, rows: validated.filter((row) => row.status !== "ready"), mappingIssues: [] });
       setMappingDirty(false);
       setSourceRows([]);
@@ -279,6 +290,19 @@ function AttendeeImportInner({ surveyId }: { surveyId: string }) {
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Import Excel / CSV</p>
               <h1 className="mt-1 text-2xl font-bold text-slate-900 leading-snug">{surveyTitle}</h1>
               <p className="mt-1 text-sm text-slate-500">Xem trước, sửa và xoá từng dòng trước khi đưa vào danh sách đăng ký.</p>
+              <label className="mt-3 block max-w-md">
+                <span className="mb-1 block text-xs font-semibold text-slate-600">Tên đợt import</span>
+                <input
+                  value={batchName}
+                  onChange={(event) => setBatchName(event.target.value)}
+                  placeholder="VD: Khách mời 22/09 - Bệnh viện X"
+                  maxLength={120}
+                  className="admin-field w-full rounded-xl px-3 py-2.5 text-sm"
+                />
+                <span className="mt-1 block text-[11px] text-slate-500">
+                  Dùng để lọc và chọn nhanh cả đợt trong danh sách người đăng ký.
+                </span>
+              </label>
             </div>
             <div className="flex gap-2">
               <button
