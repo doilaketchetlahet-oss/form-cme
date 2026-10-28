@@ -16,7 +16,24 @@ import {
   type OverlayField,
 } from "@/lib/email-template";
 import { buildPublicUrl } from "@/lib/site-url";
+import { resolveOverlayFont } from "@/lib/overlay-fonts";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
+
+/** Nạp font của thiệp vào trình duyệt để canvas vẽ đúng (chỉ 1 lần mỗi font). */
+const loadedFonts = new Set<string>();
+async function ensureOverlayFont(fontId: string | undefined, bold: boolean | undefined) {
+  const font = resolveOverlayFont(fontId);
+  const weight = bold ? "Bold" : "Regular";
+  const key = `${font.file}-${weight}`;
+  if (loadedFonts.has(key)) return font.family;
+  const face = new FontFace(font.family, `url(/fonts/${font.file}-${weight}.ttf)`, {
+    weight: bold ? "700" : "400",
+  });
+  await face.load();
+  document.fonts.add(face);
+  loadedFonts.add(key);
+  return font.family;
+}
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
@@ -169,15 +186,16 @@ export function InvitePdfPage({ formId }: { formId: string }) {
           if (!text) continue;
           let fontSize = Math.max(12, Number(field.fontSize) || Math.round(boxH * 0.55));
           const color = field.color || "#0f172a";
+          const family = await ensureOverlayFont(field.fontFamily, field.bold).catch(() => "Arial");
           ctx.fillStyle = color;
           ctx.textBaseline = "middle";
           ctx.textAlign = field.align === "center" ? "center" : field.align === "right" ? "right" : "left";
           const cx = field.align === "center" ? left + boxW / 2 : field.align === "right" ? left + boxW : left;
           const cy = top + boxH / 2;
-          ctx.font = `${field.bold ? "bold " : ""}${fontSize}px Arial, sans-serif`;
+          ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
           while (ctx.measureText(text).width > boxW && fontSize > 8) {
             fontSize -= 1;
-            ctx.font = `${field.bold ? "bold " : ""}${fontSize}px Arial, sans-serif`;
+            ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
           }
           ctx.fillText(text, cx, cy);
         }

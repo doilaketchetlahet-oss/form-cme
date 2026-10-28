@@ -17,6 +17,8 @@ export type OverlayField = {
   color?: string;
   align?: EmailBlockAlign;
   bold?: boolean;
+  /** id trong OVERLAY_FONTS; bỏ trống = Noto Sans. */
+  fontFamily?: string;
 };
 
 export type EmailOverlay = {

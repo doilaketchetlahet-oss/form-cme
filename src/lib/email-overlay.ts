@@ -1,8 +1,9 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import QRCode from "qrcode";
 import type { EmailAttachment, EmailOverlay, OverlayField } from "@/lib/email-template";
+import { overlayFontFile, resolveOverlayFont } from "@/lib/overlay-fonts";
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
@@ -25,8 +26,8 @@ const FONT_DIR = path.join(process.cwd(), "public", "fonts");
 let fontsPrepared = false;
 
 // Serverless images (Vercel lambda) ship without usable system fonts, so we
-// bundle Noto Sans and register it via fontconfig before any text rendering.
-// The @font-face trick inside SVG does not work with librsvg.
+// bundle the invitation fonts and register them via fontconfig before any text
+// rendering. The @font-face trick inside SVG does not work with librsvg.
 async function prepareFonts() {
   if (fontsPrepared) return;
   fontsPrepared = true;
@@ -38,8 +39,13 @@ async function prepareFonts() {
     await mkdir(fontsDir, { recursive: true });
     await mkdir(confDir, { recursive: true });
     await mkdir(cacheDir, { recursive: true });
-    await copyFile(path.join(FONT_DIR, "NotoSans-Regular.ttf"), path.join(fontsDir, "NotoSans-Regular.ttf"));
-    await copyFile(path.join(FONT_DIR, "NotoSans-Bold.ttf"), path.join(fontsDir, "NotoSans-Bold.ttf"));
+    // Copy mọi font đã bundle (mỗi family có Regular + Bold).
+    const files = await readdir(FONT_DIR).catch(() => [] as string[]);
+    await Promise.all(
+      files
+        .filter((name) => name.toLowerCase().endsWith(".ttf"))
+        .map((name) => copyFile(path.join(FONT_DIR, name), path.join(fontsDir, name))),
+    );
     const conf = `<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>${fontsDir}</dir><cachedir>${cacheDir}</cachedir></fontconfig>`;
     await writeFile(path.join(confDir, "fonts.conf"), conf);
     process.env.FONTCONFIG_FILE = path.join(confDir, "fonts.conf");
@@ -48,8 +54,8 @@ async function prepareFonts() {
   }
 }
 
-function fontFile(bold?: boolean) {
-  return path.join(FONT_DIR, bold ? "NotoSans-Bold.ttf" : "NotoSans-Regular.ttf");
+function fontFile(fontId: string | null | undefined, bold?: boolean) {
+  return overlayFontFile(fontId, bold, FONT_DIR);
 }
 
 async function renderTextField(
@@ -70,11 +76,12 @@ async function renderTextField(
 
   // Pango markup: size is in 1024ths of a point; at 72dpi 1pt === 1px.
   const markup = `<span foreground="${color}" size="${Math.round(fontSize * 1024)}">${escapeXml(text)}</span>`;
+  const font = resolveOverlayFont(field.fontFamily);
   let textImage = await sharp({
     text: {
       text: markup,
-      font: "Noto Sans",
-      fontfile: fontFile(field.bold),
+      font: font.family,
+      fontfile: fontFile(field.fontFamily, field.bold),
       dpi: 72,
       rgba: true,
     },

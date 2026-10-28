@@ -12,6 +12,7 @@ import {
   type EmailOverlay,
   type OverlayField,
 } from "@/lib/email-template";
+import { DEFAULT_OVERLAY_FONT, OVERLAY_FONTS, resolveOverlayFont } from "@/lib/overlay-fonts";
 
 type Props = {
   body: string;
@@ -38,6 +39,31 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
     [questions],
   );
   const previewValues = useMemo(() => sampleMergeValues(surveyTitle || "Sự kiện"), [surveyTitle]);
+
+  // Nạp các font thiệp vào trình duyệt để khung thiết kế hiển thị đúng font.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      for (const font of OVERLAY_FONTS) {
+        for (const weight of ["Regular", "Bold"] as const) {
+          if (cancelled) return;
+          const face = new FontFace(font.family, `url(/fonts/${font.file}-${weight}.ttf)`, {
+            weight: weight === "Bold" ? "700" : "400",
+          });
+          try {
+            await face.load();
+            document.fonts.add(face);
+          } catch {
+            // Font lỗi: canvas/server vẫn tự xử lý, bỏ qua ở preview.
+          }
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const commit = (next: EmailOverlay | null) => {
     setOverlay(next);
@@ -203,6 +229,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
                       color: field.color || "#0f172a",
                       fontWeight: field.bold ? 700 : 400,
                       fontSize: Math.max(10, (field.fontSize || 24) * 0.35),
+                      fontFamily: `"${resolveOverlayFont(field.fontFamily).family}", sans-serif`,
                     }}
                   >
                     {field.kind === "qr" ? <QrCode size={18} /> : label}
@@ -260,6 +287,20 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
             </div>
             {selected.kind === "text" && (
               <>
+                <label className="block text-[11px] text-slate-500">
+                  Font chữ
+                  <select
+                    value={selected.fontFamily || DEFAULT_OVERLAY_FONT}
+                    onChange={(event) => updateField(selected.id, { fontFamily: event.target.value })}
+                    className="admin-field mt-1 w-full rounded-xl px-3 py-2 text-sm focus:outline-none"
+                  >
+                    {OVERLAY_FONTS.map((font) => (
+                      <option key={font.id} value={font.id}>
+                        {font.label} — {font.hint}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="block text-[11px] text-slate-500">
                   Cỡ chữ
                   <input
