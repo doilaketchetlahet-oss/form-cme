@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useConfirm } from "@/lib/ui/confirm";
@@ -503,16 +503,35 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   });
 
   // Bulk actions
-  const toggleSelect = (id: string) => {
+  // Shift + click chọn nhanh cả khoảng giữa hai dòng (theo thứ tự đang hiển thị).
+  const lastSelectedRef = useRef<string | null>(null);
+  const toggleSelect = (id: string, shiftKey = false) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
+      const anchor = lastSelectedRef.current;
+      if (shiftKey && anchor && anchor !== id) {
+        const ids = filtered.map((r) => r.id);
+        const from = ids.indexOf(anchor);
+        const to = ids.indexOf(id);
+        if (from >= 0 && to >= 0) {
+          const target = !prev.has(id);
+          const start = Math.min(from, to);
+          const end = Math.max(from, to);
+          for (let i = start; i <= end; i += 1) {
+            if (target) next.add(ids[i]);
+            else next.delete(ids[i]);
+          }
+          return next;
+        }
+      }
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      lastSelectedRef.current = id;
       return next;
     });
   };
   const selectAll = () => { setSelectedIds(new Set(filtered.map((r) => r.id))); };
-  const clearSelection = () => { setSelectedIds(new Set()); };
+  const clearSelection = () => { setSelectedIds(new Set()); lastSelectedRef.current = null; };
   const bulkCheckin = async () => {
     if (sessionConfig) {
       if (!sessionFilter) { toast.info("Chọn buổi trước khi điểm danh danh sách đã chọn."); return; }
@@ -1074,6 +1093,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
             <button onClick={bulkDelete} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Xoá đã chọn</button>
             <button onClick={clearSelection} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Bỏ chọn</button>
             <button onClick={selectAll} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Chọn tất cả</button>
+            <span className="hidden text-[11px] text-slate-500 sm:inline">Giữ <kbd className="rounded border border-slate-300 bg-white px-1">Shift</kbd> rồi bấm để chọn cả khoảng</span>
           </div>
         )}
 
@@ -1096,9 +1116,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
             return (
               <div key={r.id} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${rowTone}`}>
-                <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="h-4 w-4 flex-shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+                <input type="checkbox" checked={selectedIds.has(r.id)}
+                  onClick={(event) => { event.stopPropagation(); toggleSelect(r.id, event.shiftKey); }}
+                  onChange={() => { /* chọn xử lý ở onClick để đọc được shiftKey */ }}
+                  aria-label="Chọn người này"
+                  className="h-4 w-4 flex-shrink-0 cursor-pointer rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
                 <div className="flex-1 min-w-0 flex items-center gap-3" onClick={() => { void openDetail(r); }}>
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${rowChecked ? "bg-emerald-100" : "bg-slate-100"}`}>
                     {rowChecked ? <UserCheck size={16} className="text-emerald-600" /> : <Users size={16} className="text-slate-400" />}
