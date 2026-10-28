@@ -78,6 +78,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const [hall, setHall] = useState<string>(initialQuery.hall); // current hall filter
   const [assignedHalls, setAssignedHalls] = useState<string[]>([]);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
+  const [cameraError, setCameraError] = useState("");
   const [welcome, setWelcome] = useState<{ name: string; hall: string; details: { label: string; value: string }[] } | null>(null);
   const [session] = useState<string>(initialQuery.session);
   const [theme, setTheme] = useState<CheckinTheme | null>(null);
@@ -281,7 +282,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     handleScan(responseId);
   };
 
-  // Camera (qr-scanner)
+  // Camera (qr-scanner). Tạo scanner đúng một lần; đổi camera dùng setCamera()
+  // để qr-scanner tự dừng/giải phóng thiết bị cũ trước khi mở camera mới.
   useEffect(() => {
     if (!surveyId || !videoRef.current) return;
     QrScanner.WORKER_PATH = "/qr-scanner-worker.min.js";
@@ -289,7 +291,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       videoRef.current,
       (result) => handleScannedUrl(result.data),
       {
-        preferredCamera: facingMode,
+        preferredCamera: "environment",
         maxScansPerSecond: 8,
         highlightScanRegion: false,
         highlightCodeOutline: false,
@@ -297,14 +299,68 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       },
     );
     scannerRef.current = scanner;
-    scanner.start().catch(() => { /* camera denied */ });
-    if (busyRef.current) scanner.pause();
-    return () => {
-      scanner.stop();
-      scanner.destroy();
-      scannerRef.current = null;
+
+    const describeCameraError = (error: unknown) => {
+      const name = error instanceof DOMException ? error.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        return "Bạn chưa cấp quyền camera. Hãy cho phép camera trong trình duyệt rồi tải lại trang.";
+      }
+      if (name === "NotFoundError" || name === "OverconstrainedError") {
+        return "Không tìm thấy camera phù hợp trên thiết bị này.";
+      }
+      if (name === "NotReadableError" || name === "AbortError") {
+        return "Camera đang bị ứng dụng khác chiếm dụng. Đóng ứng dụng đó rồi bấm đổi camera lại.";
+      }
+      return "Không mở được camera. Kiểm tra quyền camera và thử lại.";
     };
-  }, [surveyId, facingMode]);
+
+    scanner.start()
+      .then(() => setCameraError(""))
+      .catch((error) => setCameraError(describeCameraError(error)));
+    if (busyRef.current) scanner.pause();
+
+    return () => {
+      scannerRef.current = null;
+      // Đợi stop xong mới destroy để nhả thiết bị sạch, tránh lỗi khi mở lại.
+      void Promise.resolve(scanner.stop())
+        .catch(() => undefined)
+        .then(() => {
+          scanner.destroy();
+        });
+    };
+  }, [surveyId]);
+
+  // Đổi camera trước/sau. Lỗi (không có camera trước, thiết bị bận) được báo
+  // rõ và tự quay về camera sau thay vì để khung hình đen.
+  const cameraModeRef = useRef<"environment" | "user">("environment");
+  useEffect(() => {
+    if (cameraModeRef.current === facingMode) return;
+    cameraModeRef.current = facingMode;
+    const scanner = scannerRef.current;
+    if (!scanner) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        await scanner.setCamera(facingMode);
+        if (cancelled) return;
+        setCameraError("");
+        if (busyRef.current) await scanner.pause();
+      } catch (error) {
+        if (cancelled) return;
+        const name = error instanceof DOMException ? error.name : "";
+        setCameraError(
+          name === "NotReadableError" || name === "AbortError"
+            ? "Camera trước đang bận hoặc chưa sẵn sàng. Đợi một giây rồi bấm lại."
+            : "Thiết bị không mở được camera này. Đã quay về camera sau.",
+        );
+        setFacingMode("environment");
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [facingMode]);
 
   // Pause scanning while a modal / welcome screen is showing
   useEffect(() => {
@@ -375,6 +431,11 @@ function ScanInner({ surveyId }: { surveyId: string }) {
             animate={{ top: ["12%", "88%", "12%"] }}
             transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
           />
+          {cameraError && (
+            <div className="absolute inset-x-3 bottom-3 z-20 rounded-xl bg-amber-500/95 px-3 py-2 text-center text-xs font-semibold text-white shadow-lg">
+              {cameraError}
+            </div>
+          )}
         </div>
 
         {/* Counter */}
