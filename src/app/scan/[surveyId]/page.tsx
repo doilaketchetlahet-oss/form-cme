@@ -287,12 +287,25 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   useEffect(() => {
     if (!surveyId || !videoRef.current) return;
     QrScanner.WORKER_PATH = "/qr-scanner-worker.min.js";
+
+    // Chỉ giải mã vùng giữa khung (nơi có 4 góc hiển thị) thay vì cả ảnh:
+    // giảm ~45% số pixel phải xử lý mỗi frame nên bắt mã nhanh và đỡ nóng máy.
+    const calculateScanRegion = (video: HTMLVideoElement): QrScanner.ScanRegion => {
+      const width = video.videoWidth || 0;
+      const height = video.videoHeight || 0;
+      if (!width || !height) return { x: 0, y: 0, width: 0, height: 0 };
+      const w = Math.floor(width * 0.75);
+      const h = Math.floor(height * 0.75);
+      return { x: Math.floor((width - w) / 2), y: Math.floor((height - h) / 2), width: w, height: h };
+    };
+
     const scanner = new QrScanner(
       videoRef.current,
       (result) => handleScannedUrl(result.data),
       {
         preferredCamera: "environment",
-        maxScansPerSecond: 8,
+        maxScansPerSecond: 6,
+        calculateScanRegion,
         highlightScanRegion: false,
         highlightCodeOutline: false,
         returnDetailedScanResult: true,
@@ -314,8 +327,28 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       return "Không mở được camera. Kiểm tra quyền camera và thử lại.";
     };
 
+    // Sau khi mở camera: xin độ phân giải cao hơn + lấy nét liên tục để QR
+    // nhỏ/nghiêng vẫn đọc được. Không hỗ trợ thì giữ nguyên, không làm hỏng.
+    const tuneTrack = async () => {
+      const stream = videoRef.current?.srcObject as MediaStream | null;
+      const track = stream?.getVideoTracks()[0];
+      if (!track) return;
+      try {
+        await track.applyConstraints({
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
+        });
+      } catch {
+        /* thiết bị không hỗ trợ các ràng buộc này */
+      }
+    };
+
     scanner.start()
-      .then(() => setCameraError(""))
+      .then(() => {
+        setCameraError("");
+        void tuneTrack();
+      })
       .catch((error) => setCameraError(describeCameraError(error)));
     if (busyRef.current) scanner.pause();
 
