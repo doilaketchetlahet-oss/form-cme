@@ -209,12 +209,19 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 ## Multi-page invitation PDF
 
 - `/admin/forms/[id]/pdf` preserves the uploaded original PDF (up to 10MB / 100
-  pages) in `survey-uploads`. Choose **Trang đặt tên / QR** to move the overlay
-  fields to one selected page; check positions after switching. The editor uses
-  a JPEG preview, but ZIP export and email stamp a transparent field layer onto
-  the original PDF, keeping every other page, page sizes, rotations and content.
-- `EmailOverlay.pdf` stores `{url, name, page, pageCount}` in existing JSON, so
-  no SQL migration is needed. Old image-only templates still export one page;
+  pages) in `survey-uploads`. **Trang đang chỉnh sửa** selects an independent
+  page layout (e.g. QR on page 1, name on page 2); each option shows its field
+  count. Switching pages preserves all layouts; save after editing. ZIP export
+  and email stamp every configured page in one PDF, preserving untouched pages,
+  page sizes, rotations and original content. Limits: 40 fields/page, 400 total.
+- `EmailOverlay.pdf` stores `{url, name, page, pageCount, pages?}` in existing JSON.
+  Top-level overlay fields are authoritative for the active page; `pages` stores
+  the other page layouts and previews. Legacy single-page PDF templates retain
+  fields on their saved page without a data rewrite. Export loads/saves the PDF
+  once and renders each field layer sequentially. Already exported PDFs and sent
+  emails are unaffected. Replacing a PDF retains layouts by page number, refreshes
+  previews, and rejects fewer pages if that would discard populated layouts.
+  No SQL migration is needed. Old image-only templates still export one page;
   re-upload the original PDF to recover pages never stored by the old uploader.
   PDF upload uses the document MIME policy in `supabase/email-attachments.sql`.
 - Upload/switch failures retain the current template. Saving/exporting is disabled

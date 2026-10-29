@@ -89,8 +89,41 @@ test('server email PDF uses original plus transparent layer, and legacy still ma
   });
   const overlay = { imageUrl: 'https://storage.example.test/preview.jpg', width: 470, height: 260, fields: [], pdf };
   assert.equal((await PDFDocument.load(await server.composeInvitePdf(overlay, {}, ''))).getPageCount(), 3);
-  assert.deepEqual(calls, [pdf.url, true]);
+  assert.deepEqual(calls, [pdf.url]); // Empty pages are preserved, not stamped.
   assert.equal((await PDFDocument.load(await server.composeInvitePdf({ ...overlay, pdf: undefined }, {}, ''))).getPageCount(), 1);
+});
+
+test('legacy page stays on its original page; active edits/deletion override cached fields', () => {
+  const field = { id: 'name', kind: 'text', token: '{{name}}', x: 10, y: 10, w: 50, h: 10 };
+  const current = { imageUrl: 'https://example.test/page2.jpg', width: 940, height: 520, fields: [field], pdf };
+  assert.deepEqual(Object.keys(core.getInvitePdfPages(current)), ['2']);
+  const other = { imageUrl: 'https://example.test/page1.jpg', width: 600, height: 800, fields: [{ ...field, id: 'qr', kind: 'qr', token: '{{qr_image}}' }] };
+  const edited = { ...current, fields: [], pdf: { ...pdf, pages: { 1: other, 2: { ...other, fields: [field] } } } };
+  const pages = core.getInvitePdfPages(edited);
+  assert.equal(pages[1].fields[0].kind, 'qr'); assert.deepEqual(pages[2].fields, []);
+  core.validateInvitePdfOverlay(edited);
+  for (const bad of [{ ...edited, pdf: { ...pdf, pages: { 4: other } } }, { ...edited, pdf: { ...pdf, pages: [] } }, { ...edited, pdf: { ...pdf, pages: { 1: { ...other, width: 0 } } } }]) assert.throws(() => core.validateInvitePdfOverlay(bad));
+});
+
+test('server renders both configured pages with independent fields and dimensions; other pages untouched', async () => {
+  const source = await fixture(), png = await layer(), calls = [];
+  const qr = { id: 'qr', kind: 'qr', token: '{{qr_image}}', x: 70, y: 60, w: 20, h: 20 };
+  const name = { id: 'name', kind: 'text', token: '{{name}}', x: 10, y: 10, w: 50, h: 10 };
+  const first = { imageUrl: 'https://example.test/1.jpg', width: 600, height: 800, fields: [qr] };
+  const second = { imageUrl: 'https://example.test/2.jpg', width: 940, height: 520, fields: [name] };
+  const overlay = { ...second, pdf: { ...pdf, pages: { 1: first } } };
+  const server = load('src/lib/server/email-pdf.ts', {
+    '@/lib/invite-pdf': core,
+    './invite-pdf-source': { fetchInvitePdf: async () => source },
+    '@/lib/email-overlay': { composeInviteImage: async (layout, values, url, transparent) => { calls.push({ layout, values, url, transparent }); return png; } },
+  });
+  const before = await PDFDocument.load(source), after = await PDFDocument.load(await server.composeInvitePdf(overlay, { name: 'Nguyễn An' }, 'https://example.test/checkin/1'));
+  assert.equal(after.getPageCount(), 3); assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(call => call.layout.fields), [[qr], [name]]);
+  assert.deepEqual(calls.map(call => call.layout.width), [600,940]);
+  assert.ok(calls.every(call => call.transparent && call.values.name === 'Nguyễn An'));
+  assert.deepEqual(streams(before, before.getPage(2)), streams(after, after.getPage(2)));
+  for (const i of [0,1]) assert.ok(streams(after, after.getPage(i)).length > streams(before, before.getPage(i)).length);
 });
 
 test('original PDF fetch is storage-scoped, bounded and fails closed', async () => {

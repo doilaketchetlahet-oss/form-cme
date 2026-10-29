@@ -21,13 +21,15 @@ export type OverlayField = {
   fontFamily?: string;
 };
 
-export type EmailOverlay = {
+export type EmailOverlayPage = {
   imageUrl: string;
   width: number;
   height: number;
   fields: OverlayField[];
-  /** Original document; imageUrl is only the selected page's editor preview. */
-  pdf?: { url: string; page: number; pageCount: number; name: string };
+};
+export type EmailOverlay = EmailOverlayPage & {
+  /** Top-level fields describe the active editor page; pages retains other pages. */
+  pdf?: { url: string; page: number; pageCount: number; name: string; pages?: Record<string, EmailOverlayPage> };
 };
 
 export type EmailTheme = {

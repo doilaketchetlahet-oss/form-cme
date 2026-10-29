@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { EmailOverlay } from "@/lib/email-template";
-import { validateInvitePdf } from "@/lib/invite-pdf";
+import { validateInvitePdfOverlay } from "@/lib/invite-pdf";
 
 export const runtime = "nodejs";
 
@@ -55,7 +55,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const template = payload.pdf_template as EmailOverlay | null | undefined;
-    validateInvitePdf(template?.pdf);
+    if (template) validateInvitePdfOverlay(template);
     if (template?.pdf) {
       const url = new URL(template.pdf.url);
       if (url.origin !== new URL(supabaseUrl).origin || !url.pathname.startsWith("/storage/v1/object/public/survey-uploads/")) throw new Error("PDF gốc phải nằm trong kho lưu trữ của dự án.");

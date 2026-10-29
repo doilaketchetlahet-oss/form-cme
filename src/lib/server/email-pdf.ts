@@ -2,7 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { composeInviteImage } from "@/lib/email-overlay";
 import type { EmailOverlay } from "@/lib/email-template";
-import { stampInvitePdf, validateInvitePdf } from "@/lib/invite-pdf";
+import { stampInvitePdfPages, validateInvitePdfOverlay, getInvitePdfPages } from "@/lib/invite-pdf";
 import { fetchInvitePdf } from "./invite-pdf-source";
 
 export function sanitizePdfName(name: string) {
@@ -16,7 +16,7 @@ export function sanitizePdfName(name: string) {
 }
 
 /**
- * Stamp the selected page of the original PDF, preserving every page.
+ * Stamp every configured page of the original PDF, preserving other pages.
  * Legacy image templates still produce a single-page invitation.
  */
 export async function composeInvitePdf(
@@ -25,10 +25,12 @@ export async function composeInvitePdf(
   checkinUrl: string,
 ): Promise<Buffer> {
   if (overlay.pdf) {
-    validateInvitePdf(overlay.pdf);
+    validateInvitePdfOverlay(overlay);
     const source = await fetchInvitePdf(overlay.pdf.url);
-    const layer = await composeInviteImage(overlay, values, checkinUrl, true);
-    return Buffer.from(await stampInvitePdf(source, layer, overlay.pdf));
+    const pages = getInvitePdfPages(overlay);
+    const targets = Object.keys(pages).map(Number).filter(number => pages[number].fields.length > 0);
+    return Buffer.from(await stampInvitePdfPages(source, overlay.pdf, targets,
+      number => composeInviteImage(pages[number], values, checkinUrl, true)));
   }
   const jpeg = await composeInviteImage(overlay, values, checkinUrl);
   // Re-encode to sRGB PNG: pdf-lib renders CMYK JPEGs as inverted colours.

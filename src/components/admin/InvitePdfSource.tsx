@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { FileText, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { EmailOverlay } from "@/lib/email-template";
-import { MAX_INVITE_PDF_BYTES, MAX_INVITE_PDF_PAGES } from "@/lib/invite-pdf";
+import { getInvitePdfPages, MAX_INVITE_PDF_BYTES, MAX_INVITE_PDF_PAGES } from "@/lib/invite-pdf";
 
 type Props = { overlay: EmailOverlay | null; disabled: boolean; onBusy: (busy: boolean) => void; onChange: (overlay: EmailOverlay) => void };
 
@@ -11,9 +11,16 @@ export function InvitePdfSource({ overlay, disabled, onBusy, onChange }: Props) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const lock = useRef(false);
+  const pageLayouts = overlay ? getInvitePdfPages(overlay) : {};
 
   const load = async (file?: File, selectedPage = 1) => {
     if (lock.current || disabled) return;
+    const cached = pageLayouts[selectedPage];
+    if (!file && overlay?.pdf && cached?.imageUrl) {
+      setError("");
+      onChange({ ...cached, pdf: { ...overlay.pdf, page: selectedPage, pages: pageLayouts } });
+      return;
+    }
     lock.current = true; setBusy(true); onBusy(true); setError("");
     let task: import("pdfjs-dist").PDFDocumentLoadingTask | undefined;
     try {
@@ -35,6 +42,7 @@ export function InvitePdfSource({ overlay, disabled, onBusy, onChange }: Props) 
       task = pdfjs.getDocument({ data: buffer.slice(0), password: "" });
       const doc = await task.promise;
       if (doc.numPages > MAX_INVITE_PDF_PAGES) throw new Error("Mẫu thiệp hỗ trợ tối đa 100 trang.");
+      if (file && Object.entries(pageLayouts).some(([number, layout]) => Number(number) > doc.numPages && layout.fields.length)) throw new Error("PDF mới có ít trang hơn các trang đã đặt trường. Hãy xóa trường ở những trang không còn trong PDF mới trước khi thay file.");
       const page = await doc.getPage(selectedPage);
       const base = page.getViewport({ scale: 1 });
       const viewport = page.getViewport({ scale: Math.min(2, 2400 / Math.max(base.width, base.height)) });
@@ -53,8 +61,11 @@ export function InvitePdfSource({ overlay, disabled, onBusy, onChange }: Props) 
       const id = crypto.randomUUID();
       const originalUrl = file ? await upload(`email/pdf-${id}.pdf`, file, "application/pdf") : overlay!.pdf!.url;
       const imageUrl = await upload(`email/pdf-preview-${id}.jpg`, preview, "image/jpeg");
-      onChange({ imageUrl, width: canvas.width, height: canvas.height, fields: overlay?.fields ?? [], pdf: {
+      const pages = file ? Object.fromEntries(Object.entries(pageLayouts).filter(([number]) => Number(number) <= doc.numPages).map(([number, layout]) => [number, { ...layout, imageUrl: "" }])) : pageLayouts;
+      const current = { imageUrl, width: canvas.width, height: canvas.height, fields: pages[selectedPage]?.fields ?? [] };
+      onChange({ ...current, pdf: {
         url: originalUrl, name: (file?.name ?? overlay!.pdf!.name).slice(0, 255), page: selectedPage, pageCount: doc.numPages,
+        pages: { ...pages, [selectedPage]: current },
       } });
     } catch (error) {
       setError(error instanceof Error && (error.name === "PasswordException" || /encrypted/i.test(error.message)) ? "PDF có mật khẩu. Hãy tải bản PDF không khóa." : error instanceof Error ? error.message : "Không đọc được PDF.");
@@ -69,12 +80,13 @@ export function InvitePdfSource({ overlay, disabled, onBusy, onChange }: Props) 
     </label>
     {overlay?.pdf ? <>
       <p className="break-words text-sm font-medium text-slate-800">{overlay.pdf.name} · {overlay.pdf.pageCount} trang</p>
-      <label className="block text-sm font-medium text-slate-700">Trang đặt tên / QR
-        <select aria-label="Trang đặt tên / QR" className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-base sm:max-w-xs" disabled={disabled || busy} value={overlay.pdf.page} onChange={event => void load(undefined, Number(event.target.value))}>
-          {Array.from({ length: overlay.pdf.pageCount }, (_, index) => <option key={index} value={index + 1}>Trang {index + 1}</option>)}
+      <label className="block text-sm font-medium text-slate-700">Trang đang chỉnh sửa
+        <select aria-label="Trang đang chỉnh sửa" className="mt-1 block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-base sm:max-w-xs" disabled={disabled || busy} value={overlay.pdf.page} onChange={event => void load(undefined, Number(event.target.value))}>
+          {Array.from({ length: overlay.pdf.pageCount }, (_, index) => <option key={index} value={index + 1}>Trang {index + 1} · {pageLayouts[index + 1]?.fields.length ?? 0} trường</option>)}
         </select>
       </label>
-      <p className="text-sm text-slate-600">Tên/QR chỉ được chèn lên trang {overlay.pdf.page}. Các trang khác giữ nguyên; PDF xuất và gửi email luôn đủ {overlay.pdf.pageCount} trang. Đổi trang sẽ chuyển các trường sang trang mới, hãy kiểm tra lại vị trí.</p>
+      <p className="text-sm text-slate-600">Đang sửa trang {overlay.pdf.page}. Mỗi trang có tên/QR riêng; chuyển trang giữ nguyên các trường đã đặt. Khi xuất hoặc gửi email, tất cả trang được cá nhân hóa trong cùng một PDF đủ {overlay.pdf.pageCount} trang.</p>
+      <p className="text-sm font-medium text-sky-800">{Object.values(pageLayouts).filter(layout => layout.fields.length > 0).length} trang đã đặt trường · Nhấn Lưu mẫu sau khi chỉnh sửa xong.</p>
     </> : <p className="text-sm text-slate-600">PDF tối đa 10MB / 100 trang. Mẫu cũ chỉ có ảnh nền: tải lại PDF gốc để giữ đủ các trang.</p>}
     <p role="status" className="text-sm text-sky-800">{busy ? "Đang tải và tạo bản xem trước. Vui lòng chờ trước khi lưu hoặc xuất." : ""}</p>
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}

@@ -13,6 +13,7 @@ import {
   serializeEmailTemplate,
   type EmailMergeQuestion,
   type EmailOverlay,
+  type EmailOverlayPage,
   type OverlayField,
 } from "@/lib/email-template";
 import { buildPublicUrl } from "@/lib/site-url";
@@ -20,7 +21,7 @@ import { resolveOverlayFont } from "@/lib/overlay-fonts";
 import { ensureCustomFontFace, fetchCustomFonts } from "@/lib/custom-fonts-client";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 import { InvitePdfSource } from "./InvitePdfSource";
-import { stampInvitePdf, MAX_INVITE_PDF_BYTES } from "@/lib/invite-pdf";
+import { stampInvitePdfPages, getInvitePdfPages, validateInvitePdfOverlay, MAX_INVITE_PDF_BYTES } from "@/lib/invite-pdf";
 
 /** Nạp font của thiệp vào trình duyệt để canvas vẽ đúng (chỉ 1 lần mỗi font). */
 const loadedFonts = new Set<string>();
@@ -152,6 +153,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       const zip = new JSZip();
       let original: Uint8Array | undefined;
       if (overlay.pdf) {
+        validateInvitePdfOverlay(overlay);
         const response = await fetch(overlay.pdf.url);
         if (!response.ok) throw new Error("Không tải được PDF gốc. Vui lòng tải lại mẫu.");
         original = new Uint8Array(await response.arrayBuffer());
@@ -174,55 +176,62 @@ export function InvitePdfPage({ formId }: { formId: string }) {
           questions: questionPayload,
         }, false);
 
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Không tạo được lớp tên/QR. Vui lòng thử lại.");
-        if (!original) ctx.drawImage(bg, 0, 0, width, height);
+        const renderPage = async (layout: EmailOverlayPage) => {
+          const width = layout.width, height = layout.height;
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Không tạo được lớp tên/QR. Vui lòng thử lại.");
+          if (!original) ctx.drawImage(bg, 0, 0, width, height);
 
-        for (const field of overlay.fields) {
-          const left = (field.x / 100) * width;
-          const top = (field.y / 100) * height;
-          const boxW = Math.max(8, (field.w / 100) * width);
-          const boxH = Math.max(8, (field.h / 100) * height);
+          for (const field of layout.fields) {
+            const left = (field.x / 100) * width;
+            const top = (field.y / 100) * height;
+            const boxW = Math.max(8, (field.w / 100) * width);
+            const boxH = Math.max(8, (field.h / 100) * height);
 
-          if (isQrField(field)) {
-            const size = Math.max(48, Math.round(Math.min(boxW, boxH)));
-            const qrDataUrl = await QRCode.toDataURL(checkinUrl, {
-              width: size,
-              margin: 1,
-              errorCorrectionLevel: "M",
-              color: { dark: "#0f172a", light: "#ffffff" },
-            });
-            const qrImg = await loadImageElement(qrDataUrl);
-            const x = field.align === "center" ? left + (boxW - size) / 2 : field.align === "right" ? left + boxW - size : left;
-            ctx.drawImage(qrImg, x, top + (boxH - size) / 2, size, size);
-            continue;
-          }
+            if (isQrField(field)) {
+              const size = Math.max(48, Math.round(Math.min(boxW, boxH)));
+              const qrDataUrl = await QRCode.toDataURL(checkinUrl, {
+                width: size,
+                margin: 1,
+                errorCorrectionLevel: "M",
+                color: { dark: "#0f172a", light: "#ffffff" },
+              });
+              const qrImg = await loadImageElement(qrDataUrl);
+              const x = field.align === "center" ? left + (boxW - size) / 2 : field.align === "right" ? left + boxW - size : left;
+              ctx.drawImage(qrImg, x, top + (boxH - size) / 2, size, size);
+              continue;
+            }
 
-          const text = values[tokenKey(field.token)] ?? "";
-          if (!text) continue;
-          let fontSize = Math.max(12, Number(field.fontSize) || Math.round(boxH * 0.55));
-          const color = field.color || "#0f172a";
-          const family = await ensureOverlayFont(field.fontFamily, field.bold).catch(() => "Arial");
-          ctx.fillStyle = color;
-          ctx.textBaseline = "middle";
-          ctx.textAlign = field.align === "center" ? "center" : field.align === "right" ? "right" : "left";
-          const cx = field.align === "center" ? left + boxW / 2 : field.align === "right" ? left + boxW : left;
-          const cy = top + boxH / 2;
-          ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
-          while (ctx.measureText(text).width > boxW && fontSize > 8) {
-            fontSize -= 1;
+            const text = values[tokenKey(field.token)] ?? "";
+            if (!text) continue;
+            let fontSize = Math.max(12, Number(field.fontSize) || Math.round(boxH * 0.55));
+            const color = field.color || "#0f172a";
+            const family = await ensureOverlayFont(field.fontFamily, field.bold).catch(() => "Arial");
+            ctx.fillStyle = color;
+            ctx.textBaseline = "middle";
+            ctx.textAlign = field.align === "center" ? "center" : field.align === "right" ? "right" : "left";
+            const cx = field.align === "center" ? left + boxW / 2 : field.align === "right" ? left + boxW : left;
+            const cy = top + boxH / 2;
             ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
+            while (ctx.measureText(text).width > boxW && fontSize > 8) {
+              fontSize -= 1;
+              ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
+            }
+            ctx.fillText(text, cx, cy);
           }
-          ctx.fillText(text, cx, cy);
-        }
+          return canvas;
+        };
 
         let output: Uint8Array | Blob;
         if (original && overlay.pdf) {
-          output = await stampInvitePdf(original, canvas.toDataURL("image/png"), overlay.pdf);
+          const pages = getInvitePdfPages(overlay);
+          output = await stampInvitePdfPages(original, overlay.pdf, Object.keys(pages).map(Number).filter(number => pages[number].fields.length > 0),
+            async number => (await renderPage(pages[number])).toDataURL("image/png"));
         } else {
+          const canvas = await renderPage({ ...overlay, width, height });
           const pdf = new jsPDF({ orientation: width >= height ? "landscape" : "portrait", unit: "px", format: [width, height] });
           pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, width, height);
           output = pdf.output("blob");
@@ -319,7 +328,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       ) : (
         <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
-            Tải <strong>file PDF gốc</strong>, chọn trang và đặt <strong>tên / QR</strong>. Hệ thống giữ đủ các trang khi xuất ZIP và gửi email. Mẫu ảnh cũ vẫn xuất thành PDF một trang.
+            Tải <strong>file PDF gốc</strong>, lần lượt chọn từng trang để đặt <strong>tên / QR riêng</strong>, rồi lưu mẫu. Xuất ZIP và gửi email đều cá nhân hóa tất cả các trang đã thiết kế. Mẫu ảnh cũ vẫn xuất thành PDF một trang.
           </div>
           <label className="mb-4 flex cursor-pointer items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2.5 text-sm text-slate-700">
             <input
