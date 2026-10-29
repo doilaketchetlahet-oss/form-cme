@@ -225,6 +225,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   A sending-only Resend key cannot list domains: **Kiểm tra Resend** reports
   this limitation instead of calling the key invalid or claiming verification.
   Full-access keys can check the sender domain. Neither check sends an email.
+- **Cách gửi thư → CC mail (tùy chọn)** accepts up to 20 comma/semicolon-separated
+  email addresses for each provider. CC is stored in the existing `smtp_public.cc`
+  config, copied into new batches, and included on every personalized message and
+  test send. Missing CC in legacy records means no copies. Addresses are validated,
+  deduplicated case-insensitively and excluded if identical to the current To address.
+  SMTP partial To/CC acceptance pauses as `uncertain` for operator review. Opens by
+  CC recipients count against the same row's tracking pixel. No SQL migration needed.
 - **Xử lý Email trùng** defaults to skipping duplicate addresses (also for old
   templates without `duplicateEmailPolicy`). Drafts can select **Gửi riêng từng
   dòng** (`duplicateEmailPolicy: "allow"`) so one speaker with multiple reports

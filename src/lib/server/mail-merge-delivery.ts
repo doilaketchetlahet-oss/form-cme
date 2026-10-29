@@ -1,4 +1,4 @@
-import { isMergeEmail, type MergeResendAccount, type MergeSenderPublic, type SmtpAccount } from "@/lib/mail-merge";
+import { isMergeEmail, parseMergeCc, type MergeResendAccount, type MergeSenderPublic, type SmtpAccount } from "@/lib/mail-merge";
 import { decryptSmtpPassword, encryptSmtpPassword, sendMergeSmtp, validateSmtpAccount, verifyMergeSmtp, type MergeSmtpAttachment } from "./mail-merge-smtp";
 
 type StoredSender = { smtp_public: MergeSenderPublic; smtp_secret: string };
@@ -14,8 +14,8 @@ export function prepareMergeSender(body: Record<string, unknown>, stored: Stored
     const account = validateSmtpAccount(body.smtp);
     if (!account.password && stored?.smtp_public.provider !== "resend" && stored?.smtp_secret) account.password = decryptSmtpPassword(stored.smtp_secret, owner);
     if (!account.password) throw new Error("Nhập mật khẩu SMTP hoặc mật khẩu ứng dụng.");
-    const { host, port, secure, user, fromEmail, fromName, replyTo } = account;
-    return { sender: { provider, account } as MergeSender, publicAccount: { provider, host, port, secure, user, fromEmail, fromName, replyTo } as MergeSenderPublic, secret: encryptSmtpPassword(account.password, owner) };
+    const { host, port, secure, user, fromEmail, fromName, replyTo, cc } = account;
+    return { sender: { provider, account } as MergeSender, publicAccount: { provider, host, port, secure, user, fromEmail, fromName, replyTo, cc } as MergeSenderPublic, secret: encryptSmtpPassword(account.password, owner) };
   }
   if (!body.resend || typeof body.resend !== "object" || Array.isArray(body.resend)) throw new Error("Nhập cấu hình Resend.");
   const raw = body.resend as Record<string, unknown>;
@@ -23,15 +23,16 @@ export function prepareMergeSender(body: Record<string, unknown>, stored: Stored
   for (const field of ["apiKey", "fromEmail", "fromName", "replyTo"]) {
     if (typeof raw[field] !== "string" || raw[field].length > 1000 || /[\r\n]/.test(raw[field])) throw new Error("Cấu hình Resend không hợp lệ.");
   }
-  const account: MergeResendAccount = { keySource: raw.keySource as MergeResendAccount["keySource"], apiKey: (raw.apiKey as string).trim(), fromEmail: (raw.fromEmail as string).trim().toLowerCase(), fromName: (raw.fromName as string).trim(), replyTo: (raw.replyTo as string).trim() };
+  if (raw.cc !== undefined && (typeof raw.cc !== "string" || raw.cc.length > 4000 || /[\r\n]/.test(raw.cc))) throw new Error("Cấu hình Resend không hợp lệ.");
+  const account: MergeResendAccount = { keySource: raw.keySource as MergeResendAccount["keySource"], apiKey: (raw.apiKey as string).trim(), fromEmail: (raw.fromEmail as string).trim().toLowerCase(), fromName: (raw.fromName as string).trim(), replyTo: (raw.replyTo as string).trim(), cc: parseMergeCc(raw.cc).join(", ") };
   if (!isMergeEmail(account.fromEmail) || account.replyTo && !isMergeEmail(account.replyTo) || /[<>]/.test(account.fromName)) throw new Error("Kiểm tra địa chỉ gửi, tên hiển thị và Email nhận trả lời.");
   if (account.keySource === "server") account.apiKey = process.env.RESEND_API_KEY?.trim() || "";
   else if (!account.apiKey && stored?.smtp_public.provider === "resend" && stored.smtp_public.keySource === "private" && stored.smtp_secret) {
     try { account.apiKey = decryptSmtpPassword(stored.smtp_secret, owner); } catch { throw new Error("Không mở được API key Resend đã lưu. Nhập lại khóa."); }
   }
   if (!/^re_[a-zA-Z0-9_-]+$/.test(account.apiKey)) throw new Error(account.keySource === "server" ? "Chưa có RESEND_API_KEY hợp lệ trên server. Chọn API key riêng hoặc cập nhật cấu hình hệ thống." : "Nhập API key Resend hợp lệ (bắt đầu bằng re_).");
-  const { keySource, fromEmail, fromName, replyTo } = account;
-  return { sender: { provider, account } as MergeSender, publicAccount: { provider, keySource, fromEmail, fromName, replyTo } as MergeSenderPublic, secret: keySource === "private" ? encryptSmtpPassword(account.apiKey, owner) : "" };
+  const { keySource, fromEmail, fromName, replyTo, cc } = account;
+  return { sender: { provider, account } as MergeSender, publicAccount: { provider, keySource, fromEmail, fromName, replyTo, cc } as MergeSenderPublic, secret: keySource === "private" ? encryptSmtpPassword(account.apiKey, owner) : "" };
 }
 
 export function restoreMergeSender(stored: StoredSender, owner: string) {
@@ -85,7 +86,8 @@ export async function sendMergeMessage(sender: MergeSender, email: MergeMessage,
     return { filename: file.filename, content: file.content.toString("base64"), ...(file.contentType ? { content_type: file.contentType } : {}), ...(file.cid ? { content_id: file.cid } : {}) };
   });
   const name = sender.account.fromName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const payload = JSON.stringify({ from: name ? `"${name}" <${sender.account.fromEmail}>` : sender.account.fromEmail, to: [email.to], subject: email.subject, html: email.html, text: email.text, ...(sender.account.replyTo ? { reply_to: sender.account.replyTo } : {}), ...(attachments?.length ? { attachments } : {}) });
+  const cc = parseMergeCc(sender.account.cc).filter(address => address !== email.to.trim().toLowerCase());
+  const payload = JSON.stringify({ from: name ? `"${name}" <${sender.account.fromEmail}>` : sender.account.fromEmail, to: [email.to], ...(cc.length ? { cc } : {}), subject: email.subject, html: email.html, text: email.text, ...(sender.account.replyTo ? { reply_to: sender.account.replyTo } : {}), ...(attachments?.length ? { attachments } : {}) });
   try {
     const response = await fetch("https://api.resend.com/emails", { method: "POST", redirect: "error", headers: { Authorization: `Bearer ${sender.account.apiKey}`, "Content-Type": "application/json", "Idempotency-Key": `mail-merge/${attempt}` }, body: payload, signal: AbortSignal.timeout(20_000) });
     const data = await response.json().catch(() => null);

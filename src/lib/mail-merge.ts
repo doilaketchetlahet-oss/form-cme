@@ -15,9 +15,9 @@ export type MergeTemplate = {
   trackingEnabled?: boolean;
   duplicateEmailPolicy?: "skip" | "allow";
 };
-export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string };
+export type SmtpAccount = { host: string; port: number; secure: boolean; user: string; password: string; fromEmail: string; fromName: string; replyTo: string; cc?: string };
 export type MergeProvider = "smtp" | "resend";
-export type MergeResendAccount = { keySource: "server" | "private"; apiKey: string; fromEmail: string; fromName: string; replyTo: string };
+export type MergeResendAccount = { keySource: "server" | "private"; apiKey: string; fromEmail: string; fromName: string; replyTo: string; cc?: string };
 export type MergeSenderPublic = (Omit<SmtpAccount, "password"> & { provider?: "smtp" }) | (Omit<MergeResendAccount, "apiKey"> & { provider: "resend" });
 export const DEFAULT_MERGE_RESEND_FROM = "bantochuc@vsot.com.vn";
 export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null; opened_at?: string | null; open_count?: number; last_opened_at?: string | null };
@@ -26,6 +26,15 @@ export type MergeCampaign = { id: string; previous_campaign_id?: string | null; 
 export const MAX_MERGE_ROWS = 5000;
 export const MAX_MERGE_COLUMNS = 60;
 export const isMergeEmail = (value: string) => value.length <= 254 && /^[^\s@<>,;:"\\]+@[a-z0-9.-]+\.[a-z]{2,63}$/i.test(value);
+/** Parse the optional campaign-wide CC list without allowing header injection. */
+export function parseMergeCc(value: unknown): string[] {
+  if (value !== undefined && typeof value !== "string") throw new Error("Danh sách CC không hợp lệ.");
+  const raw = value ?? "";
+  if (raw.length > 4000 || /[\r\n]/.test(raw)) throw new Error("Danh sách CC không hợp lệ.");
+  const values = raw.split(/[;,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean);
+  if (values.length > 20 || values.some((item) => !isMergeEmail(item))) throw new Error("Mỗi địa chỉ CC phải là email hợp lệ, tối đa 20 địa chỉ.");
+  return [...new Set(values)];
+}
 const tokenPattern = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 

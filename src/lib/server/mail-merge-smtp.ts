@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import nodemailer from "nodemailer";
-import { isMergeEmail, type SmtpAccount } from "@/lib/mail-merge";
+import { isMergeEmail, parseMergeCc, type SmtpAccount } from "@/lib/mail-merge";
 
 function key() {
   const secret = process.env.MAIL_MERGE_ENCRYPTION_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -31,7 +31,8 @@ export function validateSmtpAccount(input: unknown): SmtpAccount {
   for (const field of ["host", "user", "password", "fromEmail", "fromName", "replyTo"]) {
     if (typeof raw[field] !== "string" || (raw[field] as string).length > 1000 || (field !== "password" && /[\r\n]/.test(raw[field] as string))) throw new Error("Cấu hình SMTP không hợp lệ.");
   }
-  const account = { ...raw, host: (raw.host as string).trim().toLowerCase(), user: (raw.user as string).trim(), fromEmail: (raw.fromEmail as string).trim(), fromName: (raw.fromName as string).trim(), replyTo: (raw.replyTo as string).trim() } as SmtpAccount;
+  const cc = parseMergeCc(raw.cc);
+  const account = { ...raw, host: (raw.host as string).trim().toLowerCase(), user: (raw.user as string).trim(), fromEmail: (raw.fromEmail as string).trim(), fromName: (raw.fromName as string).trim(), replyTo: (raw.replyTo as string).trim(), cc: cc.join(", ") } as SmtpAccount;
   if (!/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(account.host) || account.host.length > 253 || !account.host.includes(".")
     || account.host.includes("..") || !Number.isInteger(account.port) || account.port < 1 || account.port > 65535 || typeof account.secure !== "boolean"
     || !account.user || !isMergeEmail(account.fromEmail) || (account.replyTo && !isMergeEmail(account.replyTo))) throw new Error("Kiểm tra máy chủ, cổng, tài khoản và địa chỉ gửi SMTP.");
@@ -92,9 +93,12 @@ export async function sendMergeSmtp(account: SmtpAccount, email: { to: string; s
   let transport: Awaited<ReturnType<typeof smtpTransport>>;
   try { transport = await smtpTransport(account); } catch { return { status: "failed" as const, error: "Không kết nối được SMTP. Kiểm tra máy chủ, tài khoản và TLS." }; }
   try {
-    const info = await transport.sendMail({ ...email, from: { name: account.fromName, address: account.fromEmail }, replyTo: account.replyTo || undefined,
+    const cc = parseMergeCc(account.cc).filter(address => address !== email.to.trim().toLowerCase());
+    const info = await transport.sendMail({ ...email, from: { name: account.fromName, address: account.fromEmail }, replyTo: account.replyTo || undefined, ...(cc.length ? { cc } : {}),
       disableFileAccess: true, disableUrlAccess: true });
     if (!(info.accepted as string[] | undefined)?.length) return { status: "failed" as const, error: "SMTP từ chối người nhận." };
+    const accepted = new Set((info.accepted as string[]).map(address => String(address).toLowerCase()));
+    if ([email.to, ...cc].some(address => !accepted.has(address.toLowerCase()))) return { status: "uncertain" as const, messageId: String(info.messageId ?? ""), error: "SMTP chỉ nhận một phần địa chỉ To/CC. Kiểm tra các hộp thư trước khi gửi lại để tránh gửi trùng." };
     return { status: "sent" as const, messageId: String(info.messageId ?? "") };
   } catch (error) { return smtpErrorOutcome(error); } finally {
     // Cleanup must not replace a confirmed SMTP result with a retryable failure.
