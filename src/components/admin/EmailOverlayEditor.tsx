@@ -20,13 +20,14 @@ type Props = {
   surveyTitle: string;
   questions: EmailMergeQuestion[];
   onBodyChange: (value: string) => void;
+  hideImageUpload?: boolean;
 };
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
 }
 
-export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange }: Props) {
+export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange, hideImageUpload = false }: Props) {
   const parsed = useMemo(() => parseEmailTemplate(body), []);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(() => parsed.overlay ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(parsed.overlay?.fields[0]?.id ?? null);
@@ -194,7 +195,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start">
       <div className="space-y-3">
-        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
+        {!hideImageUpload && <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
           {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
           {overlay?.imageUrl ? "Đổi ảnh thiệp" : "Tải ảnh thiệp"}
           <input
@@ -207,7 +208,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange 
               event.target.value = "";
             }}
           />
-        </label>
+        </label>}
 
         {!overlay?.imageUrl ? (
           <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50 px-6 py-16 text-center text-sm text-slate-500">

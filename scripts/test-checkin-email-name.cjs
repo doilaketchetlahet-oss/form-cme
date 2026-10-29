@@ -48,7 +48,7 @@ test('full name is trimmed, escaped for HTML and kept separate from the title me
 });
 
 const renderer = load('src/lib/server/email-react.tsx', { '@/lib/email-template': merge });
-function mailHarness({ provider = 'resend', body = '', storedAnswers = answers } = {}) {
+function mailHarness({ provider = 'resend', body = '', storedAnswers = answers, pdf = null, pdfError = false } = {}) {
   const deliveries = [], statuses = [];
   const db = {
     from(table) {
@@ -57,7 +57,7 @@ function mailHarness({ provider = 'resend', body = '', storedAnswers = answers }
         update(patch) { statuses.push(patch.email_status); return query; },
         async maybeSingle() {
           return { data: table === 'survey_responses' ? { id: 'response', survey_id: 'survey', answers: storedAnswers, email: 'guest@example.test' }
-            : table === 'surveys' ? { title: 'Hội thảo', email_body: body, email_subject: 'Thư mời {{name}}', email_provider: provider }
+            : table === 'surveys' ? { title: 'Hội thảo', email_body: body, email_subject: 'Thư mời {{name}}', email_provider: provider, pdf_template: pdf, pdf_attach_email: !!pdf }
               : null, error: null };
         },
         then(resolve) { return Promise.resolve({ data: table === 'survey_questions' ? questions : null, error: null }).then(resolve); },
@@ -70,7 +70,7 @@ function mailHarness({ provider = 'resend', body = '', storedAnswers = answers }
     '@/lib/email-template': merge,
     '@/lib/qr-style': { buildQrImagePath: () => '/fixture-qr.png' },
     './email-react': renderer,
-    './email-pdf': {},
+    './email-pdf': { sanitizePdfName: () => 'invite', composeInvitePdf: async () => { if (pdfError) throw new Error('PDF gốc không tải được'); return Buffer.from('complete-pdf'); } },
     '@/lib/email-overlay': {},
     './qr-image': { QR_INLINE_CONTENT_ID: 'qr-fixture', qrStyleFromBranding: () => ({}), renderQrPng: async () => Buffer.from('qr-fixture') },
     './email-provider': { resolveProvider: (value) => value || provider, sendEmail: async (payload, channel) => {
@@ -110,4 +110,17 @@ test('block templates keep the title and full name distinct through the real Rea
   await mail.send();
   assert.match(mail.deliveries[0].html, /Xin chào BS Nguyễn Văn An,/);
   assert.match(mail.deliveries[0].text, /Xin chào BS Nguyễn Văn An,/);
+});
+
+test('PDF attachment failure prevents sending an incomplete invitation for both providers', async () => {
+  for (const provider of ['resend', 'smtp']) {
+    const pdf = { imageUrl: 'https://example.test/preview.jpg' };
+    const success = mailHarness({ provider, pdf });
+    assert.equal((await success.send()).ok, true);
+    assert.ok(success.deliveries[0].attachments.some(file => file.content === Buffer.from('complete-pdf').toString('base64')));
+    const failure = mailHarness({ provider, pdf, pdfError: true });
+    assert.equal((await failure.send()).ok, false);
+    assert.equal(failure.deliveries.length, 0);
+    assert.deepEqual(failure.statuses, ['failed']);
+  }
 });

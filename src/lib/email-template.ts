@@ -26,6 +26,8 @@ export type EmailOverlay = {
   width: number;
   height: number;
   fields: OverlayField[];
+  /** Original document; imageUrl is only the selected page's editor preview. */
+  pdf?: { url: string; page: number; pageCount: number; name: string };
 };
 
 export type EmailTheme = {
@@ -162,6 +164,7 @@ export function normalizeOverlay(overlay?: EmailOverlay | null): EmailOverlay | 
     width: Math.max(1, Number(overlay.width) || 1),
     height: Math.max(1, Number(overlay.height) || 1),
     fields,
+    ...(overlay.pdf ? { pdf: overlay.pdf } : {}),
   };
 }
 

@@ -129,13 +129,19 @@ export async function composeInviteImage(
   overlay: EmailOverlay,
   values: Record<string, string>,
   checkinUrl: string,
+  transparent = false,
 ): Promise<Buffer> {
   await prepareFonts();
 
-  const response = await fetch(overlay.imageUrl);
-  if (!response.ok) throw new Error("Không tải được ảnh thiệp.");
-  const background = Buffer.from(await response.arrayBuffer());
-  const image = sharp(background, { failOn: "none" }).rotate();
+  let image;
+  if (transparent) {
+    if (!Number.isInteger(overlay.width) || !Number.isInteger(overlay.height) || overlay.width < 1 || overlay.height < 1 || overlay.width * overlay.height > 16_000_000) throw new Error("Kích thước thiệp không hợp lệ.");
+    image = sharp({ create: { width: overlay.width, height: overlay.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
+  } else {
+    const response = await fetch(overlay.imageUrl);
+    if (!response.ok) throw new Error("Không tải được ảnh thiệp.");
+    image = sharp(Buffer.from(await response.arrayBuffer()), { failOn: "none" }).rotate();
+  }
   const meta = await image.metadata();
   const width = Math.max(1, meta.width || overlay.width || 1200);
   const height = Math.max(1, meta.height || overlay.height || 1600);
@@ -148,9 +154,14 @@ export async function composeInviteImage(
   }
 
   for (const field of overlay.fields.filter(isQrField)) {
-    const left = Math.round((field.x / 100) * width);
-    const top = Math.round((field.y / 100) * height);
-    const box = Math.max(32, Math.round(Math.min((field.w / 100) * width, (field.h / 100) * height)));
+    let left = Math.round((field.x / 100) * width);
+    let top = Math.round((field.y / 100) * height);
+    const boxW = Math.max(8, (field.w / 100) * width), boxH = Math.max(8, (field.h / 100) * height);
+    const box = Math.max(transparent ? 48 : 32, Math.round(Math.min(boxW, boxH)));
+    if (transparent) {
+      left = Math.round(left + (field.align === "center" ? (boxW - box) / 2 : field.align === "right" ? boxW - box : 0));
+      top = Math.round(top + (boxH - box) / 2);
+    }
     const qrPng = await QRCode.toBuffer(checkinUrl || values.checkin_url || "preview", {
       type: "png",
       width: box,
@@ -161,6 +172,7 @@ export async function composeInviteImage(
     composites.push({ input: qrPng, left, top });
   }
 
+  if (transparent) return image.composite(composites).toColourspace("srgb").png().toBuffer();
   if (composites.length === 0) return image.toColourspace("srgb").jpeg({ quality: 88 }).toBuffer();
 
   return image

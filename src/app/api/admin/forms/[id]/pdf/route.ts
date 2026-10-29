@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { EmailOverlay } from "@/lib/email-template";
+import { validateInvitePdf } from "@/lib/invite-pdf";
 
 export const runtime = "nodejs";
 
@@ -50,6 +52,16 @@ export async function POST(request: Request, context: RouteContext) {
   if (!payload) {
     return NextResponse.json({ ok: false, error: "Dữ liệu không hợp lệ." }, { status: 400 });
   }
+
+  try {
+    const template = payload.pdf_template as EmailOverlay | null | undefined;
+    validateInvitePdf(template?.pdf);
+    if (template?.pdf) {
+      const url = new URL(template.pdf.url);
+      if (url.origin !== new URL(supabaseUrl).origin || !url.pathname.startsWith("/storage/v1/object/public/survey-uploads/")) throw new Error("PDF gốc phải nằm trong kho lưu trữ của dự án.");
+      if (!Array.isArray(template.fields) || template.fields.length > 40 || !Number.isInteger(template.width) || !Number.isInteger(template.height) || template.width < 1 || template.height < 1 || template.width * template.height > 16_000_000) throw new Error("Mẫu PDF không hợp lệ.");
+    }
+  } catch (error) { return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Mẫu PDF không hợp lệ." }, { status: 400 }); }
 
   const update: Record<string, unknown> = { pdf_template: payload.pdf_template ?? null };
   if (typeof payload.pdf_attach_email === "boolean") update.pdf_attach_email = payload.pdf_attach_email;

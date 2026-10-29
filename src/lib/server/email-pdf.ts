@@ -2,6 +2,8 @@ import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
 import { composeInviteImage } from "@/lib/email-overlay";
 import type { EmailOverlay } from "@/lib/email-template";
+import { stampInvitePdf, validateInvitePdf } from "@/lib/invite-pdf";
+import { fetchInvitePdf } from "./invite-pdf-source";
 
 export function sanitizePdfName(name: string) {
   const cleaned = name
@@ -14,14 +16,20 @@ export function sanitizePdfName(name: string) {
 }
 
 /**
- * Compose a single-page invitation PDF for one attendee: the invitation
- * background image with the placed text fields and QR code.
+ * Stamp the selected page of the original PDF, preserving every page.
+ * Legacy image templates still produce a single-page invitation.
  */
 export async function composeInvitePdf(
   overlay: EmailOverlay,
   values: Record<string, string>,
   checkinUrl: string,
 ): Promise<Buffer> {
+  if (overlay.pdf) {
+    validateInvitePdf(overlay.pdf);
+    const source = await fetchInvitePdf(overlay.pdf.url);
+    const layer = await composeInviteImage(overlay, values, checkinUrl, true);
+    return Buffer.from(await stampInvitePdf(source, layer, overlay.pdf));
+  }
   const jpeg = await composeInviteImage(overlay, values, checkinUrl);
   // Re-encode to sRGB PNG: pdf-lib renders CMYK JPEGs as inverted colours.
   const png = await sharp(jpeg).toColourspace("srgb").png().toBuffer();

@@ -206,6 +206,26 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   uses the same port/Playwright setup, mocked records and actual PNG decoding at
   the camera's 400px scan resolution. No real registrations or email are sent.
 
+## Multi-page invitation PDF
+
+- `/admin/forms/[id]/pdf` preserves the uploaded original PDF (up to 10MB / 100
+  pages) in `survey-uploads`. Choose **Trang đặt tên / QR** to move the overlay
+  fields to one selected page; check positions after switching. The editor uses
+  a JPEG preview, but ZIP export and email stamp a transparent field layer onto
+  the original PDF, keeping every other page, page sizes, rotations and content.
+- `EmailOverlay.pdf` stores `{url, name, page, pageCount}` in existing JSON, so
+  no SQL migration is needed. Old image-only templates still export one page;
+  re-upload the original PDF to recover pages never stored by the old uploader.
+  PDF upload uses the document MIME policy in `supabase/email-attachments.sql`.
+- Upload/switch failures retain the current template. Saving/exporting is disabled
+  while preview generation is in progress. Missing/corrupt originals fail export
+  and email rather than silently sending a one-page or missing attachment.
+- Regression: `node --test scripts/test-invite-pdf.cjs scripts/test-checkin-email-name.cjs`.
+  `node scripts/test-invite-pdf-ui.cjs` uses port 3001 (`INVITE_PDF_E2E_BASE` override),
+  `MAIL_MERGE_UI_DEPS` and optional `PLAYWRIGHT_CHANNEL=msedge`. All records/uploads
+  are mocked; real PDF render checks compare untouched pages and rotated/cropped
+  placement. No real email or storage writes.
+
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon

@@ -309,6 +309,9 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       });
     } catch (error) {
       console.error("Invite PDF attach failed:", error);
+      const detail = error instanceof Error ? error.message : "Không tạo được PDF thiệp mời.";
+      await markEmailStatus(responseId, "failed", detail);
+      return { ok: false, messageId: null, provider: resolveProvider(providerOverride), error: detail };
     }
   }
   if (!html && attachments.length === 0) {
