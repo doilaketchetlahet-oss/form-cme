@@ -1,8 +1,7 @@
-import { PDFDocument } from "pdf-lib";
 import sharp from "sharp";
-import { composeInviteImage } from "@/lib/email-overlay";
 import type { EmailOverlay } from "@/lib/email-template";
-import { stampInvitePdfPages, validateInvitePdfOverlay, getInvitePdfPages } from "@/lib/invite-pdf";
+import { renderVectorInvitePdf } from "@/lib/invite-pdf-vector";
+import { loadInviteFont } from "./invite-fonts";
 import { fetchInvitePdf } from "./invite-pdf-source";
 
 export function sanitizePdfName(name: string) {
@@ -25,20 +24,12 @@ export async function composeInvitePdf(
   checkinUrl: string,
 ): Promise<Buffer> {
   if (overlay.pdf) {
-    validateInvitePdfOverlay(overlay);
     const source = await fetchInvitePdf(overlay.pdf.url);
-    const pages = getInvitePdfPages(overlay);
-    const targets = Object.keys(pages).map(Number).filter(number => pages[number].fields.length > 0);
-    return Buffer.from(await stampInvitePdfPages(source, overlay.pdf, targets,
-      number => composeInviteImage(pages[number], values, checkinUrl, true)));
+    return Buffer.from(await renderVectorInvitePdf(overlay, values, checkinUrl, loadInviteFont, { original: source }));
   }
-  const jpeg = await composeInviteImage(overlay, values, checkinUrl);
-  // Re-encode to sRGB PNG: pdf-lib renders CMYK JPEGs as inverted colours.
-  const png = await sharp(jpeg).toColourspace("srgb").png().toBuffer();
-  const doc = await PDFDocument.create();
-  const image = await doc.embedPng(png);
-  const page = doc.addPage([image.width, image.height]);
-  page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
-  const bytes = await doc.save();
-  return Buffer.from(bytes);
+  const response = await fetch(overlay.imageUrl);
+  if (!response.ok) throw new Error("Không tải được ảnh thiệp.");
+  // Only the background remains raster; text and QR are always vectors.
+  const background = await sharp(Buffer.from(await response.arrayBuffer())).rotate().toColourspace("srgb").png().toBuffer();
+  return Buffer.from(await renderVectorInvitePdf(overlay, values, checkinUrl, loadInviteFont, { background }));
 }

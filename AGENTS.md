@@ -227,11 +227,22 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - Upload/switch failures retain the current template. Saving/exporting is disabled
   while preview generation is in progress. Missing/corrupt originals fail export
   and email rather than silently sending a one-page or missing attachment.
+- PDF exports and attachments share `invite-pdf-vector.ts`: text is selectable
+  vector text with subset-embedded TTF/OTF fonts (including Vietnamese and uploaded
+  fonts); QR uses vector rectangles. Saved field coordinates, per-page layouts,
+  alignments and font settings are reused. Fonts load once per ZIP batch; uploaded
+  fonts use existing signed URLs/server font storage. Missing fonts/glyphs fail
+  export instead of silently substituting a different font or broken characters.
+  Legacy image backgrounds remain images, but new text/QR over them is vector.
+  JPG/email inline previews remain raster. No migration or re-upload is required
+  for this quality upgrade; download a new PDF to benefit. Existing exported
+  files, sent messages and registration data remain unchanged.
 - Regression: `node --test scripts/test-invite-pdf.cjs scripts/test-checkin-email-name.cjs`.
   `node scripts/test-invite-pdf-ui.cjs` uses port 3001 (`INVITE_PDF_E2E_BASE` override),
   `MAIL_MERGE_UI_DEPS` and optional `PLAYWRIGHT_CHANNEL=msedge`. All records/uploads
   are mocked; real PDF render checks compare untouched pages and rotated/cropped
-  placement. No real email or storage writes.
+  placement, selectable Vietnamese text, 400% rendering and vector QR decoding
+  at all four page rotations. No real email or storage writes.
 
 ## Standalone Resend / SMTP mail merge
 

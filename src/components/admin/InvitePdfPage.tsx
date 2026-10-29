@@ -13,49 +13,13 @@ import {
   serializeEmailTemplate,
   type EmailMergeQuestion,
   type EmailOverlay,
-  type EmailOverlayPage,
-  type OverlayField,
 } from "@/lib/email-template";
 import { buildPublicUrl } from "@/lib/site-url";
-import { resolveOverlayFont } from "@/lib/overlay-fonts";
-import { ensureCustomFontFace, fetchCustomFonts } from "@/lib/custom-fonts-client";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 import { InvitePdfSource } from "./InvitePdfSource";
-import { stampInvitePdfPages, getInvitePdfPages, validateInvitePdfOverlay, MAX_INVITE_PDF_BYTES } from "@/lib/invite-pdf";
+import { validateInvitePdfOverlay, MAX_INVITE_PDF_BYTES } from "@/lib/invite-pdf";
 
-/** Nạp font của thiệp vào trình duyệt để canvas vẽ đúng (chỉ 1 lần mỗi font). */
-const loadedFonts = new Set<string>();
-async function ensureOverlayFont(fontId: string | undefined, bold: boolean | undefined) {
-  if (fontId?.startsWith("custom:")) {
-    const fonts = await fetchCustomFonts();
-    const custom = fonts.find((font) => font.id === fontId.slice(7));
-    if (custom) {
-      const family = await ensureCustomFontFace(custom);
-      if (family) return family;
-    }
-    return "Arial";
-  }
-  const font = resolveOverlayFont(fontId);
-  const weight = bold ? "Bold" : "Regular";
-  const key = `${font.file}-${weight}`;
-  if (loadedFonts.has(key)) return font.family;
-  const face = new FontFace(font.family, `url(/fonts/${font.file}-${weight}.ttf)`, {
-    weight: bold ? "700" : "400",
-  });
-  await face.load();
-  document.fonts.add(face);
-  loadedFonts.add(key);
-  return font.family;
-}
-
-function tokenKey(token: string) {
-  return token.replace(/^\{\{|\}\}$/g, "").trim();
-}
-
-function isQrField(field: OverlayField) {
-  const key = tokenKey(field.token);
-  return field.kind === "qr" || key === "qr_url" || key === "qr_image";
-}
+import { createInviteFontLoader } from "@/lib/invite-fonts-client";
 
 function sanitizeFilename(name: string) {
   return name.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").replace(/\.+$/g, "").trim().slice(0, 80) || "khach";
@@ -142,15 +106,23 @@ export function InvitePdfPage({ formId }: { formId: string }) {
     setExporting(true);
     toast.info(`Đang tạo ${responses.length} PDF…`);
     try {
-      const [{ jsPDF }, JSZipModule, qrcodeModule, bg] = await Promise.all([
-        import("jspdf"),
-        import("jszip"),
-        import("qrcode"),
-        loadImageElement(overlay.imageUrl),
+      const [{ default: JSZip }, { renderVectorInvitePdf }] = await Promise.all([
+        import("jszip"), import("@/lib/invite-pdf-vector"),
       ]);
-      const JSZip = JSZipModule.default;
-      const QRCode = (qrcodeModule.default ?? qrcodeModule) as { toDataURL: (text: string, options?: unknown) => Promise<string> };
       const zip = new JSZip();
+      const loadFont = createInviteFontLoader();
+      let background: Uint8Array | undefined;
+      if (!overlay.pdf) {
+        const bg = await loadImageElement(overlay.imageUrl);
+        const canvas = document.createElement("canvas");
+        canvas.width = overlay.width || bg.naturalWidth;
+        canvas.height = overlay.height || bg.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Không tạo được ảnh nền PDF.");
+        ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("Không tạo được ảnh nền PDF.")), "image/png"));
+        background = new Uint8Array(await blob.arrayBuffer());
+      }
       let original: Uint8Array | undefined;
       if (overlay.pdf) {
         validateInvitePdfOverlay(overlay);
@@ -159,8 +131,6 @@ export function InvitePdfPage({ formId }: { formId: string }) {
         original = new Uint8Array(await response.arrayBuffer());
         if (original.byteLength > MAX_INVITE_PDF_BYTES) throw new Error("PDF gốc vượt quá 10MB.");
       }
-      const width = Math.max(1, overlay.width || bg.naturalWidth);
-      const height = Math.max(1, overlay.height || bg.naturalHeight);
       const used = new Map<string, number>();
 
       for (const response of responses) {
@@ -176,66 +146,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
           questions: questionPayload,
         }, false);
 
-        const renderPage = async (layout: EmailOverlayPage) => {
-          const width = layout.width, height = layout.height;
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("Không tạo được lớp tên/QR. Vui lòng thử lại.");
-          if (!original) ctx.drawImage(bg, 0, 0, width, height);
-
-          for (const field of layout.fields) {
-            const left = (field.x / 100) * width;
-            const top = (field.y / 100) * height;
-            const boxW = Math.max(8, (field.w / 100) * width);
-            const boxH = Math.max(8, (field.h / 100) * height);
-
-            if (isQrField(field)) {
-              const size = Math.max(48, Math.round(Math.min(boxW, boxH)));
-              const qrDataUrl = await QRCode.toDataURL(checkinUrl, {
-                width: size,
-                margin: 1,
-                errorCorrectionLevel: "M",
-                color: { dark: "#0f172a", light: "#ffffff" },
-              });
-              const qrImg = await loadImageElement(qrDataUrl);
-              const x = field.align === "center" ? left + (boxW - size) / 2 : field.align === "right" ? left + boxW - size : left;
-              ctx.drawImage(qrImg, x, top + (boxH - size) / 2, size, size);
-              continue;
-            }
-
-            const text = values[tokenKey(field.token)] ?? "";
-            if (!text) continue;
-            let fontSize = Math.max(12, Number(field.fontSize) || Math.round(boxH * 0.55));
-            const color = field.color || "#0f172a";
-            const family = await ensureOverlayFont(field.fontFamily, field.bold).catch(() => "Arial");
-            ctx.fillStyle = color;
-            ctx.textBaseline = "middle";
-            ctx.textAlign = field.align === "center" ? "center" : field.align === "right" ? "right" : "left";
-            const cx = field.align === "center" ? left + boxW / 2 : field.align === "right" ? left + boxW : left;
-            const cy = top + boxH / 2;
-            ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
-            while (ctx.measureText(text).width > boxW && fontSize > 8) {
-              fontSize -= 1;
-              ctx.font = `${field.bold ? "bold " : ""}${fontSize}px "${family}", sans-serif`;
-            }
-            ctx.fillText(text, cx, cy);
-          }
-          return canvas;
-        };
-
-        let output: Uint8Array | Blob;
-        if (original && overlay.pdf) {
-          const pages = getInvitePdfPages(overlay);
-          output = await stampInvitePdfPages(original, overlay.pdf, Object.keys(pages).map(Number).filter(number => pages[number].fields.length > 0),
-            async number => (await renderPage(pages[number])).toDataURL("image/png"));
-        } else {
-          const canvas = await renderPage({ ...overlay, width, height });
-          const pdf = new jsPDF({ orientation: width >= height ? "landscape" : "portrait", unit: "px", format: [width, height] });
-          pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, width, height);
-          output = pdf.output("blob");
-        }
+        const output = await renderVectorInvitePdf(overlay, values, checkinUrl, loadFont, { original, background });
 
         const rawName = values.name || (response.email ? String(response.email).split("@")[0] : "") || response.id.slice(0, 8);
         let filename = sanitizeFilename(rawName);

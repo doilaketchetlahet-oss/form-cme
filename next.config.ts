@@ -20,6 +20,7 @@ const nextConfig: NextConfig = {
     "/api/qr": ["./node_modules/@img/**", "./public/logo_qr.png"],
     "/api/send-checkin-email": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
     "/api/admin/forms/[id]/email/test": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
+    "/api/admin/mail-merge": ["./node_modules/@img/**", "./public/fonts/**"],
     "/api/cron/email-campaigns": ["./node_modules/@img/**", "./public/fonts/**", "./public/logo_qr.png"],
     // Static EventPlay bundle served by the auth-gated studio route.
     "/studio/[[...slug]]": ["./studio/**"],

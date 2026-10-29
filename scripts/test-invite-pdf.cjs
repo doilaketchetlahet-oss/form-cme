@@ -14,6 +14,16 @@ function load(file, mocks = {}) {
 }
 const core = load('src/lib/invite-pdf.ts');
 const template = load('src/lib/email-template.ts');
+const vector = load('src/lib/invite-pdf-vector.ts', { './invite-pdf': core });
+const fontCatalog = load('src/lib/overlay-fonts.ts');
+const loadFont = async (id, bold) => readFileSync(fontCatalog.overlayFontFile(id, bold, 'public/fonts'));
+function serverRenderer(source) {
+  return load('src/lib/server/email-pdf.ts', {
+    '@/lib/invite-pdf-vector': vector,
+    './invite-fonts': { loadInviteFont: loadFont },
+    './invite-pdf-source': { fetchInvitePdf: async () => source },
+  });
+}
 const pdf = { url: 'https://storage.example.test/storage/v1/object/public/survey-uploads/original.pdf', page: 2, pageCount: 3, name: 'invite.pdf' };
 async function fixture(rotation = 0) {
   const doc = await PDFDocument.create();
@@ -80,17 +90,21 @@ test('real server renderer produces transparent name/QR layer without fetching a
   assert.equal((await sharp(blank).stats()).channels[3].max, 0);
 });
 
-test('server email PDF uses original plus transparent layer, and legacy still makes one page', async () => {
-  const source = await fixture(), png = await layer(), calls = [];
-  const server = load('src/lib/server/email-pdf.ts', {
-    '@/lib/invite-pdf': core,
-    './invite-pdf-source': { fetchInvitePdf: async url => { calls.push(url); return source; } },
-    '@/lib/email-overlay': { composeInviteImage: async (...args) => { calls.push(args[3]); return png; } },
-  });
+test('server email PDF preserves empty pages; legacy image background gains embedded vector text', async () => {
+  const source = await fixture(), server = serverRenderer(source);
   const overlay = { imageUrl: 'https://storage.example.test/preview.jpg', width: 470, height: 260, fields: [], pdf };
-  assert.equal((await PDFDocument.load(await server.composeInvitePdf(overlay, {}, ''))).getPageCount(), 3);
-  assert.deepEqual(calls, [pdf.url]); // Empty pages are preserved, not stamped.
-  assert.equal((await PDFDocument.load(await server.composeInvitePdf({ ...overlay, pdf: undefined }, {}, ''))).getPageCount(), 1);
+  const output = await PDFDocument.load(await server.composeInvitePdf(overlay, {}, ''));
+  assert.equal(output.getPageCount(), 3);
+  const before = await PDFDocument.load(source);
+  for (let i = 0; i < 3; i++) assert.deepEqual(streams(before, before.getPage(i)), streams(output, output.getPage(i)));
+  const oldFetch = global.fetch;
+  global.fetch = async () => new Response(await layer());
+  try {
+    const legacy = { ...overlay, pdf: undefined, fields: [{ id: 'name', kind: 'text', token: '{{name}}', x: 10, y: 10, w: 80, h: 15 }] };
+    const result = await PDFDocument.load(await server.composeInvitePdf(legacy, { name: 'Nguyễn Văn An' }, ''));
+    assert.equal(result.getPageCount(), 1);
+    assert.ok(result.getPage(0).node.Resources().lookup(PDFName.of('Font')).keys().length);
+  } finally { global.fetch = oldFetch; }
 });
 
 test('legacy page stays on its original page; active edits/deletion override cached fields', () => {
@@ -105,25 +119,65 @@ test('legacy page stays on its original page; active edits/deletion override cac
   for (const bad of [{ ...edited, pdf: { ...pdf, pages: { 4: other } } }, { ...edited, pdf: { ...pdf, pages: [] } }, { ...edited, pdf: { ...pdf, pages: { 1: { ...other, width: 0 } } } }]) assert.throws(() => core.validateInvitePdfOverlay(bad));
 });
 
-test('server renders both configured pages with independent fields and dimensions; other pages untouched', async () => {
-  const source = await fixture(), png = await layer(), calls = [];
+test('server and browser share vector output on independent pages, with embedded subset fonts and no raster layers', async () => {
+  const source = await fixture();
   const qr = { id: 'qr', kind: 'qr', token: '{{qr_image}}', x: 70, y: 60, w: 20, h: 20 };
   const name = { id: 'name', kind: 'text', token: '{{name}}', x: 10, y: 10, w: 50, h: 10 };
   const first = { imageUrl: 'https://example.test/1.jpg', width: 600, height: 800, fields: [qr] };
   const second = { imageUrl: 'https://example.test/2.jpg', width: 940, height: 520, fields: [name] };
   const overlay = { ...second, pdf: { ...pdf, pages: { 1: first } } };
-  const server = load('src/lib/server/email-pdf.ts', {
-    '@/lib/invite-pdf': core,
-    './invite-pdf-source': { fetchInvitePdf: async () => source },
-    '@/lib/email-overlay': { composeInviteImage: async (layout, values, url, transparent) => { calls.push({ layout, values, url, transparent }); return png; } },
-  });
-  const before = await PDFDocument.load(source), after = await PDFDocument.load(await server.composeInvitePdf(overlay, { name: 'Nguyễn An' }, 'https://example.test/checkin/1'));
-  assert.equal(after.getPageCount(), 3); assert.equal(calls.length, 2);
-  assert.deepEqual(calls.map(call => call.layout.fields), [[qr], [name]]);
-  assert.deepEqual(calls.map(call => call.layout.width), [600,940]);
-  assert.ok(calls.every(call => call.transparent && call.values.name === 'Nguyễn An'));
+  const before = await PDFDocument.load(source), after = await PDFDocument.load(await serverRenderer(source).composeInvitePdf(overlay, { name: 'Nguyễn An' }, 'https://example.test/checkin/1'));
+  assert.equal(after.getPageCount(), 3);
   assert.deepEqual(streams(before, before.getPage(2)), streams(after, after.getPage(2)));
-  for (const i of [0,1]) assert.ok(streams(after, after.getPage(i)).length > streams(before, before.getPage(i)).length);
+  for (const i of [0,1]) {
+    assert.ok(streams(after, after.getPage(i)).length > streams(before, before.getPage(i)).length);
+    assert.equal(after.getPage(i).node.Resources().lookup(PDFName.of('XObject'))?.keys().length || 0, 0, 'no bitmap overlay');
+  }
+  const fonts = after.getPage(1).node.Resources().lookup(PDFName.of('Font'));
+  const embedded = fonts.keys().map(key => fonts.lookup(key)).find(font => font.get(PDFName.of('Subtype')).toString() === '/Type0');
+  assert.ok(embedded);
+  const descendant = after.context.lookup(embedded.lookup(PDFName.of('DescendantFonts')).get(0));
+  const descriptor = descendant.lookup(PDFName.of('FontDescriptor'));
+  assert.ok(descriptor.get(PDFName.of('FontFile2')) || descriptor.get(PDFName.of('FontFile3')), 'font program is embedded');
+});
+
+test('all bundled font weights and custom fonts embed; missing glyphs and failed font reads fail closed', async () => {
+  const source = await fixture();
+  const field = { id: 'name', kind: 'text', token: '{{name}}', x: 5, y: 20, w: 90, h: 15, fontSize: 36 };
+  const overlay = { imageUrl: '', width: 940, height: 520, fields: [field], pdf };
+  for (const family of fontCatalog.OVERLAY_FONTS) for (const bold of [false,true]) {
+    const bytes = await vector.renderVectorInvitePdf({ ...overlay, fields: [{ ...field, fontFamily: family.id, bold }] }, { name: 'Đặng Nguyễn Thị Mỹ Hằng – ễ ứ ạ ỹ ộ ă ơ ư đ' }, '', loadFont, { original: source });
+    assert.equal((await PDFDocument.load(bytes)).getPageCount(), 3);
+    assert.ok(bytes.length < 150000, 'font subsets stay compact');
+  }
+  await vector.renderVectorInvitePdf({ ...overlay, fields: [{ ...field, fontFamily: 'custom:test', bold: true }] }, { name: 'Nguyễn An' }, '', loadFont, { original: source });
+  await assert.rejects(vector.renderVectorInvitePdf(overlay, { name: 'Nguyễn An' }, '', async () => { throw new Error('missing font'); }, { original: source }), /missing font/);
+  await assert.rejects(vector.renderVectorInvitePdf(overlay, { name: '😀' }, '', loadFont, { original: source }), /thiếu ký tự/);
+});
+
+test('browser and server font loaders retain uploaded font bytes and fail when unavailable', async () => {
+  const regular = readFileSync('public/fonts/NotoSans-Regular.ttf');
+  const oldFetch = global.fetch, requests = [];
+  global.fetch = async url => { requests.push(url); return new Response(regular); };
+  try {
+    const client = load('src/lib/invite-fonts-client.ts', {
+      './custom-fonts-client': { fetchCustomFonts: async () => [{ id: 'test', url: '/signed-font-test' }] },
+      './overlay-fonts': fontCatalog,
+    });
+    const loader = client.createInviteFontLoader();
+    assert.deepEqual(Buffer.from(await loader('custom:test', false)), regular);
+    await loader('custom:test', false);
+    await loader('noto-serif', true);
+    assert.deepEqual(requests, ['/signed-font-test', '/fonts/NotoSerif-Bold.ttf']);
+    await assert.rejects(loader('custom:missing', false), /font tùy chỉnh/);
+    const server = load('src/lib/server/invite-fonts.ts', {
+      '../overlay-fonts': fontCatalog,
+      './supabase-admin': { createSupabaseAdmin: () => ({}) },
+      './custom-fonts': { resolveCustomFontFile: async (_, id) => id === 'test' ? { file: 'public/fonts/NotoSans-Regular.ttf' } : null },
+    });
+    assert.deepEqual(await server.loadInviteFont('custom:test', false), regular);
+    await assert.rejects(server.loadInviteFont('custom:missing', false), /font tùy chỉnh/);
+  } finally { global.fetch = oldFetch; }
 });
 
 test('original PDF fetch is storage-scoped, bounded and fails closed', async () => {
