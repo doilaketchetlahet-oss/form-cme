@@ -276,52 +276,18 @@
 }
 .invitePaper {
   width: 234px;
-  height: 325px;
-  background: #274553;
-  padding: 25px;
+  background: #e1f4fb;
+  padding: 0;
   border: 1px solid #4c6874;
-  border-radius: 12px;
+  border-radius: 5px;
   transform: rotate(-13deg);
   box-shadow: 0 24px 48px #05111b45;
 }
-.invitePaper > svg {
-  color: #9ac6cf;
-}
-.invitePaper > span:not(.paperSeal) {
+.invitePaper > img {
   display: block;
-  margin-top: 24px;
-  font-size: 8px;
-  color: #c6d9e0;
-  letter-spacing: 1.4px;
-}
-.invitePaper strong {
-  display: block;
-  margin-top: 12px;
-  font-size: 25px;
-  line-height: 1.5;
-  color: #edf5f7;
-  font-weight: 500;
-}
-.paperLines {
-  display: grid;
-  gap: 8px;
-  margin-top: 20px;
-}
-.paperLines i {
   width: 100%;
-  height: 3px;
-  background: #5b7783;
-}
-.paperLines i:last-child {
-  width: 66%;
-}
-.paperSeal {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 28px;
-  font-size: 8px;
-  color: #c7d9e1;
+  height: auto;
+  border-radius: 4px;
 }
 .passPlane {
   position: absolute;
@@ -504,363 +470,12 @@
 .introInner > div svg {
   color: #1b7183;
 }
-.journey {
-  background: #f2f6f6;
-  color: #173b4a;
-  padding-block: var(--sc-section);
-}
-.journeyStage {
-  padding-block: 0;
-}
-.journeyHeading {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  gap: 32px;
-  margin-bottom: 48px;
-}
-.home .journeyHeading h2,
 .home .featuresHeading h2,
 .home .gamesHeading h2 {
   font-size: clamp(30px, 3.2vw, 43px);
   line-height: 1.4;
   letter-spacing: -1.4px;
   font-weight: 600;
-}
-.journeyHeading h2 span {
-  color: #5c7b87;
-}
-.journeyHeading > p {
-  max-width: 235px;
-  color: #536d7b;
-  font-size: 13px;
-  padding-bottom: 6px;
-}
-.journeyGrid {
-  display: grid;
-  grid-template-columns: 0.8fr 1.4fr;
-  gap: 70px;
-  align-items: center;
-}
-.journeySteps {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.journeyStep {
-  display: flex;
-  gap: 18px;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: #4a6979;
-  padding: 25px 0;
-  border: 0;
-  border-bottom: 1px solid #cbdadd;
-  transition: color 160ms;
-}
-.stepIcon {
-  flex: 0 0 40px;
-  height: 40px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: #446c7b;
-  background: #e3ebed;
-  transition:
-    background 180ms,
-    color 180ms;
-}
-.journeyStep > span:nth-child(2) {
-  flex: 1;
-}
-.journeyStep strong {
-  display: block;
-  font-size: 18px;
-  font-family: var(--font-display), sans-serif;
-  font-weight: 600;
-}
-.journeyStep > span > span {
-  display: block;
-  font-size: 12px;
-  line-height: 1.9;
-  margin-top: 7px;
-  max-width: 250px;
-}
-.journeyStep > svg {
-  opacity: 0;
-  flex-shrink: 0;
-  margin-top: 12px;
-  transition: opacity 180ms;
-}
-.journeyStepActive {
-  color: #163c4a;
-}
-.journeyStepActive .stepIcon {
-  color: #e4fbfc;
-  background: #1d6474;
-}
-.journeyStepActive > svg {
-  opacity: 1;
-}
-.demoPanel {
-  background: #fff;
-  border: 1px solid #cbdbdf;
-  border-radius: 14px;
-  box-shadow: 0 18px 50px #234c6010;
-  min-width: 0;
-}
-.demoToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 15px 22px;
-  font-size: 9px;
-  color: #55717e;
-  border-bottom: 1px solid #e3ebed;
-}
-.demoToolbar > span:first-child {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.demoToolbar > span > span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #248294;
-}
-.demoMain {
-  display: grid;
-  grid-template-columns: 1.25fr 1fr;
-  align-items: center;
-  min-height: 350px;
-  gap: 25px;
-  padding: 30px;
-}
-.demoContent {
-  min-width: 0;
-}
-.demoIcon {
-  display: flex;
-  align-items: center;
-  color: #2b7182;
-  margin-bottom: 15px;
-}
-.demoContent h3 {
-  font-size: 18px;
-  letter-spacing: -0.5px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-.demoContent > p {
-  color: #587381;
-  font-size: 11px;
-  margin-top: 9px;
-  line-height: 1.9;
-}
-.demoContent label {
-  display: block;
-  font-size: 10px;
-  margin-top: 20px;
-  margin-bottom: 6px;
-  font-weight: 500;
-  color: #284e60;
-}
-.demoContent input {
-  width: 100%;
-  background: #f5f9f9;
-  border: 1px solid #b7cdd3;
-  border-radius: 6px;
-  padding: 10px;
-  font-size: 12px;
-  color: #173b4a;
-  min-height: 40px;
-}
-.demoNext {
-  display: inline-flex;
-  align-items: center;
-  gap: 13px;
-  background: transparent;
-  color: #1a6173;
-  border: 0;
-  border-bottom: 1px solid #85b6c0;
-  padding: 0 0 4px;
-  margin-top: 21px;
-  font-size: 11px !important;
-}
-.demoPass {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  align-self: center;
-  min-width: 0;
-  background: #eff7f8;
-  border: 1px solid #cfdee2;
-  border-radius: 9px;
-  overflow: hidden;
-  padding: 17px 14px 0;
-  transition:
-    background 240ms,
-    color 240ms;
-}
-.demoPassMark {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #376474;
-  font-size: 10px;
-  margin-bottom: 20px;
-}
-.demoPassLabel {
-  color: #567582;
-  font-size: 7px;
-  letter-spacing: 1.5px;
-}
-.demoPass > strong {
-  font-size: 12px;
-  margin-top: 8px;
-  max-width: 100%;
-  text-align: center;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-.qrTravelArea {
-  position: relative;
-  width: 128px;
-  height: 128px;
-  margin-top: 14px;
-  display: grid;
-  place-items: center;
-}
-.travelQr {
-  position: relative;
-  z-index: 2;
-  width: 112px;
-  height: 112px;
-}
-.travelQr img {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.demoPassStatus {
-  font-size: 8px;
-  color: #496d7b;
-  margin-top: 9px;
-  margin-bottom: 15px;
-  text-align: center;
-}
-.demoPassFoot {
-  border-top: 1px dashed #b7cdd2;
-  padding: 11px;
-  font-size: 7px;
-  color: #527382;
-  width: calc(100% + 28px);
-  text-align: center;
-  letter-spacing: 1.3px;
-}
-.invitationMock {
-  background: #f5efe4;
-  border-color: #dbd3c4;
-}
-.inviteGuide {
-  position: absolute;
-  top: 4px;
-  left: 0;
-  font-family: var(--font-display), sans-serif;
-  font-size: 18px;
-  line-height: 1.5;
-  letter-spacing: -1px;
-  color: #294d57;
-}
-.scannerMock {
-  background: #183d4c;
-  color: #eaf7f8;
-  border-color: #355f6e;
-}
-.scannerMock .demoPassMark,
-.scannerMock .demoPassLabel,
-.scannerMock .demoPassStatus,
-.scannerMock .demoPassFoot {
-  color: #c0e2e8;
-}
-.scannerMock .demoPassFoot {
-  border-color: #527988;
-}
-.scanFrame {
-  position: absolute;
-  inset: 0;
-  border: 1px solid #8ed8de;
-  border-radius: 7px;
-}
-.scanFrame i {
-  position: absolute;
-  width: 100%;
-  left: 0;
-  top: 48%;
-  height: 1px;
-  background: #80dce4;
-  z-index: 3;
-}
-.demoDetail {
-  padding: 13px 22px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: #f6f9fa;
-  border-top: 1px solid #e1eaed;
-  border-radius: 0 0 14px 14px;
-  color: #526e7b;
-}
-.demoDetail > span {
-  flex-shrink: 0;
-}
-.demoDetail p {
-  font-size: 10px;
-  line-height: 1.9;
-}
-.demoLabel {
-  font-size: 7px;
-  letter-spacing: 1.2px;
-  color: #527382;
-  display: block;
-  margin-bottom: 5px;
-}
-.emailAttachment {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding-block: 14px 0;
-  font-size: 10px;
-  color: #305d6d;
-}
-.emailAttachment small {
-  display: block;
-  font-size: 8px;
-  color: #597b89;
-  margin-top: 2px;
-}
-.sessionRows {
-  display: grid;
-  gap: 10px;
-  margin-top: 20px;
-}
-.sessionRows > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 9px;
-  color: #3b6372;
-}
-.sessionRows strong {
-  margin-left: auto;
-  font-size: 8px;
-  font-weight: 500;
-}
-.demoSuccess {
-  color: #216d72;
 }
 .features {
   padding-block: var(--sc-section);
@@ -1257,16 +872,6 @@
     transform: none;
   }
 }
-@media (min-width: 1000px) and (min-height: 760px) and (prefers-reduced-motion: no-preference) {
-  .journey {
-    min-height: 190svh;
-    padding-block: 76px;
-  }
-  .journeyStage {
-    position: sticky;
-    top: 118px;
-  }
-}
 @media (hover: hover) and (pointer: fine) {
   .button:hover {
     background: #a2e9ee;
@@ -1284,13 +889,10 @@
     transform: translate(3px, -1px);
   }
   .capability:hover h3 {
-    color: #258299;
+    color: #1f7187;
   }
   .toolLinks a:hover {
     color: #80dce4;
-  }
-  .journeyStep:hover {
-    color: #1b6476;
   }
   .game:hover .gameImage img {
     transform: scale(1.035);
@@ -1330,13 +932,6 @@
   }
   .heroActions {
     gap: 20px;
-  }
-  .journeyGrid {
-    gap: 35px;
-  }
-  .demoMain {
-    padding: 24px;
-    gap: 16px;
   }
   .introInner > div {
     gap: 22px;
@@ -1412,55 +1007,6 @@
   }
   .introInner > div span {
     font-size: 11px;
-  }
-  .journeyHeading {
-    margin-bottom: 32px;
-  }
-  .journeyGrid {
-    grid-template-columns: 1fr;
-    gap: 24px;
-  }
-  .journeySteps {
-    flex-direction: row;
-    gap: 22px;
-  }
-  .journeyStep {
-    gap: 10px;
-    padding: 0 0 17px;
-    align-items: center;
-  }
-  .journeyStep > span > span,
-  .journeyStep > svg {
-    display: none;
-  }
-  .journeyStep strong {
-    font-size: 14px;
-  }
-  .demoMain {
-    grid-template-columns: 1.35fr 1fr;
-    padding: 32px;
-    gap: 48px;
-    min-height: 380px;
-  }
-  .demoContent h3 {
-    font-size: 22px;
-  }
-  .demoContent > p {
-    font-size: 13px;
-  }
-  .demoContent input {
-    font-size: 14px;
-  }
-  .demoContent label,
-  .demoNext {
-    font-size: 12px !important;
-  }
-  .demoPass {
-    width: 220px;
-    justify-self: center;
-  }
-  .demoPass > strong {
-    font-size: 14px;
   }
   .featuresHeading {
     gap: 30px;
@@ -1633,24 +1179,6 @@
   }
   .invitePaper {
     width: 175px;
-    height: 243px;
-    padding: 19px;
-  }
-  .invitePaper > span:not(.paperSeal) {
-    font-size: 6px;
-    margin-top: 14px;
-  }
-  .invitePaper strong {
-    font-size: 19px;
-    margin-top: 9px;
-  }
-  .paperLines {
-    gap: 6px;
-    margin-top: 15px;
-  }
-  .paperSeal {
-    font-size: 6px;
-    margin-top: 17px;
   }
   .passPlane {
     top: 12px;
@@ -1751,139 +1279,11 @@
   .introInner > div svg {
     width: 14px;
   }
-  .journeyHeading {
-    display: block;
-  }
-  .home .journeyHeading h2,
   .home .featuresHeading h2,
   .home .gamesHeading h2 {
     font-size: 27px;
     letter-spacing: -0.9px;
     line-height: 1.5;
-  }
-  .journeyHeading > p {
-    font-size: 12px;
-    max-width: 280px;
-    margin-top: 16px;
-  }
-  .journeySteps {
-    gap: 14px;
-  }
-  .journeyStep {
-    gap: 7px;
-    flex-direction: column;
-    align-items: start;
-    padding-bottom: 14px;
-  }
-  .stepIcon {
-    width: 34px;
-    height: 34px;
-    flex-basis: 34px;
-  }
-  .stepIcon svg {
-    width: 18px;
-  }
-  .journeyStep strong {
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .demoToolbar {
-    padding: 12px 14px;
-    font-size: 7px;
-    gap: 8px;
-  }
-  .demoMain {
-    padding: 24px 18px;
-    gap: 17px;
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-  .demoContent {
-    min-height: 260px;
-  }
-  .demoContent h3 {
-    font-size: 20px;
-  }
-  .demoContent > p {
-    font-size: 12px;
-  }
-  .demoContent input {
-    font-size: 16px;
-  }
-  .demoIcon {
-    margin-bottom: 12px;
-  }
-  .demoPass {
-    width: 100%;
-    padding: 14px;
-    display: grid;
-    grid-template-columns: 1fr 112px;
-    grid-template-rows: auto auto auto;
-    text-align: left;
-    column-gap: 10px;
-    align-items: center;
-    min-height: 150px;
-  }
-  .demoPassMark {
-    grid-column: 1;
-    margin-bottom: 12px;
-    font-size: 10px;
-  }
-  .demoPassLabel {
-    grid-column: 1;
-    font-size: 7px;
-  }
-  .demoPass > strong {
-    grid-column: 1;
-    text-align: left;
-    font-size: 13px;
-    margin-top: 4px;
-  }
-  .qrTravelArea {
-    grid-column: 2;
-    grid-row: 1 / 5;
-    width: 100px;
-    height: 112px;
-    margin: 0;
-  }
-  .travelQr {
-    width: 90px;
-    height: 90px;
-  }
-  .inviteGuide {
-    font-size: 12px;
-  }
-  .demoPassStatus {
-    grid-column: 1;
-    text-align: left;
-    margin: 8px 0 0;
-    font-size: 8px;
-  }
-  .demoPassFoot {
-    display: none;
-  }
-  .demoDetail {
-    padding: 12px 15px;
-    gap: 8px;
-  }
-  .demoDetail p {
-    font-size: 9px;
-  }
-  .demoLabel {
-    font-size: 8px;
-  }
-  .emailAttachment {
-    padding-top: 15px;
-    font-size: 12px;
-  }
-  .emailAttachment small {
-    font-size: 10px;
-  }
-  .sessionRows > span {
-    font-size: 11px;
-  }
-  .sessionRows strong {
-    font-size: 10px;
   }
   .featuresHeading {
     display: block;

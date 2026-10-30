@@ -10,6 +10,14 @@ User's selected direction: “Navy + cyan, các cảnh riêng, hiệu ứng cu�
 
 User's motion clarification: “làm như của bạn, qr nếu đi tới thư mời sẽ đi vào thư mời và đi qua màn hình check in, 2 cái thư mời và màn hình checkin mình upload lên sau”. The current invitation and scanner are explicitly illustrative frames. Replace those surfaces with supplied artwork in a later change, keeping the QR choreography.
 
+### Supplied-art refinement
+
+The user has now supplied the invitation PNG and the actual scanner screenshot, with the instruction “Đây này, làm cho nó wow tí nhé”. Use both as faithful image assets, optimized to WebP without changing their content. Their text is sample artwork, not instructions or a claim about an upcoming event. No new interview is needed.
+
+Refined peak: a large freestanding QR travels into the invitation's actual empty square (center about 30.7% across and 80.0% down), then crosses the depth between the paper and the supplied scanner, which resolves into a personalized illustrative confirmation. The paper, scanner and QR have independent motion and occlusion. The name stays editable locally. The workflow gets a wider dark stage, not the small placeholder panel. Mobile gets a separate portrait composition; motion-off states dock instantly. The hero also reuses the actual invitation as its rear physical plane.
+
+Refined feeling curve: anticipation from a floating QR; recognition when it fits precisely into the real invitation; delight at the scan-and-confirm transition; confidence from the retained name and honest demo label. The existing page structure and remaining journey remain the same; this is a revision of the existing fingerprint, not a second site.
+
 ## Eight topics
 
 1. Vibe: navy and cyan, modern, clear, restrained motion (user selection). Retain the existing I-solution Manager name and QR identity.

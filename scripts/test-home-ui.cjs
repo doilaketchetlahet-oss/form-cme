@@ -66,25 +66,34 @@ const views = [
         await page.getByRole('button', { name: /^Đăng ký/ }).click();
         await page.getByLabel('Tên khách minh họa').fill('Trần Ánh Dương');
         await page.getByRole('button', { name: 'Xem thư mời' }).click();
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(1250);
         assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '1');
         assert.ok(await page.locator('#journey-preview').innerText().then((text) => text.includes('Trần Ánh Dương')));
-        const invitationQr = await page.locator('#journey-preview img').evaluate((el) => el.parentElement.style.transform);
-        assert.ok(view.reduced || /translateX\(34px\)/.test(invitationQr), 'QR enters invitation');
+        const invitationSlot = await page.locator('[data-qr-destination="invitation"]').boundingBox();
+        const invitationQr = await page.locator('[data-qr-flight]').boundingBox();
+        assert.ok(Math.abs(invitationSlot.x - invitationQr.x) < 2 && Math.abs(invitationSlot.y - invitationQr.y) < 2, 'QR docks inside the actual invitation slot');
+        assert.ok(Math.abs(invitationSlot.width - invitationQr.width) < 2, 'QR fits the printed empty square');
+        assert.ok(await page.locator('#journey-preview img[src*="conference-invitation"]').count(), 'Uses the supplied invitation');
         await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-invitation.png`) });
         await page.getByRole('button', { name: 'Thử bước check-in' }).click();
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(view.reduced ? 100 : 450);
+        await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-scan-flight.png`) });
+        await page.waitForTimeout(1400);
         assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '2');
         assert.ok(await page.getByText('Chào Trần Ánh Dương!', { exact: true }).isVisible());
+        const scannerSlot = await page.locator('[data-qr-destination="scanner"]').boundingBox();
+        const scannerQr = await page.locator('[data-qr-flight]').boundingBox();
+        assert.ok(Math.abs(scannerSlot.x - scannerQr.x) < 2 && Math.abs(scannerSlot.y - scannerQr.y) < 2, 'QR arrives inside the scanner');
         await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-checkin.png`) });
         await page.getByRole('button', { name: 'Thử lại hành trình' }).click();
         assert.equal(await page.getByLabel('Tên khách minh họa').inputValue(), 'Trần Ánh Dương');
 
-        if (view.width >= 1000 && view.height >= 760 && !view.reduced) {
+        if (view.width >= 1100 && view.height >= 860 && !view.reduced) {
+          await page.getByLabel('Tên khách minh họa').blur();
           const bounds = await journey.evaluate((el) => ({ top: el.offsetTop, travel: el.offsetHeight - innerHeight }));
           for (const [fraction, expected] of [[.15, '0'], [.5, '1'], [.9, '2']]) {
             await page.evaluate((y) => scrollTo(0, y), bounds.top + bounds.travel * fraction);
-            await page.waitForTimeout(800);
+            await page.waitForTimeout(1850);
             assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), expected, 'Scroll advances QR journey');
             await page.screenshot({ path: path.join(out, `${view.name}-scroll-${expected}.png`) });
           }

@@ -4,12 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import Script from "next/script";
 import { useEffect, useRef, useState } from "react";
-import {
-  motion,
-  useMotionValueEvent,
-  useReducedMotion,
-  useScroll,
-} from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import {
   ArrowDownLeft,
   ArrowLeft,
@@ -17,7 +12,6 @@ import {
   ArrowUpRight,
   BarChart3,
   Check,
-  CheckCheck,
   ChevronRight,
   ClipboardList,
   Gamepad2,
@@ -27,41 +21,16 @@ import {
   QrCode,
   ScanFace,
   ScanLine,
-  Send,
-  Users,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { GAME_MODULES } from "@/lib/game/catalog";
 import styles from "./home.module.css";
+import { GuestJourney } from "@/components/landing/GuestJourney";
 
 type ScrollCraftRuntime = {
   mount: (root: HTMLElement) => { destroy: () => void };
 };
-
-const JOURNEY = [
-  {
-    icon: ClipboardList,
-    title: "Đăng ký",
-    text: "Một biểu mẫu đúng nhu cầu. Một danh sách khách tập trung.",
-    detail:
-      "Tùy chỉnh câu hỏi, nhập danh sách Excel và ghi nhận lựa chọn tham dự từng buổi.",
-  },
-  {
-    icon: Mail,
-    title: "Nhận thư mời",
-    text: "Lời mời mang tên từng khách, kèm theo mã QR riêng.",
-    detail:
-      "Cá nhân hóa email, thiệp mời PDF và thông tin sự kiện bằng các mẫu có sẵn.",
-  },
-  {
-    icon: ScanLine,
-    title: "QR check-in",
-    text: "Một mã QR theo khách xuyên suốt các buổi tham dự.",
-    detail:
-      "Quét trên trình duyệt điện thoại, kiểm tra đúng buổi và theo dõi danh sách đã đến.",
-  },
-];
 
 const CAPABILITIES = [
   {
@@ -280,20 +249,14 @@ export default function HomePage() {
               aria-hidden="true"
             >
               <div className={styles.invitePaper}>
-                <Mail size={21} />
-                <span>THƯ MỜI THAM DỰ</span>
-                <strong>
-                  Hẹn gặp bạn
-                  <br />
-                  tại sự kiện.
-                </strong>
-                <div className={styles.paperLines}>
-                  <i />
-                  <i />
-                </div>
-                <span className={styles.paperSeal}>
-                  <Send size={15} /> Được gửi riêng cho bạn
-                </span>
+                <Image
+                  src="/landing/conference-invitation.webp"
+                  alt=""
+                  width={1054}
+                  height={1493}
+                  sizes="234px"
+                  priority
+                />
               </div>
             </div>
             <div
@@ -381,7 +344,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <JourneyDemo reduceMotion={Boolean(reduceMotion)} />
+      <GuestJourney reduceMotion={Boolean(reduceMotion)} />
 
       <section
         id="features"
@@ -624,248 +587,5 @@ export default function HomePage() {
         </div>
       </footer>
     </main>
-  );
-}
-
-function JourneyDemo({ reduceMotion }: { reduceMotion: boolean }) {
-  const sectionRef = useRef<HTMLElement>(null);
-  const scrollStage = useRef(0);
-  const [stage, setStage] = useState(0);
-  const [name, setName] = useState("Nguyễn Minh Anh");
-  const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start start", "end end"],
-  });
-  const displayName = name.trim() || "Khách tham dự";
-
-  useMotionValueEvent(scrollYProgress, "change", (progress) => {
-    if (
-      reduceMotion ||
-      sectionRef.current?.querySelector("input:focus") ||
-      !window.matchMedia("(min-width: 1000px) and (min-height: 760px)").matches
-    )
-      return;
-    const next = Math.min(2, Math.floor(progress * 3));
-    if (next !== scrollStage.current) {
-      scrollStage.current = next;
-      setStage(next);
-    }
-  });
-
-  return (
-    <section
-      ref={sectionRef}
-      id="how"
-      className={styles.journey}
-      aria-labelledby="journey-heading"
-    >
-      <div className={`${styles.container} ${styles.journeyStage}`}>
-        <div className={styles.journeyHeading}>
-          <h2 id="journey-heading">
-            Một hành trình.
-            <br />
-            <span>Không rời mạch kết nối.</span>
-          </h2>
-          <p>Thử thay tên khách và khám phá ba bước bên dưới.</p>
-        </div>
-        <div className={styles.journeyGrid}>
-          <div className={styles.journeySteps} aria-label="Các bước minh họa">
-            {JOURNEY.map(({ icon: Icon, title, text }, index) => (
-              <button
-                type="button"
-                key={title}
-                onClick={() => setStage(index)}
-                className={`${styles.journeyStep} ${stage === index ? styles.journeyStepActive : ""}`}
-                aria-pressed={stage === index}
-                aria-controls="journey-preview"
-              >
-                <span className={styles.stepIcon}>
-                  <Icon size={21} strokeWidth={1.6} />
-                </span>
-                <span>
-                  <strong>{title}</strong>
-                  <span>{text}</span>
-                </span>
-                <ArrowRight size={18} />
-              </button>
-            ))}
-          </div>
-          <div
-            id="journey-preview"
-            className={styles.demoPanel}
-            data-stage={stage}
-          >
-            <div className={styles.demoToolbar}>
-              <span>
-                <span /> Bản minh họa tương tác
-              </span>
-              <span>Không gửi dữ liệu</span>
-            </div>
-            <div className={styles.demoMain}>
-              <div className={styles.demoContent}>
-                {stage === 0 && (
-                  <>
-                    <span className={styles.demoIcon}>
-                      <ClipboardList size={25} />
-                    </span>
-                    <h3>Rất vui được đón bạn.</h3>
-                    <p>
-                      Thông tin trên biểu mẫu sẽ theo khách trong suốt hành
-                      trình.
-                    </p>
-                    <label htmlFor="demo-guest-name">Tên khách minh họa</label>
-                    <input
-                      id="demo-guest-name"
-                      value={name}
-                      maxLength={60}
-                      autoComplete="off"
-                      onChange={(event) => setName(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className={styles.demoNext}
-                      onClick={() => setStage(1)}
-                    >
-                      Xem thư mời <ArrowRight size={16} />
-                    </button>
-                  </>
-                )}
-                {stage === 1 && (
-                  <>
-                    <span className={styles.demoIcon}>
-                      <Mail size={25} />
-                    </span>
-                    <span className={styles.demoLabel}>XEM TRƯỚC THƯ MỜI</span>
-                    <h3>Gửi {displayName},</h3>
-                    <p>
-                      Hẹn gặp bạn tại hội thảo. Mã QR được đặt ngay trên thiệp
-                      mời cá nhân của bạn.
-                    </p>
-                    <div className={styles.emailAttachment}>
-                      <QrCode size={21} />
-                      <span>
-                        Thiệp mời cá nhân hóa<small>PDF & mã QR tham dự</small>
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.demoNext}
-                      onClick={() => setStage(2)}
-                    >
-                      Thử bước check-in <ArrowRight size={16} />
-                    </button>
-                  </>
-                )}
-                {stage === 2 && (
-                  <>
-                    <span
-                      className={`${styles.demoIcon} ${styles.demoSuccess}`}
-                    >
-                      <CheckCheck size={27} />
-                    </span>
-                    <span className={styles.demoLabel}>KẾT QUẢ MINH HỌA</span>
-                    <h3>Chào {displayName}!</h3>
-                    <p>
-                      QR đi qua màn hình quét để xác nhận đúng khách, đúng buổi
-                      tham dự.
-                    </p>
-                    <div className={styles.sessionRows}>
-                      <span>
-                        <Check size={16} /> Hội thảo{" "}
-                        <strong>Đã điểm danh</strong>
-                      </span>
-                      <span>
-                        <QrCode size={16} /> Gala{" "}
-                        <strong>Chưa điểm danh</strong>
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.demoNext}
-                      onClick={() => setStage(0)}
-                    >
-                      Thử lại hành trình <ArrowRight size={16} />
-                    </button>
-                  </>
-                )}
-              </div>
-              <div
-                className={`${styles.demoPass} ${stage === 1 ? styles.invitationMock : ""} ${stage === 2 ? styles.scannerMock : ""}`}
-              >
-                <span className={styles.demoPassMark}>
-                  {stage === 2 ? <ScanLine size={17} /> : <QrCode size={17} />}{" "}
-                  {stage === 2 ? "CHECK-IN" : "I-solution"}
-                </span>
-                <span className={styles.demoPassLabel}>
-                  {stage === 0
-                    ? "THẺ THAM DỰ"
-                    : stage === 1
-                      ? "TRÂN TRỌNG KÍNH MỜI"
-                      : "CHÀO MỪNG BẠN"}
-                </span>
-                <strong>{displayName}</strong>
-                <div className={styles.qrTravelArea}>
-                  {stage === 1 && (
-                    <span className={styles.inviteGuide}>
-                      HỘI THẢO
-                      <br />& GALA
-                    </span>
-                  )}
-                  {stage === 2 && (
-                    <span className={styles.scanFrame} aria-hidden="true">
-                      <i />
-                    </span>
-                  )}
-                  <motion.div
-                    className={styles.travelQr}
-                    animate={
-                      stage === 1
-                        ? { x: 34, y: 24, scale: 0.58, rotate: 0 }
-                        : stage === 2
-                          ? reduceMotion
-                            ? { x: 0, y: 0, scale: 0.9, rotate: 0 }
-                            : {
-                                x: 0,
-                                y: [24, -12, 0],
-                                scale: [0.7, 1, 0.9],
-                                rotate: 0,
-                              }
-                          : { x: 0, y: 0, scale: 1, rotate: 0 }
-                    }
-                    transition={{
-                      duration: reduceMotion ? 0 : 0.65,
-                      ease: [0.23, 1, 0.32, 1],
-                    }}
-                  >
-                    <Image
-                      src="/landing/guest-pass.svg"
-                      alt="QR minh họa, không dùng để check-in thực tế"
-                      width={122}
-                      height={122}
-                    />
-                  </motion.div>
-                </div>
-                <span className={styles.demoPassStatus}>
-                  {stage === 0
-                    ? "Thông tin đăng ký"
-                    : stage === 1
-                      ? "QR nằm trên thư mời"
-                      : "Đã quét QR minh họa"}
-                </span>
-                <span className={styles.demoPassFoot}>
-                  {stage === 2 ? "HỘI THẢO · ĐÃ ĐIỂM DANH" : "HỘI THẢO · GALA"}
-                </span>
-              </div>
-            </div>
-            <div className={styles.demoDetail}>
-              <span aria-hidden="true">
-                <Users size={16} />
-              </span>
-              <p>{JOURNEY[stage].detail}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
