@@ -33,11 +33,13 @@
 .experience {
   display: grid;
   grid-template-columns: 275px minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 48px;
 }
 .desk {
   min-width: 0;
+  position: sticky;
+  top: 104px;
 }
 .steps {
   display: flex;
@@ -47,7 +49,7 @@
   color: #b6cdd7;
   border: 0;
   border-bottom: 1px solid #314c5c;
-  padding: 24px 0;
+  padding: 15px 0;
   background: transparent;
   display: flex;
   align-items: start;
@@ -169,7 +171,7 @@
   color: #a9c1ce;
 }
 .space {
-  height: 500px;
+  height: var(--scene-height);
   position: relative;
   isolation: isolate;
   perspective: 1200px;
@@ -246,7 +248,7 @@
   position: absolute;
   left: 22%;
   top: 4%;
-  width: 35%;
+  width: min(38%, calc((var(--scene-height) - 64px) * 0.706));
   transform-origin: center;
   z-index: 3;
   will-change: transform;
@@ -307,6 +309,7 @@
   white-space: nowrap;
 }
 .sceneFoot {
+  pointer-events: none;
   position: absolute;
   z-index: 4;
   bottom: 19px;
@@ -436,25 +439,84 @@
   font-size: 8px;
   margin-top: 20px;
 }
+.visualTrack {
+  --scene-height: min(500px, calc(100svh - 230px));
+  min-height: 260svh;
+  min-width: 0;
+}
+.visualSticky {
+  position: sticky;
+  top: 104px;
+}
+.phoneLayer {
+  --phone-retreat: 38%;
+  position: absolute;
+  width: calc(var(--scene-height) * 1.32);
+  aspect-ratio: 1;
+  left: calc(50% - var(--scene-height) * 0.66);
+  top: calc(var(--scene-height) * -0.15);
+  z-index: 5;
+  pointer-events: none;
+}
+.phoneHand {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+.phoneScreen {
+  position: absolute;
+  left: 33.6%;
+  top: 20.25%;
+  width: 31.1%;
+  height: 64.5%;
+  border-radius: 6%;
+  overflow: hidden;
+  background: #f4f9fc;
+  z-index: 1;
+}
+.phoneInvitation {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 8% 3%;
+}
+.phoneInvitation .invitationPaper {
+  width: 100%;
+}
+.phoneScanPass {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10%;
+  color: #163d50;
+  text-align: center;
+}
+.phoneScanPass > span {
+  font-size: 8px;
+  line-height: 1.6;
+  letter-spacing: 1px;
+}
+.phoneScanPass > strong {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.phoneScanSlot {
+  width: 90%;
+  aspect-ratio: 1;
+  margin: 24px auto 18px;
+}
 @media (hover: hover) and (pointer: fine) {
   .step:hover {
     color: #a2e8ed;
   }
   .next:hover {
     color: #e3fbfc;
-  }
-}
-@media (min-width: 1100px) and (min-height: 860px) and (prefers-reduced-motion: no-preference) {
-  .journey {
-    min-height: 210svh;
-    padding-block: 60px;
-  }
-  .stickyStage {
-    position: sticky;
-    top: 108px;
-  }
-  .heading {
-    margin-bottom: 30px;
   }
 }
 @media (max-width: 1190px) {
@@ -465,15 +527,17 @@
     grid-template-columns: 245px minmax(0, 1fr);
     gap: 30px;
   }
-  .space {
-    height: 460px;
+  .step {
+    padding-block: 12px;
   }
-  .invitationLayer {
-    top: 9%;
-    width: 39%;
+  .step strong {
+    font-size: 14px;
+  }
+  .step > span > span {
+    font-size: 10px;
   }
   .scannerLayer {
-    top: 20%;
+    top: 15%;
   }
   .toolbar {
     padding-inline: 16px;
@@ -484,77 +548,66 @@
     letter-spacing: 0.7px;
   }
 }
-@media (max-width: 1099px) {
+@media (max-width: 999px) {
   .experience {
     grid-template-columns: 1fr;
-    gap: 25px;
+    gap: 28px;
   }
   .desk {
+    position: static;
     display: grid;
     grid-template-columns: 1fr 220px;
     align-items: start;
-    gap: 32px;
+    gap: 24px;
   }
   .steps {
     flex-direction: row;
-    gap: 20px;
+    gap: 14px;
   }
   .step {
     flex-direction: column;
-    gap: 10px;
-    padding: 0 0 18px;
+    gap: 8px;
+    padding: 0 0 15px;
   }
   .step > svg {
     display: none;
   }
   .step strong {
-    font-size: 13px;
+    font-size: 11px;
     white-space: nowrap;
   }
   .step > span > span {
-    font-size: 9px;
+    display: none;
+  }
+  .stepIcon {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
   }
   .personalize {
     padding: 0;
   }
-  .personalize input {
-    font-size: 12px;
-  }
   .personalize .next {
     font-size: 11px !important;
-    margin-top: 16px;
+    margin-top: 13px;
   }
   .heading h2 {
     font-size: 34px;
   }
-  .space {
-    height: 510px;
+  .visualSticky {
+    top: 92px;
   }
   .invitationLayer {
-    width: 35%;
-    top: 4%;
-  }
-  .scannerLayer {
-    top: 14%;
-  }
-  .toolbar {
-    padding-inline: 22px;
-    font-size: 10px;
-  }
-  .toolbar > span:last-child {
-    font-size: 8px;
+    width: min(43%, calc((var(--scene-height) - 60px) * 0.706));
   }
   .success h3 {
-    font-size: 26px;
-  }
-  .success p {
-    font-size: 12px;
-  }
-  .successLabel {
-    font-size: 10px;
+    font-size: 24px;
   }
 }
 @media (max-width: 699px) {
+  .phoneLayer {
+    --phone-retreat: 22%;
+  }
   .journey {
     padding-block: 54px;
     scroll-margin-top: 80px;
@@ -581,25 +634,14 @@
   }
   .desk {
     grid-template-columns: 1fr;
-    gap: 22px;
+    gap: 20px;
   }
   .steps {
-    gap: 17px;
-  }
-  .step {
-    padding-bottom: 14px;
+    gap: 10px;
   }
   .step strong {
-    font-size: 11px;
+    font-size: 10px;
     margin-top: 0;
-  }
-  .step > span > span {
-    display: none;
-  }
-  .stepIcon {
-    width: 33px;
-    height: 33px;
-    flex-basis: 33px;
   }
   .stepIcon svg {
     width: 18px;
@@ -607,7 +649,7 @@
   .personalize {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 7px 15px;
+    gap: 7px 12px;
     align-items: center;
   }
   .personalize label {
@@ -623,8 +665,15 @@
   .personalize .next {
     margin-top: 0;
     font-size: 10px !important;
-    gap: 10px;
+    gap: 8px;
     padding-block: 7px;
+  }
+  .visualTrack {
+    --scene-height: min(460px, calc(100svh - 220px));
+    min-height: 250svh;
+  }
+  .visualSticky {
+    top: 84px;
   }
   .preview {
     border-radius: 12px;
@@ -636,13 +685,9 @@
   .toolbar > span:last-child {
     display: none;
   }
-  .space {
-    height: 410px;
-  }
   .invitationLayer {
     left: 18%;
-    top: 8%;
-    width: 64%;
+    width: min(64%, calc((var(--scene-height) - 64px) * 0.706));
   }
   .sourceDock {
     left: 65%;
@@ -660,12 +705,10 @@
   }
   .scannerLayer {
     left: 2%;
-    top: 27%;
+    top: 25%;
     width: 96%;
   }
-  .scannerImage {
-    border-radius: 10px;
-  }
+  .scannerImage,
   .screenInterior {
     border-radius: 10px;
   }
@@ -682,13 +725,13 @@
     top: -32%;
   }
   .sceneFoot {
-    bottom: 18px;
+    bottom: 17px;
     left: 16px;
     right: 16px;
     font-size: 8px;
   }
   .stateMarks i {
-    width: 17px;
+    width: 13px;
   }
   .sceneCaption {
     gap: 10px;
@@ -744,23 +787,85 @@
     width: 9px;
     height: 9px;
   }
+  .phoneScanPass > strong {
+    font-size: 12px;
+  }
+  .phoneScanPass > span {
+    font-size: 7px;
+  }
 }
-@media (max-width: 374px) {
+@media (max-height: 600px) {
+  .visualTrack {
+    --scene-height: max(180px, calc(100svh - 180px));
+  }
+  .visualSticky {
+    top: 84px;
+  }
+  .toolbar {
+    padding-block: 8px;
+  }
+  .sceneCaption {
+    padding-block: 8px;
+    min-height: 53px;
+  }
+  .sceneCaption p {
+    font-size: 8px;
+  }
+  .captionIcon {
+    width: 27px;
+    height: 27px;
+    flex-basis: 27px;
+  }
+  .scannerLayer {
+    top: 3%;
+    width: 65%;
+    left: 18%;
+  }
+  .phoneScanPass > strong {
+    font-size: 9px;
+  }
+  .phoneScanPass > span {
+    font-size: 5px;
+  }
+  .phoneScanSlot {
+    margin-block: 12px;
+  }
+  .sceneFoot {
+    bottom: 8px;
+  }
+}
+@media (min-width: 1000px) and (max-height: 740px) {
+  .step {
+    padding-block: 10px;
+    align-items: center;
+  }
+  .step > span > span {
+    display: none;
+  }
+  .step strong {
+    margin-top: 0;
+    font-size: 14px;
+  }
+  .stepIcon {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+  .step > svg {
+    margin-top: 0;
+  }
   .personalize {
-    gap: 7px 10px;
-  }
-  .personalize .next {
-    font-size: 9px !important;
-    gap: 6px;
-  }
-  .space {
-    height: 385px;
-  }
-  .success h3 {
-    font-size: 13px;
+    padding-top: 20px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .visualTrack {
+    min-height: 0;
+  }
+  .visualSticky,
+  .desk {
+    position: static;
+  }
   .journey *,
   .journey *::before,
   .journey *::after {

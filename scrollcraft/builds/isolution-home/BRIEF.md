@@ -18,6 +18,14 @@ Refined peak: a large freestanding QR travels into the invitation's actual empty
 
 Refined feeling curve: anticipation from a floating QR; recognition when it fits precisely into the real invitation; delight at the scan-and-confirm transition; confidence from the retained name and honest demo label. The existing page structure and remaining journey remain the same; this is a revision of the existing fingerprint, not a second site.
 
+### Handheld-phone refinement and laptop scroll fix
+
+User supplied a transparent hand/phone PNG, accepted the proposed phone-to-scanner choreography, and reported no visible scroll animation on a laptop. The original 1100×860 gate reproduced this at 1366×768: all three sampled scroll positions stayed at stage 0 with reduced motion off.
+
+Keep the supplied alpha artwork intact, encoding it to a local WebP. Refine the workflow into four beats: freestanding QR → printed invitation → invitation inside the held phone → enlarged phone QR presented to the scanner. The phone then retreats to reveal the personalized confirmation. The physical paper and phone invitation share their layout transition; the QR stays with the same guest throughout.
+
+Native sticky now applies to the visual alone, with a viewport-sized scene and an independent scroll track at every screen size. The heading flows away naturally. Desktop controls stay alongside; shorter laptops get compact controls. Buttons navigate to the same positions in the native scroll timeline. Reduced motion retains immediate manual states with no long scroll track. Same page grammar, fingerprint and database constraint.
+
 ## Eight topics
 
 1. Vibe: navy and cyan, modern, clear, restrained motion (user selection). Retain the existing I-solution Manager name and QR identity.

@@ -15,6 +15,8 @@ const out = process.env.HOME_UI_OUTPUT || path.join(os.tmpdir(), 'form-cme-home-
 fs.mkdirSync(out, { recursive: true });
 const views = [
   { name: 'desktop', width: 1440, height: 900 },
+  { name: 'laptop', width: 1366, height: 768 },
+  { name: 'short-laptop', width: 1280, height: 600 },
   { name: 'phone', width: 390, height: 844 },
   { name: 'compact', width: 360, height: 640 },
   { name: 'tablet', width: 820, height: 1180 },
@@ -26,7 +28,7 @@ const views = [
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true });
   const report = [];
   try {
-    for (const view of views) {
+    for (const view of views.filter((view) => !process.env.HOME_UI_VIEWS || process.env.HOME_UI_VIEWS.split(',').includes(view.name))) {
       const context = await browser.newContext({ viewport: view, reducedMotion: view.reduced ? 'reduce' : 'no-preference' });
       try {
         await context.addInitScript(() => {
@@ -44,6 +46,9 @@ const views = [
         });
         const page = await context.newPage();
         page.on('pageerror', (error) => errors.push(error.message));
+        page.on('console', (message) => {
+          if (message.type() === 'error' && /hydrat|server rendered|Minified React error/i.test(message.text())) errors.push(message.text());
+        });
         await page.goto(base, { waitUntil: 'networkidle' });
         await page.evaluate(() => document.fonts.ready);
         await page.waitForFunction(() => Boolean(window.ScrollCraft));
@@ -66,7 +71,7 @@ const views = [
         await page.getByRole('button', { name: /^Đăng ký/ }).click();
         await page.getByLabel('Tên khách minh họa').fill('Trần Ánh Dương');
         await page.getByRole('button', { name: 'Xem thư mời' }).click();
-        await page.waitForTimeout(1250);
+        await page.waitForTimeout(view.reduced ? 100 : 2100);
         assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '1');
         assert.ok(await page.locator('#journey-preview').innerText().then((text) => text.includes('Trần Ánh Dương')));
         const invitationSlot = await page.locator('[data-qr-destination="invitation"]').boundingBox();
@@ -75,26 +80,36 @@ const views = [
         assert.ok(Math.abs(invitationSlot.width - invitationQr.width) < 2, 'QR fits the printed empty square');
         assert.ok(await page.locator('#journey-preview img[src*="conference-invitation"]').count(), 'Uses the supplied invitation');
         await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-invitation.png`) });
+        await page.getByRole('button', { name: 'Mở trên điện thoại' }).click();
+        await page.waitForTimeout(view.reduced ? 100 : 2100);
+        assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '2');
+        const phoneSlot = await page.locator('[data-qr-destination="phone-invitation"]').boundingBox();
+        const phoneQr = await page.locator('[data-qr-flight]').boundingBox();
+        assert.ok(Math.abs(phoneSlot.x - phoneQr.x) < 2 && Math.abs(phoneSlot.y - phoneQr.y) < 2, 'QR stays on the invitation inside the phone');
+        await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-phone.png`) });
         await page.getByRole('button', { name: 'Thử bước check-in' }).click();
         await page.waitForTimeout(view.reduced ? 100 : 450);
         await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-scan-flight.png`) });
-        await page.waitForTimeout(1400);
-        assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '2');
+        await page.waitForTimeout(3300);
+        assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), '3');
         assert.ok(await page.getByText('Chào Trần Ánh Dương!', { exact: true }).isVisible());
-        const scannerSlot = await page.locator('[data-qr-destination="scanner"]').boundingBox();
+        const scannerSlot = await page.locator('[data-qr-destination="phone-scan"]').boundingBox();
         const scannerQr = await page.locator('[data-qr-flight]').boundingBox();
-        assert.ok(Math.abs(scannerSlot.x - scannerQr.x) < 2 && Math.abs(scannerSlot.y - scannerQr.y) < 2, 'QR arrives inside the scanner');
+        assert.ok(Math.abs(scannerSlot.x - scannerQr.x) < 2 && Math.abs(scannerSlot.y - scannerQr.y) < 2, 'QR stays inside the phone during scanning');
         await page.locator('#journey-preview').screenshot({ path: path.join(out, `${view.name}-checkin.png`) });
         await page.getByRole('button', { name: 'Thử lại hành trình' }).click();
         assert.equal(await page.getByLabel('Tên khách minh họa').inputValue(), 'Trần Ánh Dương');
 
-        if (view.width >= 1100 && view.height >= 860 && !view.reduced) {
+        if (!view.reduced) {
           await page.getByLabel('Tên khách minh họa').blur();
-          const bounds = await journey.evaluate((el) => ({ top: el.offsetTop, travel: el.offsetHeight - innerHeight }));
-          for (const [fraction, expected] of [[.15, '0'], [.5, '1'], [.9, '2']]) {
-            await page.evaluate((y) => scrollTo(0, y), bounds.top + bounds.travel * fraction);
-            await page.waitForTimeout(1850);
-            assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), expected, 'Scroll advances QR journey');
+          const bounds = await page.locator('[data-journey-track]').evaluate((el) => { const top = el.getBoundingClientRect().top + scrollY; return { top: top - innerHeight * .15, travel: el.offsetHeight - innerHeight * .85 }; });
+          for (const [fraction, expected] of [[.125, '0'], [.375, '1'], [.625, '2'], [.875, '3']]) {
+            const targetY = bounds.top + bounds.travel * fraction;
+            await page.mouse.wheel(0, targetY - await page.evaluate(() => scrollY));
+            await page.waitForTimeout(expected === '3' ? 3400 : 1500);
+            assert.equal(await page.locator('#journey-preview').getAttribute('data-stage'), expected, 'Scroll advances QR journey at every screen size');
+            const box = await page.locator('#journey-preview').boundingBox();
+            assert.ok(box.y >= 64 && box.y + box.height <= view.height + 2, 'Entire animated preview stays inside the viewport');
             await page.screenshot({ path: path.join(out, `${view.name}-scroll-${expected}.png`) });
           }
         }
@@ -127,7 +142,8 @@ const views = [
         console.log(`${view.name}: passed`);
       } catch (error) {
         report.push({ viewport: view.name, status: 'failed', error: error.message });
-        console.error(`${view.name}: ${error.message}`);
+        await context.pages()[0]?.screenshot({ path: path.join(out, `${view.name}-failure.png`) }).catch(() => undefined);
+        console.error(`${view.name}: ${error.stack}`);
       } finally { await context.close(); }
     }
 
