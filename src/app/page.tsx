@@ -1,142 +1,123 @@
 "use client";
+
+import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import Script from "next/script";
+import { useEffect, useRef, useState } from "react";
 import {
+  motion,
+  useMotionValueEvent,
+  useReducedMotion,
+  useScroll,
+} from "framer-motion";
+import {
+  ArrowDownLeft,
+  ArrowLeft,
   ArrowRight,
-  Activity,
+  ArrowUpRight,
   BarChart3,
-  ChevronDown,
+  Check,
+  CheckCheck,
+  ChevronRight,
   ClipboardList,
-  Dices,
   Gamepad2,
-  HeartHandshake,
+  Heart,
   Mail,
+  Menu,
   QrCode,
   ScanFace,
-  Sparkles,
+  ScanLine,
+  Send,
   Users,
+  X,
 } from "lucide-react";
-import dynamic from "next/dynamic";
 import { supabase } from "@/lib/supabase";
 import { GAME_MODULES } from "@/lib/game/catalog";
+import styles from "./home.module.css";
 
-const AnimatedBackground = dynamic(
-  () => import("@/components/ui/AnimatedBackground").then((m) => ({ default: m.AnimatedBackground })),
-  { ssr: false },
-);
+type ScrollCraftRuntime = {
+  mount: (root: HTMLElement) => { destroy: () => void };
+};
 
-const BRAND_GRADIENT = "linear-gradient(135deg, #0ea5e9, #06b6d4)";
-
-const HERO_STATS = [
-  { value: "18", label: "Game tương tác" },
-  { value: "7", label: "Nhóm tính năng" },
-  { value: "02", label: "Cách check-in: QR & khuôn mặt" },
-  { value: "24/7", label: "Gửi email tự động" },
-];
-
-const FEATURES = [
-  {
-    icon: Dices,
-    emoji: "🎡",
-    title: "Bốc thăm gian hàng miễn phí",
-    text: "Quay gian theo từng pool, bố trí trên sơ đồ và hỗ trợ trao đổi vị trí. Không cần đăng nhập.",
-    href: "/booth-draw",
-    cta: "Mở công cụ",
-  },
+const JOURNEY = [
   {
     icon: ClipboardList,
-    emoji: "📋",
-    title: "Form đăng ký & chấm điểm CME",
-    text: "Tạo form tùy chỉnh đầy đủ trường, khảo sát, post-test và chấm điểm cho hội thảo.",
-    href: "/admin/forms",
-    cta: "Mở form",
-  },
-  {
-    icon: QrCode,
-    emoji: "📷",
-    title: "Quét QR check-in",
-    text: "Quét mã QR ngay trên trình duyệt điện thoại, xác nhận tham dự nhanh và chính xác.",
-    href: "/admin/forms",
-    cta: "Bắt đầu",
-  },
-  {
-    icon: ScanFace,
-    emoji: "🧑",
-    title: "Face Check-in VIP",
-    text: "Nhận diện khuôn mặt ngay trên trình duyệt, không cần thiết bị đầu đọc chuyên dụng.",
-    href: "/admin/forms",
-    cta: "Bắt đầu",
-  },
-  {
-    icon: Gamepad2,
-    emoji: "🎮",
-    title: "Thư viện game",
-    text: "18 game tương tác cho hội thảo: Quiz, Lucky Wheel, Trúc Xanh, Chém Hoa Quả…",
-    href: "/games",
-    cta: "Chơi thử",
-  },
-  {
-    icon: Activity,
-    emoji: "🦅",
-    title: "Trò chơi hợp lực",
-    text: "Khán giả lắc điện thoại, đại bàng của mỗi đội bay trên màn hình LED. Chơi bằng cả Android lẫn iPhone.",
-    href: "/admin/tools/flap",
-    cta: "Xem cách chơi",
-  },
-  {
-    icon: HeartHandshake,
-    emoji: "💌",
-    title: "Trao lời chúc, nhận yêu thương",
-    text: "Khách gõ hoặc vẽ lời chúc trên tablet; lời chúc bay từ ngoài mép màn LED và ghép thành một hình tập thể.",
-    href: "/admin/tools/wish-wall",
-    cta: "Mở công cụ",
+    title: "Đăng ký",
+    text: "Một biểu mẫu đúng nhu cầu. Một danh sách khách tập trung.",
+    detail:
+      "Tùy chỉnh câu hỏi, nhập danh sách Excel và ghi nhận lựa chọn tham dự từng buổi.",
   },
   {
     icon: Mail,
-    emoji: "✉️",
-    title: "Email tự động (Resend)",
-    text: "Gửi email xác nhận, nhắc nhở và thiệp mời PDF cá nhân hóa với template chuyên nghiệp.",
-    href: "/admin/templates",
-    cta: "Cấu hình",
+    title: "Nhận thư mời",
+    text: "Lời mời mang tên từng khách, kèm theo mã QR riêng.",
+    detail:
+      "Cá nhân hóa email, thiệp mời PDF và thông tin sự kiện bằng các mẫu có sẵn.",
+  },
+  {
+    icon: ScanLine,
+    title: "QR check-in",
+    text: "Một mã QR theo khách xuyên suốt các buổi tham dự.",
+    detail:
+      "Quét trên trình duyệt điện thoại, kiểm tra đúng buổi và theo dõi danh sách đã đến.",
+  },
+];
+
+const CAPABILITIES = [
+  {
+    icon: ClipboardList,
+    title: "Biểu mẫu & CME",
+    text: "Đăng ký, khảo sát và post-test theo nội dung hội thảo.",
+    href: "/admin/forms",
+  },
+  {
+    icon: ScanFace,
+    title: "Face check-in VIP",
+    text: "Đón khách bằng nhận diện khuôn mặt.",
+    href: "/admin/forms",
+  },
+  {
+    icon: Mail,
+    title: "Email & thiệp mời",
+    text: "Gửi thư cá nhân hóa từ danh sách Excel.",
+    href: "/admin/tools/mail-merge",
   },
   {
     icon: BarChart3,
-    emoji: "📊",
-    title: "Báo cáo & thống kê",
-    text: "Theo dõi lượt đăng ký, check-in theo khung giờ và xuất dữ liệu QR/Excel dễ dàng.",
+    title: "Báo cáo tham dự",
+    text: "Xem đăng ký, điểm danh theo buổi và xuất Excel.",
     href: "/admin/forms",
-    cta: "Xem báo cáo",
   },
 ];
 
-const STEPS = [
-  { title: "Tạo form đăng ký", text: "Chọn loại form, thêm câu hỏi và cấu hình thời gian mở/đóng." },
-  { title: "Cấu hình email & QR", text: "Soạn template thư, bật QR check-in và thiệp mời PDF cá nhân hóa." },
-  { title: "Check-in bằng QR / khuôn mặt", text: "Phát QR cho người tham dự, quét tại sự kiện bằng điện thoại." },
-  { title: "Game & báo cáo", text: "Chạy game tương tác, tổng hợp dữ liệu và xuất danh sách." },
-];
+const FEATURED = ["quiz", "wheel", "trucxanh", "handslice"]
+  .map((id) => GAME_MODULES.find((game) => game.id === id))
+  .filter((game) => game !== undefined);
 
-const GAME_BADGES: Record<string, string> = {
-  quiz: "Hot",
-  wheel: "Live",
-  trucxanh: "Fun",
-  handslice: "AR",
-  jigsaw: "Mới",
-  picword: "Hot",
+const GAME_DESCRIPTIONS: Record<string, string> = {
+  quiz: "Cùng thử tài kiến thức",
+  wheel: "Một vòng quay, nhiều bất ngờ",
+  trucxanh: "Lật ô, tìm cặp, kết nối",
+  handslice: "Chuyển động để nhập cuộc",
 };
 
-const FEATURED_GAME_IDS = ["quiz", "wheel", "trucxanh", "handslice", "jigsaw", "picword"];
-
 export default function HomePage() {
+  const rootRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const galleryRef = useRef<HTMLDivElement>(null);
   const [signedIn, setSignedIn] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const startHref = signedIn ? "/admin" : "/signup";
+  const startLabel = signedIn ? "Vào dashboard" : "Bắt đầu ngay";
 
   useEffect(() => {
     let mounted = true;
     supabase.auth
       .getSession()
       .then(({ data: { session } }) => {
-        if (mounted) setSignedIn(!!session);
+        if (mounted) setSignedIn(Boolean(session));
       })
       .catch(() => undefined);
     return () => {
@@ -144,326 +125,747 @@ export default function HomePage() {
     };
   }, []);
 
-  const featuredGames = FEATURED_GAME_IDS.map((id) => GAME_MODULES.find((m) => m.id === id)).filter(
-    (m): m is (typeof GAME_MODULES)[number] => Boolean(m),
-  );
+  useEffect(() => {
+    const runtime = (window as Window & { ScrollCraft?: ScrollCraftRuntime })
+      .ScrollCraft;
+    if (!runtimeReady || !rootRef.current || !runtime || reduceMotion) return;
+    const instance = runtime.mount(rootRef.current);
+    return () => instance.destroy();
+  }, [runtimeReady, reduceMotion]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
+
+  function moveGallery(direction: number) {
+    const rail = galleryRef.current;
+    if (rail)
+      rail.scrollBy({
+        left: direction * rail.clientWidth * 0.75,
+        behavior: reduceMotion ? "instant" : "smooth",
+      });
+  }
 
   return (
-    <main className="relative min-h-dvh overflow-x-hidden">
-      <AnimatedBackground />
-
-      <div className="relative z-10">
-        {/* ── NAV ── */}
-        <header className="sticky top-0 z-40 border-b border-sky-100/70 bg-white/80 backdrop-blur-xl">
-          <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
-            <Link href="/" className="flex min-w-0 items-center gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: BRAND_GRADIENT, boxShadow: "0 6px 20px rgba(6,182,212,0.3)" }}>
-                <QrCode size={18} className="text-on-brand" />
-              </div>
-              <span className="truncate text-sm font-semibold tracking-tight text-slate-900 sm:text-base">
-                I-solution <span className="text-sky-600">Manager</span>
-              </span>
-            </Link>
-
-            <nav className="hidden items-center gap-1 md:flex">
-              <a href="#features" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Tính năng</a>
-              <a href="#how" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Quy trình</a>
-              <a href="#games" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Thư viện game</a>
-              <div className="group relative">
-                <button className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">
-                  Công cụ <ChevronDown size={14} className="transition-transform group-hover:rotate-180" />
-                </button>
-                <div className="invisible absolute left-0 top-full z-50 w-64 translate-y-1 rounded-2xl border border-sky-100 bg-white p-2 opacity-0 shadow-xl transition-all group-hover:visible group-hover:translate-y-0 group-hover:opacity-100">
-                  <Link href="/booth-draw" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
-                    <span className="text-lg">🎲</span>
-                    <span>
-                      <span className="block text-sm font-semibold text-slate-800">Bốc thăm gian hàng</span>
-                      <span className="block text-[11px] text-slate-500">Chia gian hàng cho nhà tài trợ</span>
-                    </span>
-                  </Link>
-                  <Link href="/admin/tools/flap" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
-                    <span className="text-lg">🦅</span>
-                    <span>
-                      <span className="block text-sm font-semibold text-slate-800">Trò chơi hợp lực</span>
-                      <span className="block text-[11px] text-slate-500">Lắc điện thoại, đại bàng tung cánh</span>
-                    </span>
-                  </Link>
-                  <Link href="/admin/tools/wish-wall" className="flex items-start gap-2.5 rounded-xl px-3 py-2.5 hover:bg-sky-50">
-                    <span className="text-lg">💌</span>
-                    <span>
-                      <span className="block text-sm font-semibold text-slate-800">Trao lời chúc</span>
-                      <span className="block text-[11px] text-slate-500">Lời chúc bay lên màn LED</span>
-                    </span>
-                  </Link>
-                </div>
-              </div>
-              <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-sky-50 hover:text-sky-700">Đăng nhập</Link>
-            </nav>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <Link href="/login" className="rounded-xl px-3 py-2 text-xs font-medium text-slate-600 glass hover:text-slate-900 md:hidden">
-                Đăng nhập
-              </Link>
-              <Link
-                href={signedIn ? "/admin" : "/signup"}
-                className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-on-brand sm:px-4 sm:text-sm"
-                style={{ background: BRAND_GRADIENT, boxShadow: "0 8px 24px rgba(6,182,212,0.28)" }}
-              >
-                {signedIn ? "Vào dashboard" : "Thử ngay"} <ArrowRight size={14} />
-              </Link>
-            </div>
-          </div>
-        </header>
-
-        {/* ── HERO ── */}
-        <section className="relative overflow-hidden px-4 pt-14 pb-12 sm:px-6 sm:pt-24 sm:pb-20">
-          <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-[36rem] -translate-x-1/2 rounded-full bg-sky-300/25 blur-3xl" />
-          <div className="relative mx-auto w-full max-w-5xl text-center">
-            <motion.span
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/70 px-3 py-1 text-[11px] font-semibold text-sky-700 sm:px-3.5 sm:py-1.5 sm:text-xs"
-            >
-              <Sparkles size={12} className="text-sky-500" />
-              Nền tảng hội thảo All-in-One
-            </motion.span>
-
-            <motion.h1
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.06 }}
-              className="font-display mx-auto mt-4 max-w-[20ch] text-[2rem] leading-[1.1] font-black tracking-tight text-slate-900 text-balance sm:mt-6 sm:max-w-3xl sm:text-5xl md:text-6xl"
-            >
-              Quản lý hội thảo <span className="bg-gradient-to-r from-sky-600 to-cyan-500 bg-clip-text text-transparent">chuyên nghiệp</span> & dễ dàng
-            </motion.h1>
-
-            <motion.p
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.12 }}
-              className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-slate-600 sm:mt-6 sm:max-w-2xl sm:text-lg"
-            >
-              Tất cả công cụ bạn cần: form đăng ký CME, QR check-in, face check-in VIP, email tự động và 18 game tương tác — trong một nền tảng duy nhất.
-            </motion.p>
-
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.18 }}
-              className="mx-auto mt-7 flex w-full max-w-sm flex-col gap-2.5 sm:mt-9 sm:max-w-none sm:flex-row sm:justify-center sm:gap-3"
-            >
-              <Link
-                href={signedIn ? "/admin" : "/signup"}
-                className="flex items-center justify-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-bold text-on-brand transition-transform hover:scale-[1.02] sm:text-base"
-                style={{ background: BRAND_GRADIENT, boxShadow: "0 14px 40px rgba(6,182,212,0.32)" }}
-              >
-                {signedIn ? "Vào dashboard" : "Bắt đầu miễn phí"} <ArrowRight size={16} />
-              </Link>
-              <Link href="/games" className="flex items-center justify-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-slate-700 glass hover:text-slate-900 sm:text-base">
-                Khám phá thư viện game
-              </Link>
-              <Link href="/booth-draw" className="flex items-center justify-center gap-2 rounded-2xl px-6 py-3.5 text-sm font-semibold text-sky-700 glass hover:text-sky-900 sm:text-base">
-                <Dices size={16} /> Bốc thăm gian hàng
-              </Link>
-            </motion.div>
-
-            <div className="mx-auto mt-10 grid w-full max-w-3xl grid-cols-2 gap-3 sm:mt-14 sm:grid-cols-4 sm:gap-4">
-              {HERO_STATS.map((stat) => (
-                <div key={stat.label} className="glass rounded-2xl px-3 py-3.5 text-center sm:px-4 sm:py-4">
-                  <div className="font-display text-xl font-black text-slate-900 sm:text-2xl">{stat.value}</div>
-                  <div className="mt-0.5 text-[11px] leading-snug text-slate-500 sm:text-xs">{stat.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ── FEATURES ── */}
-        <section id="features" className="scroll-mt-20 px-4 py-12 sm:px-6 sm:py-20">
-          <div className="mx-auto w-full max-w-6xl">
-            <SectionHeading
-              eyebrow="Tính năng"
-              title="Tất cả trong một nền tảng"
-              text="Từ đăng ký, check-in QR/khuôn mặt đến game tương tác và gửi mail tự động."
-            />
-            <div className="mt-8 grid grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
-              {FEATURES.map((feature) => (
-                <motion.div
-                  key={feature.title}
-                  initial={{ opacity: 0, y: 14 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-60px" }}
-                  className="glass group flex flex-col rounded-2xl p-5 sm:p-6"
-                >
-                  <span className="text-2xl">{feature.emoji}</span>
-                  <h3 className="mt-3 text-base font-bold text-slate-900">{feature.title}</h3>
-                  <p className="mt-1.5 flex-1 text-sm leading-6 text-slate-600">{feature.text}</p>
-                  <Link href={feature.href} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-sky-600 hover:text-sky-700">
-                    {feature.cta} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ── HOW ── */}
-        <section id="how" className="scroll-mt-20 px-4 py-12 sm:px-6 sm:py-20">
-          <div className="mx-auto w-full max-w-6xl">
-            <SectionHeading
-              eyebrow="Quy trình"
-              title="Hoạt động như thế nào?"
-              text="4 bước đơn giản để tổ chức một hội thảo hoàn chỉnh."
-            />
-            <div className="mt-8 grid grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
-              {STEPS.map((step, index) => (
-                <div key={step.title} className="glass relative rounded-2xl p-5">
-                  <div
-                    className="flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black text-on-brand"
-                    style={{ background: BRAND_GRADIENT }}
-                  >
-                    {index + 1}
-                  </div>
-                  <h3 className="mt-3 text-sm font-bold text-slate-900 sm:text-base">{step.title}</h3>
-                  <p className="mt-1.5 text-sm leading-6 text-slate-600">{step.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ── GAMES ── */}
-        <section id="games" className="scroll-mt-20 px-4 py-12 sm:px-6 sm:py-20">
-          <div className="mx-auto w-full max-w-6xl">
-            <SectionHeading
-              eyebrow="Game"
-              title="Thư viện game tương tác"
-              text="Tăng tương tác và sự gắn kết cho hội thảo của bạn."
-            />
-            <div className="mt-8 grid grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
-              {featuredGames.map((game) => (
-                <Link
-                  key={game.id}
-                  href="/games"
-                  className="glass group flex items-center gap-4 rounded-2xl p-4 transition-transform hover:-translate-y-0.5 sm:p-5"
-                >
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-2xl">{game.icon}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-sm font-bold text-slate-900">{game.name}</span>
-                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                        {GAME_BADGES[game.id] ?? "Game"}
-                      </span>
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs text-slate-500">{game.tagline}</span>
-                  </span>
-                  <ArrowRight size={16} className="shrink-0 text-sky-500 transition-transform group-hover:translate-x-0.5" />
-                </Link>
-              ))}
-            </div>
-            <div className="mt-6 text-center">
-              <Link href="/games" className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-600 hover:text-sky-700">
-                Xem tất cả {GAME_MODULES.length} game <ArrowRight size={14} />
-              </Link>
-            </div>
-          </div>
-        </section>
-
-        {/* ── CTA ── */}
-        <section className="px-4 py-12 sm:px-6 sm:py-20">
-          <div
-            className="mx-auto w-full max-w-5xl overflow-hidden rounded-3xl px-6 py-10 text-center sm:px-12 sm:py-16"
-            style={{ background: "linear-gradient(135deg, #0284c7 0%, #0ea5e9 55%, #06b6d4 100%)", boxShadow: "0 24px 60px rgba(6,182,212,0.32)" }}
+    <main ref={rootRef} className={styles.home}>
+      <Script
+        src="/landing/scrollcraft.js"
+        strategy="afterInteractive"
+        onReady={() => setRuntimeReady(true)}
+      />
+      <a className={styles.skipLink} href="#main-content">
+        Đến nội dung chính
+      </a>
+      <header className={styles.header}>
+        <div className={`${styles.container} ${styles.headerInner}`}>
+          <Link
+            href="/"
+            className={styles.brand}
+            aria-label="I-solution Manager, trang chủ"
           >
-            <p className="text-xs font-bold tracking-wider text-sky-100 uppercase">Bắt đầu ngay</p>
-            <h2 className="font-display mt-3 text-2xl font-black text-white sm:text-4xl">Sẵn sàng tổ chức hội thảo tiếp theo?</h2>
-            <p className="mx-auto mt-3 max-w-xl text-sm text-sky-50 sm:text-base">
-              Miễn phí bắt đầu — tạo form, gửi QR check-in và chạy game chỉ trong vài phút.
+            <span className={styles.brandMark}>
+              <QrCode size={22} strokeWidth={1.7} />
+            </span>
+            <span>
+              I-solution <span className={styles.brandSuffix}>Manager</span>
+            </span>
+          </Link>
+          <nav className={styles.desktopNav} aria-label="Điều hướng chính">
+            <a href="#how">Quy trình</a>
+            <a href="#features">Giải pháp</a>
+            <a href="#games">Game tương tác</a>
+          </nav>
+          <div className={styles.headerActions}>
+            <Link href="/login" className={styles.loginLink}>
+              Đăng nhập
+            </Link>
+            <Link
+              href={startHref}
+              className={`${styles.button} ${styles.buttonSmall}`}
+            >
+              {startLabel}
+              <ArrowUpRight size={16} />
+            </Link>
+            <button
+              ref={menuButtonRef}
+              type="button"
+              className={styles.menuButton}
+              aria-expanded={menuOpen}
+              aria-controls="home-mobile-nav"
+              aria-label={menuOpen ? "Đóng menu" : "Mở menu"}
+              onClick={() => setMenuOpen(!menuOpen)}
+            >
+              {menuOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
+          </div>
+        </div>
+        {menuOpen && (
+          <nav
+            id="home-mobile-nav"
+            className={styles.mobileNav}
+            aria-label="Điều hướng trên điện thoại"
+            onClick={() => setMenuOpen(false)}
+          >
+            <a href="#how">
+              Quy trình <ChevronRight size={17} />
+            </a>
+            <a href="#features">
+              Giải pháp <ChevronRight size={17} />
+            </a>
+            <a href="#games">
+              Game tương tác <ChevronRight size={17} />
+            </a>
+            <Link href="/login">
+              Đăng nhập <ArrowUpRight size={17} />
+            </Link>
+          </nav>
+        )}
+      </header>
+
+      <section
+        id="main-content"
+        className={styles.hero}
+        data-sc-act="flow"
+        aria-labelledby="hero-heading"
+      >
+        <div className={`${styles.container} ${styles.heroInner}`}>
+          <div className={styles.heroCopy}>
+            <p className={styles.eyebrow}>
+              <span /> Từ lời mời đến lời chào
             </p>
-            <div className="mx-auto mt-7 flex w-full max-w-sm flex-col gap-2.5 sm:max-w-none sm:flex-row sm:justify-center sm:gap-3">
-              <Link href={signedIn ? "/admin" : "/signup"} className="flex items-center justify-center gap-2 rounded-2xl bg-white px-6 py-3.5 text-sm font-bold text-sky-700 transition-transform hover:scale-[1.02] sm:text-base">
-                {signedIn ? "Vào dashboard" : "Tạo tài khoản"}
+            <h1 id="hero-heading">
+              Sự kiện chỉn chu.
+              <br />
+              <span>Từ lần chạm đầu.</span>
+            </h1>
+            <p className={styles.heroDescription}>
+              Đăng ký, gửi thư mời, check-in và kết nối khách tham dự trong cùng
+              một nền tảng.
+            </p>
+            <div className={styles.heroActions}>
+              <Link href={startHref} className={styles.button}>
+                {startLabel}
+                <ArrowUpRight size={18} />
               </Link>
-              <Link href="/games" className="flex items-center justify-center gap-2 rounded-2xl border border-white/40 px-6 py-3.5 text-sm font-semibold text-white hover:bg-white/10 sm:text-base">
-                Khám phá game
-              </Link>
+              <a href="#how" className={styles.textLink}>
+                Khám phá quy trình <ArrowRight size={17} />
+              </a>
             </div>
           </div>
-        </section>
-
-        {/* ── FOOTER ── */}
-        <footer className="border-t border-sky-100/70 bg-white/60 px-4 py-10 sm:px-6">
-          <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl" style={{ background: BRAND_GRADIENT }}>
-                  <QrCode size={18} className="text-on-brand" />
+          <div
+            className={styles.heroScene}
+            role="img"
+            aria-label="Minh họa thư mời, thẻ khách QR và xác nhận check-in kết nối trong một hành trình"
+          >
+            <div
+              className={styles.sceneOrbit}
+              data-sc-parallax="0.5"
+              aria-hidden="true"
+            >
+              <span />
+              <span />
+              <span />
+            </div>
+            <div
+              className={styles.invitePlane}
+              data-sc-parallax="-0.45"
+              aria-hidden="true"
+            >
+              <div className={styles.invitePaper}>
+                <Mail size={21} />
+                <span>THƯ MỜI THAM DỰ</span>
+                <strong>
+                  Hẹn gặp bạn
+                  <br />
+                  tại sự kiện.
+                </strong>
+                <div className={styles.paperLines}>
+                  <i />
+                  <i />
                 </div>
-                <span className="text-sm font-semibold text-slate-900">I-solution Manager</span>
+                <span className={styles.paperSeal}>
+                  <Send size={15} /> Được gửi riêng cho bạn
+                </span>
               </div>
-              <p className="mt-3 text-xs leading-5 text-slate-500">
-                Nền tảng quản lý hội thảo trực tuyến all-in-one cho y tế và giáo dục.
-              </p>
             </div>
+            <div
+              className={styles.passPlane}
+              data-sc-parallax="-1.15"
+              aria-hidden="true"
+            >
+              <div className={styles.passTilt} data-sc-tilt="3">
+                <div className={styles.guestPass}>
+                  <div className={styles.passTop}>
+                    <QrCode size={20} />
+                    <span>I-solution Manager</span>
+                    <ArrowUpRight size={17} />
+                  </div>
+                  <div className={styles.passBody}>
+                    <span className={styles.passTag}>GUEST PASS</span>
+                    <h2>
+                      Chào mừng
+                      <br />
+                      bạn đến!
+                    </h2>
+                    <p>Một mã QR. Trọn hành trình.</p>
+                    <Image
+                      src="/landing/guest-pass.svg"
+                      alt=""
+                      width={146}
+                      height={146}
+                      priority
+                    />
+                    <span className={styles.passCaption}>QR MINH HỌA</span>
+                  </div>
+                  <div className={styles.passTear}>
+                    <span />
+                    <i />
+                    <span />
+                  </div>
+                  <div className={styles.passBottom}>
+                    <span>HỘI THẢO & SỰ KIỆN</span>
+                    <span>Đăng ký · Kết nối</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div
+              className={styles.receiptPlane}
+              data-sc-parallax="-1.85"
+              aria-hidden="true"
+            >
+              <div className={styles.checkinReceipt}>
+                <span className={styles.receiptIcon}>
+                  <Check size={20} />
+                </span>
+                <div>
+                  <strong>Sẵn sàng đón khách</strong>
+                  <span>QR check-in & nhận diện VIP</span>
+                </div>
+                <ScanLine size={21} />
+              </div>
+            </div>
+            <div className={styles.sceneCaption} aria-hidden="true">
+              <span /> Một trải nghiệm liền mạch, từ trước giờ khai mạc.
+            </div>
+          </div>
+        </div>
+      </section>
 
-            <FooterColumn
-              title="Công cụ"
-              links={[
-                { label: "Bốc thăm gian hàng", href: "/booth-draw" },
-                { label: "Trò chơi hợp lực", href: "/admin/tools/flap" },
-                { label: "Trao lời chúc", href: "/admin/tools/wish-wall" },
-                { label: "Thư viện game", href: "/games" },
-                { label: "Template email", href: "/admin/templates" },
-              ]}
-            />
-            <FooterColumn
-              title="Nội dung"
-              links={[
-                { label: "Thư viện game", href: "/games" },
-                { label: "Đăng nhập", href: "/login" },
-                { label: "Đăng ký", href: "/signup" },
-              ]}
-            />
-            <div>
-              <h3 className="text-xs font-bold tracking-wider text-slate-900 uppercase">Liên hệ</h3>
-              <ul className="mt-3 space-y-2 text-xs text-slate-500">
-                <li>
-                  <a href="mailto:hotro@hoithaotructuyen.net" className="hover:text-sky-600">hotro@hoithaotructuyen.net</a>
-                </li>
-                <li>Hỗ trợ qua email trong giờ làm việc</li>
-              </ul>
+      <section className={styles.intro} aria-label="Tổng quan giải pháp">
+        <div className={`${styles.container} ${styles.introInner}`} data-sc-in>
+          <p>
+            Bạn chăm chút nội dung.
+            <br />
+            <strong>Phần vận hành, đã có công cụ.</strong>
+          </p>
+          <div>
+            <span>
+              <ClipboardList size={18} /> Trước sự kiện
+            </span>
+            <span>
+              <ScanLine size={18} /> Tại sự kiện
+            </span>
+            <span>
+              <BarChart3 size={18} /> Sau sự kiện
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <JourneyDemo reduceMotion={Boolean(reduceMotion)} />
+
+      <section
+        id="features"
+        className={styles.features}
+        aria-labelledby="features-heading"
+        data-sc-act="flow"
+      >
+        <div className={styles.container}>
+          <div className={styles.featuresHeading} data-sc-in>
+            <h2 id="features-heading">
+              Một nơi làm việc.
+              <br />
+              <span>Nhiều việc được gỡ nhẹ.</span>
+            </h2>
+            <p>
+              Từ hội thảo CME đến sự kiện doanh nghiệp, chọn đúng công cụ cho
+              từng khâu tổ chức.
+            </p>
+          </div>
+          <div className={styles.capabilityList}>
+            {CAPABILITIES.map(({ icon: Icon, title, text, href }) => (
+              <Link
+                key={title}
+                href={href}
+                className={styles.capability}
+                data-sc-in
+              >
+                <Icon size={23} strokeWidth={1.5} />
+                <div>
+                  <h3>{title}</h3>
+                  <p>{text}</p>
+                </div>
+                <ArrowUpRight size={20} />
+              </Link>
+            ))}
+          </div>
+          <div className={styles.connection}>
+            <div className={styles.connectionCopy}>
+              <span className={styles.connectionIcon}>
+                <Heart size={23} strokeWidth={1.5} />
+              </span>
+              <h3>
+                Để người tham dự
+                <br />
+                trở thành một phần sự kiện.
+              </h3>
+              <p>
+                Gửi một lời chúc lên màn LED, cùng đội chơi hợp lực, hay tìm vị
+                trí gian hàng bằng một vòng quay.
+              </p>
+              <div className={styles.toolLinks}>
+                <Link href="/admin/tools/wish-wall">
+                  Tường lời chúc <ArrowUpRight size={16} />
+                </Link>
+                <Link href="/admin/tools/flap">
+                  Trò chơi hợp lực <ArrowUpRight size={16} />
+                </Link>
+                <Link href="/booth-draw">
+                  Bốc thăm gian hàng <ArrowUpRight size={16} />
+                </Link>
+              </div>
+            </div>
+            <div
+              className={styles.wishScene}
+              data-sc-reveal="up"
+              data-sc-reveal-at="0 0.35"
+              role="img"
+              aria-label="Minh họa những lời chúc kết nối thành hình trái tim trên màn hình sự kiện"
+            >
+              <div className={styles.wishDots} aria-hidden="true">
+                {Array.from({ length: 32 }, (_, i) => (
+                  <i key={i} style={{ "--i": i } as React.CSSProperties} />
+                ))}
+              </div>
+              <Heart
+                className={styles.wishHeart}
+                size={142}
+                strokeWidth={0.7}
+                aria-hidden="true"
+              />
+              <span className={styles.wishOne}>
+                Chúc một ngày thật ý nghĩa!
+              </span>
+              <span className={styles.wishTwo}>Cảm ơn vì đã cùng nhau.</span>
+              <span className={styles.wishThree}>
+                <Heart size={14} fill="currentColor" /> Kết nối những điều tốt
+                đẹp
+              </span>
+              <span className={styles.wishCaption}>
+                Minh họa tường lời chúc
+              </span>
             </div>
           </div>
-          <div className="mx-auto mt-8 flex w-full max-w-6xl items-center justify-center gap-2 border-t border-sky-100 pt-6 text-center text-[11px] text-slate-500 sm:text-xs">
-            <Users size={12} /> © 2026 Phi Lao · I-solution Manager
+        </div>
+      </section>
+
+      <section
+        id="games"
+        className={styles.games}
+        aria-labelledby="games-heading"
+      >
+        <div className={styles.container}>
+          <div className={styles.gamesHeading}>
+            <div>
+              <p className={styles.eyebrow}>THÊM MỘT CHÚT BẤT NGỜ</p>
+              <h2 id="games-heading">
+                Đến tham dự.
+                <br />
+                <span>Ở lại vì hào hứng.</span>
+              </h2>
+            </div>
+            <div className={styles.gamesAside}>
+              <p>
+                {GAME_MODULES.length} game tương tác sẵn sàng cho những khoảng
+                nghỉ đầy kết nối.
+              </p>
+              <Link className={styles.textLink} href="/games">
+                Khám phá thư viện <ArrowUpRight size={18} />
+              </Link>
+            </div>
           </div>
-        </footer>
-      </div>
+          <div
+            ref={galleryRef}
+            className={styles.gameRail}
+            aria-label="Game nổi bật"
+          >
+            {FEATURED.map((game) => (
+              <Link
+                href={`/games/play?module=${game.id}`}
+                key={game.id}
+                className={styles.game}
+              >
+                <div className={styles.gameImage}>
+                  {game.cover && (
+                    <Image
+                      src={game.cover}
+                      alt={`Hình ảnh game ${game.name}`}
+                      width={560}
+                      height={380}
+                      sizes="(max-width: 600px) 78vw, (max-width: 1000px) 45vw, 360px"
+                    />
+                  )}
+                  <span className={styles.gamePlay}>
+                    <ArrowUpRight size={23} />
+                  </span>
+                </div>
+                <div className={styles.gameTitle}>
+                  <h3>{game.name}</h3>
+                  <Gamepad2 size={19} />
+                </div>
+                <p>{GAME_DESCRIPTIONS[game.id]}</p>
+              </Link>
+            ))}
+          </div>
+          <div className={styles.galleryBottom}>
+            <span>Chơi thử trực tiếp trên trình duyệt</span>
+            <div>
+              <button
+                type="button"
+                aria-label="Xem game trước"
+                onClick={() => moveGallery(-1)}
+              >
+                <ArrowLeft size={19} />
+              </button>
+              <button
+                type="button"
+                aria-label="Xem game tiếp theo"
+                onClick={() => moveGallery(1)}
+              >
+                <ArrowRight size={19} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.closing} aria-labelledby="closing-heading">
+        <div className={`${styles.container} ${styles.closingInner}`}>
+          <span className={styles.closingSymbol} aria-hidden="true">
+            <ArrowDownLeft size={48} strokeWidth={1} />
+          </span>
+          <h2 id="closing-heading">
+            Sự kiện tiếp theo.
+            <br />
+            <span>Bắt đầu thật gọn.</span>
+          </h2>
+          <div>
+            <p>
+              Tạo biểu mẫu đầu tiên và chuẩn bị
+              <br />
+              một trải nghiệm đón khách chỉn chu.
+            </p>
+            <Link
+              href={startHref}
+              className={`${styles.button} ${styles.buttonDark}`}
+            >
+              {startLabel}
+              <ArrowUpRight size={19} />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <footer className={styles.footer}>
+        <div className={`${styles.container} ${styles.footerInner}`}>
+          <div className={styles.footerBrand}>
+            <Link href="/" className={styles.brand}>
+              <QrCode size={23} />
+              <span>I-solution Manager</span>
+            </Link>
+            <p>
+              Công cụ cho người đứng sau
+              <br />
+              những sự kiện đáng nhớ.
+            </p>
+          </div>
+          <div>
+            <h3>Khám phá</h3>
+            <a href="#how">Quy trình</a>
+            <a href="#features">Giải pháp sự kiện</a>
+            <Link href="/games">Thư viện game</Link>
+          </div>
+          <div>
+            <h3>Làm việc</h3>
+            <Link href="/admin">Dashboard</Link>
+            <Link href="/admin/templates">Mẫu email</Link>
+            <Link href="/login">Đăng nhập</Link>
+          </div>
+          <div className={styles.footerContact}>
+            <h3>Cùng bạn tổ chức</h3>
+            <a href="mailto:hotro@hoithaotructuyen.net">
+              hotro@hoithaotructuyen.net <ArrowUpRight size={15} />
+            </a>
+            <span>Hỗ trợ qua email trong giờ làm việc</span>
+          </div>
+        </div>
+        <div className={`${styles.container} ${styles.footerBottom}`}>
+          <span>© 2026 Phi Lao · I-solution Manager</span>
+          <span>Đăng ký. Đón tiếp. Kết nối.</span>
+        </div>
+      </footer>
     </main>
   );
 }
 
-function SectionHeading({ eyebrow, title, text }: { eyebrow: string; title: string; text: string }) {
-  return (
-    <div className="mx-auto max-w-2xl text-center">
-      <span className="text-[11px] font-bold tracking-wider text-sky-600 uppercase sm:text-xs">{eyebrow}</span>
-      <h2 className="font-display mt-2 text-2xl font-black tracking-tight text-slate-900 sm:text-4xl">{title}</h2>
-      <p className="mt-2 text-sm text-slate-600 sm:text-base">{text}</p>
-    </div>
-  );
-}
+function JourneyDemo({ reduceMotion }: { reduceMotion: boolean }) {
+  const sectionRef = useRef<HTMLElement>(null);
+  const scrollStage = useRef(0);
+  const [stage, setStage] = useState(0);
+  const [name, setName] = useState("Nguyễn Minh Anh");
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ["start start", "end end"],
+  });
+  const displayName = name.trim() || "Khách tham dự";
 
-function FooterColumn({ title, links }: { title: string; links: { label: string; href: string }[] }) {
+  useMotionValueEvent(scrollYProgress, "change", (progress) => {
+    if (
+      reduceMotion ||
+      sectionRef.current?.querySelector("input:focus") ||
+      !window.matchMedia("(min-width: 1000px) and (min-height: 760px)").matches
+    )
+      return;
+    const next = Math.min(2, Math.floor(progress * 3));
+    if (next !== scrollStage.current) {
+      scrollStage.current = next;
+      setStage(next);
+    }
+  });
+
   return (
-    <div>
-      <h3 className="text-xs font-bold tracking-wider text-slate-900 uppercase">{title}</h3>
-      <ul className="mt-3 space-y-2 text-xs text-slate-500">
-        {links.map((link) => (
-          <li key={link.label}>
-            <Link href={link.href} className="hover:text-sky-600">{link.label}</Link>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <section
+      ref={sectionRef}
+      id="how"
+      className={styles.journey}
+      aria-labelledby="journey-heading"
+    >
+      <div className={`${styles.container} ${styles.journeyStage}`}>
+        <div className={styles.journeyHeading}>
+          <h2 id="journey-heading">
+            Một hành trình.
+            <br />
+            <span>Không rời mạch kết nối.</span>
+          </h2>
+          <p>Thử thay tên khách và khám phá ba bước bên dưới.</p>
+        </div>
+        <div className={styles.journeyGrid}>
+          <div className={styles.journeySteps} aria-label="Các bước minh họa">
+            {JOURNEY.map(({ icon: Icon, title, text }, index) => (
+              <button
+                type="button"
+                key={title}
+                onClick={() => setStage(index)}
+                className={`${styles.journeyStep} ${stage === index ? styles.journeyStepActive : ""}`}
+                aria-pressed={stage === index}
+                aria-controls="journey-preview"
+              >
+                <span className={styles.stepIcon}>
+                  <Icon size={21} strokeWidth={1.6} />
+                </span>
+                <span>
+                  <strong>{title}</strong>
+                  <span>{text}</span>
+                </span>
+                <ArrowRight size={18} />
+              </button>
+            ))}
+          </div>
+          <div
+            id="journey-preview"
+            className={styles.demoPanel}
+            data-stage={stage}
+          >
+            <div className={styles.demoToolbar}>
+              <span>
+                <span /> Bản minh họa tương tác
+              </span>
+              <span>Không gửi dữ liệu</span>
+            </div>
+            <div className={styles.demoMain}>
+              <div className={styles.demoContent}>
+                {stage === 0 && (
+                  <>
+                    <span className={styles.demoIcon}>
+                      <ClipboardList size={25} />
+                    </span>
+                    <h3>Rất vui được đón bạn.</h3>
+                    <p>
+                      Thông tin trên biểu mẫu sẽ theo khách trong suốt hành
+                      trình.
+                    </p>
+                    <label htmlFor="demo-guest-name">Tên khách minh họa</label>
+                    <input
+                      id="demo-guest-name"
+                      value={name}
+                      maxLength={60}
+                      autoComplete="off"
+                      onChange={(event) => setName(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className={styles.demoNext}
+                      onClick={() => setStage(1)}
+                    >
+                      Xem thư mời <ArrowRight size={16} />
+                    </button>
+                  </>
+                )}
+                {stage === 1 && (
+                  <>
+                    <span className={styles.demoIcon}>
+                      <Mail size={25} />
+                    </span>
+                    <span className={styles.demoLabel}>XEM TRƯỚC THƯ MỜI</span>
+                    <h3>Gửi {displayName},</h3>
+                    <p>
+                      Hẹn gặp bạn tại hội thảo. Mã QR được đặt ngay trên thiệp
+                      mời cá nhân của bạn.
+                    </p>
+                    <div className={styles.emailAttachment}>
+                      <QrCode size={21} />
+                      <span>
+                        Thiệp mời cá nhân hóa<small>PDF & mã QR tham dự</small>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.demoNext}
+                      onClick={() => setStage(2)}
+                    >
+                      Thử bước check-in <ArrowRight size={16} />
+                    </button>
+                  </>
+                )}
+                {stage === 2 && (
+                  <>
+                    <span
+                      className={`${styles.demoIcon} ${styles.demoSuccess}`}
+                    >
+                      <CheckCheck size={27} />
+                    </span>
+                    <span className={styles.demoLabel}>KẾT QUẢ MINH HỌA</span>
+                    <h3>Chào {displayName}!</h3>
+                    <p>
+                      QR đi qua màn hình quét để xác nhận đúng khách, đúng buổi
+                      tham dự.
+                    </p>
+                    <div className={styles.sessionRows}>
+                      <span>
+                        <Check size={16} /> Hội thảo{" "}
+                        <strong>Đã điểm danh</strong>
+                      </span>
+                      <span>
+                        <QrCode size={16} /> Gala{" "}
+                        <strong>Chưa điểm danh</strong>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.demoNext}
+                      onClick={() => setStage(0)}
+                    >
+                      Thử lại hành trình <ArrowRight size={16} />
+                    </button>
+                  </>
+                )}
+              </div>
+              <div
+                className={`${styles.demoPass} ${stage === 1 ? styles.invitationMock : ""} ${stage === 2 ? styles.scannerMock : ""}`}
+              >
+                <span className={styles.demoPassMark}>
+                  {stage === 2 ? <ScanLine size={17} /> : <QrCode size={17} />}{" "}
+                  {stage === 2 ? "CHECK-IN" : "I-solution"}
+                </span>
+                <span className={styles.demoPassLabel}>
+                  {stage === 0
+                    ? "THẺ THAM DỰ"
+                    : stage === 1
+                      ? "TRÂN TRỌNG KÍNH MỜI"
+                      : "CHÀO MỪNG BẠN"}
+                </span>
+                <strong>{displayName}</strong>
+                <div className={styles.qrTravelArea}>
+                  {stage === 1 && (
+                    <span className={styles.inviteGuide}>
+                      HỘI THẢO
+                      <br />& GALA
+                    </span>
+                  )}
+                  {stage === 2 && (
+                    <span className={styles.scanFrame} aria-hidden="true">
+                      <i />
+                    </span>
+                  )}
+                  <motion.div
+                    className={styles.travelQr}
+                    animate={
+                      stage === 1
+                        ? { x: 34, y: 24, scale: 0.58, rotate: 0 }
+                        : stage === 2
+                          ? reduceMotion
+                            ? { x: 0, y: 0, scale: 0.9, rotate: 0 }
+                            : {
+                                x: 0,
+                                y: [24, -12, 0],
+                                scale: [0.7, 1, 0.9],
+                                rotate: 0,
+                              }
+                          : { x: 0, y: 0, scale: 1, rotate: 0 }
+                    }
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.65,
+                      ease: [0.23, 1, 0.32, 1],
+                    }}
+                  >
+                    <Image
+                      src="/landing/guest-pass.svg"
+                      alt="QR minh họa, không dùng để check-in thực tế"
+                      width={122}
+                      height={122}
+                    />
+                  </motion.div>
+                </div>
+                <span className={styles.demoPassStatus}>
+                  {stage === 0
+                    ? "Thông tin đăng ký"
+                    : stage === 1
+                      ? "QR nằm trên thư mời"
+                      : "Đã quét QR minh họa"}
+                </span>
+                <span className={styles.demoPassFoot}>
+                  {stage === 2 ? "HỘI THẢO · ĐÃ ĐIỂM DANH" : "HỘI THẢO · GALA"}
+                </span>
+              </div>
+            </div>
+            <div className={styles.demoDetail}>
+              <span aria-hidden="true">
+                <Users size={16} />
+              </span>
+              <p>{JOURNEY[stage].detail}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
