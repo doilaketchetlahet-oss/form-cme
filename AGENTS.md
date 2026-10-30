@@ -237,12 +237,23 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   JPG/email inline previews remain raster. No migration or re-upload is required
   for this quality upgrade; download a new PDF to benefit. Existing exported
   files, sent messages and registration data remain unchanged.
+- **Chọn người nhận để xuất PDF** supports individual PDF downloads and ZIPs of
+  the current filter or explicitly selected registrations. Filter by school/unit
+  (auto-selected when recognized), any visible answer field or import batch;
+  search ignores Vietnamese accents. Choice values display their option labels.
+  Select-all includes every filtered result across the 25-row pages. Selections
+  persist across filters, with an explicit scope/count and notice for hidden
+  selections; clearing the last selected row never falls back to the full list.
+  Filters and selection affect downloads only. Recipient reads page through
+  Supabase in 500-row batches and disable export on any read failure, avoiding
+  silently incomplete school/batch groups. No SQL migration is required.
 - Regression: `node --test scripts/test-invite-pdf.cjs scripts/test-checkin-email-name.cjs`.
   `node scripts/test-invite-pdf-ui.cjs` uses port 3001 (`INVITE_PDF_E2E_BASE` override),
   `MAIL_MERGE_UI_DEPS` and optional `PLAYWRIGHT_CHANNEL=msedge`. All records/uploads
   are mocked; real PDF render checks compare untouched pages and rotated/cropped
   placement, selectable Vietnamese text, 400% rendering and vector QR decoding
-  at all four page rotations. No real email or storage writes.
+  at all four page rotations, individual/group/selected ZIP contents, search,
+  pagination and failed recipient reads. No real email or storage writes.
 
 ## Standalone Resend / SMTP mail merge
 

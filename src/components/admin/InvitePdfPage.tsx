@@ -17,13 +17,11 @@ import {
 import { buildPublicUrl } from "@/lib/site-url";
 import { EmailOverlayEditor } from "./EmailOverlayEditor";
 import { InvitePdfSource } from "./InvitePdfSource";
+import { InvitePdfRecipients } from "./InvitePdfRecipients";
 import { validateInvitePdfOverlay, MAX_INVITE_PDF_BYTES } from "@/lib/invite-pdf";
 
 import { createInviteFontLoader } from "@/lib/invite-fonts-client";
-
-function sanitizeFilename(name: string) {
-  return name.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").replace(/\.+$/g, "").trim().slice(0, 80) || "khach";
-}
+import { uniqueQrFilename } from "@/lib/qr-export";
 
 function loadImageElement(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -40,6 +38,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   const [form, setForm] = useState<(Survey & { questions: SurveyQuestion[] }) | null>(null);
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [rasterizing, setRasterizing] = useState(false);
@@ -50,12 +49,25 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const [next, respResult] = await Promise.all([
-        getRegistrationForm(formId),
-        supabase.from("survey_responses").select("*").eq("survey_id", formId).order("submitted_at", { ascending: true }),
-      ]);
+      setLoadError("");
+      setResponses([]);
+      const next = await getRegistrationForm(formId);
       setForm(next);
-      setResponses((respResult.data ?? []) as SurveyResponse[]);
+      try {
+        // Read beyond Supabase's default row limit so school/batch groups are complete.
+        const all: SurveyResponse[] = [];
+        for (let offset = 0; ; offset += 500) {
+          const result = await supabase.from("survey_responses").select("*").eq("survey_id", formId)
+            .order("submitted_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + 499);
+          if (result.error) throw result.error;
+          const batch = (result.data ?? []) as SurveyResponse[];
+          all.push(...batch);
+          if (batch.length < 500) break;
+        }
+        setResponses(all);
+      } catch {
+        setLoadError("Không tải đủ danh sách người nhận. Vui lòng tải lại trang trước khi xuất PDF.");
+      }
       const template = (next as { pdf_template?: EmailOverlay | null } | null)?.pdf_template ?? null;
       setOverlay(template);
       setAttachToEmail(!!(next as { pdf_attach_email?: boolean } | null)?.pdf_attach_email);
@@ -98,18 +110,19 @@ export function InvitePdfPage({ formId }: { formId: string }) {
     }
   };
 
-  const exportZip = async () => {
+  const exportPdfs = async (targets: SurveyResponse[], individual = false) => {
     if (exporting || rasterizing || saving) return;
     if (!overlay?.imageUrl) { toast.error("Chưa có ảnh nền thư mời."); return; }
-    if (responses.length === 0) { toast.error("Chưa có người đăng ký."); return; }
+    if (loadError || targets.length === 0 || (individual && targets.length !== 1)) { toast.error("Vui lòng chọn người nhận cần xuất PDF."); return; }
 
     setExporting(true);
-    toast.info(`Đang tạo ${responses.length} PDF…`);
+    toast.info(`Đang tạo ${targets.length} PDF…`);
     try {
       const [{ default: JSZip }, { renderVectorInvitePdf }] = await Promise.all([
         import("jszip"), import("@/lib/invite-pdf-vector"),
       ]);
       const zip = new JSZip();
+      let singleFile: { name: string; bytes: Uint8Array } | undefined;
       const loadFont = createInviteFontLoader();
       let background: Uint8Array | undefined;
       if (!overlay.pdf) {
@@ -131,9 +144,9 @@ export function InvitePdfPage({ formId }: { formId: string }) {
         original = new Uint8Array(await response.arrayBuffer());
         if (original.byteLength > MAX_INVITE_PDF_BYTES) throw new Error("PDF gốc vượt quá 10MB.");
       }
-      const used = new Map<string, number>();
+      const used = new Set<string>();
 
-      for (const response of responses) {
+      for (const response of targets) {
         const checkinUrl = buildPublicUrl(`/checkin/${response.id}`);
         const values = buildMergeValues({
           name: "",
@@ -149,24 +162,21 @@ export function InvitePdfPage({ formId }: { formId: string }) {
         const output = await renderVectorInvitePdf(overlay, values, checkinUrl, loadFont, { original, background });
 
         const rawName = values.name || (response.email ? String(response.email).split("@")[0] : "") || response.id.slice(0, 8);
-        let filename = sanitizeFilename(rawName);
-        const seen = used.get(filename) ?? 0;
-        used.set(filename, seen + 1);
-        if (seen > 0) filename = `${filename}_${seen + 1}`;
-
-        zip.file(`${filename}.pdf`, output);
+        const filename = uniqueQrFilename(rawName, used).replace(/\.png$/, ".pdf");
+        if (individual) singleFile = { name: filename, bytes: output };
+        else zip.file(filename, output);
       }
 
-      const content = await zip.generateAsync({ type: "blob" });
+      const content = singleFile ? new Blob([new Uint8Array(singleFile.bytes)], { type: "application/pdf" }) : await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `thumoi-${(form?.title || "export").replace(/\s+/g, "-").toLowerCase()}.zip`;
+      a.download = singleFile?.name ?? `thumoi-${(form?.title || "export").replace(/\s+/g, "-").toLowerCase()}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success(`Đã xuất ${responses.length} PDF.`);
+      toast.success(`Đã xuất ${targets.length} PDF.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Xuất PDF thất bại.");
     } finally {
@@ -208,14 +218,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
         </div>
         {canManageForms && (
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={exportZip}
-              disabled={exporting || saving || rasterizing}
-              className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
-            >
-              {exporting ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />} {exporting ? "Đang xuất…" : "Xuất PDF (ZIP)"}
-            </button>
+            <a href="#pdf-recipients" className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm font-semibold text-sky-700 hover:bg-sky-50"><FileText size={15} /> Chọn người để xuất</a>
             <button
               type="button"
               onClick={handleSave}
@@ -237,6 +240,8 @@ export function InvitePdfPage({ formId }: { formId: string }) {
           <p className="text-sm text-slate-600">Tài khoản này không được chỉnh sửa mẫu PDF.</p>
         </div>
       ) : (
+        <>
+        {loadError ? <div role="alert" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{loadError}<button type="button" onClick={() => window.location.reload()} className="ml-3 min-h-11 underline">Tải lại trang</button></div> : <InvitePdfRecipients key={formId} responses={responses} questions={form.questions} busy={exporting || saving || rasterizing} ready={!!overlay?.imageUrl} onExport={exportPdfs} />}
         <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
             Tải <strong>file PDF gốc</strong>, lần lượt chọn từng trang để đặt <strong>tên / QR riêng</strong>, rồi lưu mẫu. Xuất ZIP và gửi email đều cá nhân hóa tất cả các trang đã thiết kế. Mẫu ảnh cũ vẫn xuất thành PDF một trang.
@@ -268,6 +273,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
             <CheckCircle2 size={13} /> Xuất PDF chạy ngay trên trình duyệt, không cần chờ server.
           </p>
         </div>
+        </>
       )}
     </div>
   );

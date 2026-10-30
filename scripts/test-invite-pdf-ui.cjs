@@ -21,6 +21,8 @@ const token = `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.
 const session = { access_token: token, refresh_token: 'test-only', expires_at: Math.floor(Date.now()/1000)+3600, expires_in: 3600, token_type: 'bearer', user };
 const surveyId = randomUUID(), responseId = randomUUID();
 let browser;
+let registrations = [{ id: responseId, email: 'guest@example.test', answers: { name: 'Nguyễn Văn An', school: 'Trường A', role: 0 }, import_batch: 'Đợt 1' }];
+let failRecipients = false;
 (async () => {
   const doc = await PDFDocument.create();
   for (const [width, height] of [[400,500], [500,300], [300,600]]) {
@@ -55,8 +57,12 @@ let browser;
     if (url.pathname.includes('/auth/')) data = user;
     if (url.pathname.includes('/admin_members')) data = { role: 'owner', active: true };
     if (url.pathname.endsWith('/surveys')) data = { id: surveyId, title: 'PDF multi-page test', pdf_template: saved, pdf_attach_email: true };
-    if (url.pathname.endsWith('/survey_questions')) data = [{ id: 'name', text: 'Họ và tên', type: 'text', position: 0 }];
-    if (url.pathname.endsWith('/survey_responses')) data = [{ id: responseId, email: 'guest@example.test', answers: { name: 'Nguyễn Văn An' } }];
+    if (url.pathname.endsWith('/survey_questions')) data = [{ id: 'name', text: 'Họ và tên', type: 'text', position: 0 }, { id: 'school', text: 'Trường / đơn vị', type: 'text', position: 1 }, { id: 'role', text: 'Vai trò', type: 'choice', options: ['Khách mời', 'Diễn giả'], position: 2 }];
+    if (url.pathname.endsWith('/survey_responses')) {
+      const offset = Number(url.searchParams.get('offset') || 0), limit = Number(url.searchParams.get('limit') || 500);
+      if (failRecipients && offset >= 500) return route.fulfill({ status: 500, json: { message: 'fixture read error' } });
+      data = registrations.slice(offset, offset + limit);
+    }
     return route.fulfill({ json: data });
   });
   await context.route('**/api/admin/fonts**', route => route.fulfill({ json: { ok: true, fonts: [] } }));
@@ -76,7 +82,7 @@ let browser;
   assert.deepEqual(original.content, source);
   await page.getByRole('button', { name: 'QR', exact: true }).click();
   await select.selectOption('2');
-  await page.waitForFunction(() => document.querySelector('select')?.value === '2');
+  await page.waitForFunction(() => document.querySelector('select[aria-label="Trang đang chỉnh sửa"]')?.value === '2');
   await page.getByText('Đang sửa trang 2.', { exact: false }).waitFor();
   await page.getByRole('button', { name: 'Tên', exact: true }).click();
   await select.selectOption('1');
@@ -94,7 +100,7 @@ let browser;
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(shots, 'mobile.png'), fullPage: true });
   const downloading = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Xuất PDF (ZIP)', exact: true }).click();
+  await page.getByRole('button', { name: 'Xuất 1 PDF (ZIP)', exact: true }).click();
   const download = await downloading, zip = await JSZip.loadAsync(readFileSync(await download.path()));
   const output = await Object.values(zip.files)[0].async('nodebuffer');
   assert.equal((await PDFDocument.load(output)).getPageCount(), 3);
@@ -115,7 +121,7 @@ let browser;
   writeFileSync(path.join(shots, 'export-page-1.png'), Buffer.from(after[0].split(',')[1], 'base64'));
   writeFileSync(path.join(shots, 'export-page-2.png'), Buffer.from(after[1].split(',')[1], 'base64'));
   const extract = async bytes => page.evaluate(async ({ bytes, base }) => {
-    const pdfjs = await import(`${base}/__fixture_pdf.mjs`);
+    const pdfjs = await import(`${base}/__fixture_pdf.mjs`); pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
     const task = pdfjs.getDocument({ data: Uint8Array.from(bytes) }); const doc = await task.promise, result = [];
     for (let n = 1; n <= doc.numPages; n++) result.push((await (await doc.getPage(n)).getTextContent()).items.map(item => item.str).join(' '));
     await task.destroy(); return result;
@@ -156,6 +162,64 @@ let browser;
     assert.equal(await decode(images[1]), 'https://example.test/checkin/vector', `rotation ${angle}: readable QR`);
     writeFileSync(path.join(shots, `vector-rotation-${angle}.png`), Buffer.from(images[1].split(',')[1], 'base64'));
   }
+  // Export scope: individual PDF, school groups, choices, selected rows across pages/filters.
+  registrations = [
+    registrations[0],
+    { id: randomUUID(), email: 'binh@example.test', answers: { name: 'Trần Bình', school: 'Trường A', role: 1 }, import_batch: 'Đợt 2' },
+    { id: randomUUID(), email: 'chi@example.test', answers: { name: 'Lê Chi', school: 'Trường B', role: 0 }, import_batch: 'Đợt 2' },
+    { id: randomUUID(), email: 'empty@example.test', answers: { name: 'Chưa có trường', role: 1 } },
+    ...Array.from({ length: 26 }, (_,index) => ({ id: randomUUID(), email: `extra${index}@example.test`, answers: { name: `Khách ${String(index+1).padStart(2,'0')}`, school: 'Trường A', role: 0 }, import_batch: 'Đợt 1' })),
+  ];
+  await page.reload(); await select.waitFor();
+  const recipients = page.getByRole('region', { name: 'Chọn người nhận để xuất PDF' });
+  const grouping = recipients.getByLabel('Lọc theo thông tin', { exact: true });
+  const group = recipients.getByLabel('Chọn nhóm', { exact: true });
+  assert.equal(await grouping.inputValue(), 'school');
+  await group.selectOption('value:Trường B');
+  const individualDownload = page.waitForEvent('download');
+  await recipients.getByRole('button', { name: 'Tải PDF của Lê Chi', exact: true }).click();
+  const individual = await individualDownload;
+  assert.equal(individual.suggestedFilename(), 'Lê Chi.pdf');
+  const individualBytes = readFileSync(await individual.path());
+  assert.equal((await PDFDocument.load(individualBytes)).getPageCount(), 3);
+  assert.ok((await extract(individualBytes))[1].includes('Lê Chi'));
+  const exportZip = async count => {
+    const downloading = page.waitForEvent('download');
+    await recipients.getByRole('button', { name: `Xuất ${count} PDF (ZIP)`, exact: true }).click();
+    const download = await downloading;
+    const zip = await JSZip.loadAsync(readFileSync(await download.path()));
+    return Object.keys(zip.files).filter(name => !zip.files[name].dir).sort();
+  };
+  assert.deepEqual(await exportZip(1), ['Lê Chi.pdf']);
+  await group.selectOption('value:Trường A');
+  await recipients.getByRole('checkbox', { name: 'Chọn tất cả kết quả đang lọc', exact: true }).check();
+  await recipients.getByRole('button', { name: 'Trang sau', exact: true }).click();
+  await recipients.getByRole('checkbox', { name: 'Chọn Khách 26', exact: true }).uncheck();
+  const subsetFiles = await exportZip(27);
+  assert.equal(subsetFiles.length, 27);
+  assert.ok(subsetFiles.includes('Nguyễn Văn An.pdf')); assert.ok(subsetFiles.includes('Trần Bình.pdf'));
+  assert.ok(!subsetFiles.includes('Khách 26.pdf')); assert.ok(!subsetFiles.includes('Lê Chi.pdf'));
+  await recipients.getByLabel('Tìm người nhận', { exact: true }).fill('nguyen van an');
+  assert.deepEqual(await exportZip(1), ['Nguyễn Văn An.pdf'], 'search exports current filter even with older selections');
+  await recipients.getByRole('radio', { name: 'Người đã chọn (27)', exact: true }).check();
+  await recipients.getByRole('status').filter({ hasText: 'Có 26 người đã chọn nằm ngoài bộ lọc hiện tại.' }).waitFor();
+  await recipients.getByRole('button', { name: 'Bỏ chọn (27)', exact: true }).click();
+  assert.equal(await recipients.getByRole('button', { name: 'Xuất 0 PDF (ZIP)', exact: true }).isDisabled(), true, 'clearing selected scope never falls back to full list');
+  await recipients.getByRole('button', { name: 'Xóa bộ lọc', exact: true }).click();
+  await grouping.selectOption('role'); await group.selectOption('value:Diễn giả');
+  assert.deepEqual(await exportZip(2), ['Chưa có trường.pdf', 'Trần Bình.pdf'].sort());
+  await grouping.selectOption('$batch'); await group.selectOption('value:Đợt 2');
+  assert.deepEqual(await exportZip(2), ['Lê Chi.pdf', 'Trần Bình.pdf'].sort());
+  await grouping.selectOption('school'); await group.selectOption('value:');
+  assert.deepEqual(await exportZip(1), ['Chưa có trường.pdf']);
+  await recipients.getByLabel('Tìm người nhận', { exact: true }).fill('no-match-fixture');
+  assert.equal(await recipients.getByRole('button', { name: 'Xuất 0 PDF (ZIP)', exact: true }).isDisabled(), true);
+  await recipients.getByRole('button', { name: 'Xóa bộ lọc', exact: true }).click();
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await recipients.screenshot({ path: path.join(shots, 'recipients-desktop.png') });
+  await page.setViewportSize({ width: 375, height: 812 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await recipients.screenshot({ path: path.join(shots, 'recipients-mobile.png') });
   failSource = true;
   await select.selectOption('3'); await page.getByRole('alert').filter({ hasText: 'Không tải được PDF gốc' }).waitFor();
   assert.equal(await select.inputValue(), '2'); assert.equal(saved.pdf.page, 2);
@@ -174,6 +238,15 @@ let browser;
   assert.equal(await select.inputValue(), '2'); assert.equal(saved.pdf.pageCount, 3);
   await page.setViewportSize({ width: 812, height: 375 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  // Read every server page; a later read failure must not enable a partial export.
+  registrations = Array.from({ length: 501 }, (_,i) => ({ id: randomUUID(), email: `paged${i}@example.test`, answers: { name: `Paged ${i}`, school: i === 500 ? 'Last school' : 'First school' } }));
+  await page.reload(); await select.waitFor();
+  await group.selectOption('value:Last school');
+  assert.equal(await recipients.getByRole('button', { name: 'Xuất 1 PDF (ZIP)', exact: true }).isEnabled(), true);
+  failRecipients = true;
+  await page.reload();
+  await page.getByRole('alert').filter({ hasText: 'Không tải đủ danh sách người nhận' }).waitFor();
+  assert.equal(await page.getByRole('region', { name: 'Chọn người nhận để xuất PDF' }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log(`PASS: original upload, select page, fields, save/reload, ZIP all pages, selectable Vietnamese vector text, 400% render, vector QR decode, unchanged rendered pages, rotated/cropped placement, mobile, failed switch preserves state. Screenshots: ${shots}`);
+  console.log(`PASS: original upload, select page, fields, save/reload, ZIP all pages, selectable Vietnamese vector text, 400% render, vector QR decode, unchanged rendered pages, rotated/cropped placement, mobile, individual/group/selected exports, choices and import batches, empty scope, paged reads, failed switch preserves state. Screenshots: ${shots}`);
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => browser?.close());
