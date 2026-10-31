@@ -20,6 +20,7 @@ const CAMPAIGN_STATUS: Record<MergeCampaign["status"], string> = { draft: "Bản
 const fieldClass = "admin-field w-full rounded-xl px-3 py-2.5 text-sm focus:outline-none disabled:opacity-60";
 const cardClass = "glass-strong rounded-2xl border border-slate-200 p-5";
 const buttonClass = "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50";
+type MergeImportSheet = { name: string; hidden: boolean; rows: string[][] };
 
 async function api(body?: Record<string, unknown>, id?: string) {
   const { data } = await supabase.auth.getSession();
@@ -83,6 +84,8 @@ export function MailMergeManager() {
   const [resend, setResend] = useState<MergeResendAccount>(emptyResend);
   const [pasted, setPasted] = useState("");
   const [fileName, setFileName] = useState("");
+  const [sourceWorkbook, setSourceWorkbook] = useState<{ name: string; sheets: MergeImportSheet[] } | null>(null);
+  const [sheetName, setSheetName] = useState("");
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -160,7 +163,7 @@ export function MailMergeManager() {
     setProvider(next.smtp_public?.provider === "resend" ? "resend" : "smtp");
     setResend(next.smtp_public?.provider === "resend" ? { ...emptyResend(), ...next.smtp_public, apiKey: "" } : emptyResend());
     setDuplicateEmailPolicy(next.template.duplicateEmailPolicy ?? "skip");
-    setFileName("Danh sách đã lưu"); setPasted(""); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
+    setFileName("Danh sách đã lưu"); setSourceWorkbook(null); setSheetName(""); setPasted(""); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setFocus("subject"); focusedInput.current = null; clearDirty();
     setCampaigns((current) => current.some((item) => item.id === next.id) ? current : [next, ...current]);
   };
   const open = async (id: string) => {
@@ -175,25 +178,48 @@ export function MailMergeManager() {
     setCampaign(null); setName("Chiến dịch gửi thư mới"); setColumns([]); setRows([]); setEmailColumn(""); setSubject("Thư mời tham dự chương trình"); setBlocks([]); setCard(null); setCardAttachment("pdf"); setAttachments([]); setTrackingEnabled(true); setSmtp(emptySmtp()); setFileName(""); setPasted(""); setPreviewIndex(0); setError(""); setFocus("subject"); focusedInput.current = null; setCardEditorKey((key) => key + 1); setAttachmentEditorKey((key) => key + 1); clearDirty();
     setDuplicateEmailPolicy("skip");
     setProvider("resend"); setResend(emptyResend());
+    setSourceWorkbook(null); setSheetName("");
   };
 
-  const importMatrix = (matrix: string[][], label: string) => {
-    const parsed = mergeTable(matrix);
-    setColumns(parsed.columns); setRows(parsed.rows); setEmailColumn(parsed.emailColumn); setFileName(label); setPreviewIndex(0); setCardEditorKey((key) => key + 1);
+  const importTable = (parsed: ReturnType<typeof mergeTable>, label: string) => {
+    setColumns(parsed.columns); setRows(parsed.rows); setEmailColumn(parsed.emailColumn); setFileName(label); setPreviewIndex(0); setRecipientPage(0); setRecipientFilter(""); setCardEditorKey((key) => key + 1);
     if (!blocks.length) setBlocks([block()]);
     if (campaign) setCampaign({ ...campaign, recipients: undefined });
     markDirty(); toast.success(`Đã đọc ${parsed.rows.length} dòng và ${parsed.columns.length} cột.`);
   };
+  const importMatrix = (matrix: string[][], label: string) => {
+    importTable(mergeTable(matrix), label);
+    setSourceWorkbook(null); setSheetName(""); setError("");
+  };
+  const selectSheet = async (nextName: string) => {
+    if (!editable || !sourceWorkbook || nextName === sheetName) return;
+    const sheet = sourceWorkbook.sheets.find((item) => item.name === nextName);
+    if (!sheet) return;
+    setError("");
+    try {
+      const parsed = mergeTable(sheet.rows);
+      if (rows.length && !await confirm({ title: "Đổi sheet nhập dữ liệu?", description: `Danh sách hiện tại và các ô đã sửa sẽ được thay bằng dữ liệu của sheet “${sheet.name}”. Nội dung thư, thiệp và tài khoản gửi được giữ nguyên.`, confirmText: "Đổi sheet" })) return;
+      importTable(parsed, `${sourceWorkbook.name} · ${sheet.name}`);
+      setSheetName(sheet.name);
+    } catch (cause) { setError(`Không nhập được sheet “${sheet.name}”: ${cause instanceof Error ? cause.message : "Không đọc được danh sách."} Danh sách hiện tại được giữ nguyên; hãy chọn sheet khác.`); }
+  };
   const importFile = async (file: File) => {
+    if (!editable) return;
     if (file.size > 10 * 1024 * 1024) { toast.error("File tối đa 10 MB."); return; }
     setBusy(true); setError("");
     try {
       if (/\.xlsx?$/i.test(file.name)) {
         const XLSX = await import("xlsx");
         const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const sheets = workbook.SheetNames.map((name) => ({
+          name, hidden: !!workbook.Workbook?.Sheets?.find((item) => item.name === name)?.Hidden,
+          rows: XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[name], { header: 1, raw: false, defval: "" }),
+        }));
+        const sheet = sheets.find((item) => !item.hidden) ?? sheets[0];
         if (!sheet) throw new Error("File Excel không có sheet dữ liệu.");
-        importMatrix(XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: "" }) as string[][], `${file.name} · ${workbook.SheetNames[0]}`);
+        setSourceWorkbook({ name: file.name, sheets }); setSheetName(sheet.name);
+        try { importTable(mergeTable(sheet.rows), `${file.name} · ${sheet.name}`); }
+        catch (cause) { throw new Error(`Không nhập được sheet “${sheet.name}”: ${cause instanceof Error ? cause.message : "Không đọc được danh sách."} Hãy chọn sheet khác bên dưới; danh sách hiện tại được giữ nguyên.`); }
       } else importMatrix(parseMergeText(await file.text()), file.name);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không đọc được danh sách."); } finally { setBusy(false); if (inputRef.current) inputRef.current.value = ""; }
   };
@@ -321,7 +347,14 @@ export function MailMergeManager() {
       <p className="mt-2 text-xs leading-5 text-slate-500">{duplicateEmailPolicy === "allow" ? "Một người có 2 bài báo cáo: nhập 2 dòng cùng tên và Email, mỗi dòng có thông tin bài riêng. Người đó sẽ nhận 2 thư và thiệp tương ứng; tracking được ghi nhận riêng từng thư. Lưu chiến dịch sau khi đổi lựa chọn." : "Chỉ dòng đầu của mỗi Email được xét gửi; các dòng trùng bị bỏ qua. Chọn gửi riêng từng dòng nếu một người có nhiều bài báo cáo."}</p>
       {(!campaign || campaign.status === "draft") && <div className="mt-4 space-y-3">
         <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void importFile(event.target.files[0]); }} />
-        <button className={buttonClass} disabled={!editable} onClick={() => inputRef.current?.click()}><Upload size={15} /> Import Excel / CSV</button><span className="ml-3 text-xs text-slate-500">Dòng đầu là tên cột · Excel đọc sheet đầu tiên · Tối đa 5.000 dòng</span>
+        <button className={buttonClass} disabled={!editable} onClick={() => inputRef.current?.click()}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Import Excel / CSV</button><span className="ml-3 text-xs text-slate-500">Dòng đầu là tên cột · Excel có thể chọn sheet · Tối đa 5.000 dòng</span>
+        {sourceWorkbook && <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-3 sm:p-4">
+          <label htmlFor="merge-import-sheet" className="block text-sm font-medium text-slate-700">Sheet Excel</label>
+          <select id="merge-import-sheet" aria-describedby="merge-import-sheet-help" className={`${fieldClass} mt-1 max-w-xl min-h-11`} value={sheetName} disabled={!editable} onChange={(event) => void selectSheet(event.target.value)}>
+            {sourceWorkbook.sheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name}{sheet.hidden ? " (ẩn)" : ""}</option>)}
+          </select>
+          <p id="merge-import-sheet-help" className="mt-2 break-words text-xs leading-5 text-slate-600">{sourceWorkbook.name} · Chọn sheet để thay danh sách người nhận. Các ô đã sửa trong danh sách sẽ được thay thế; nội dung thư và cấu hình gửi được giữ nguyên.</p>
+        </div>}
         <details><summary className="cursor-pointer text-sm font-medium text-sky-700">Hoặc dán danh sách từ Excel / CSV</summary><textarea className={`${fieldClass} mt-2 h-28 font-mono text-xs`} disabled={!editable} placeholder={"Email\tHọ tên\tTrường\nkhach@example.com\tNguyễn Văn A\tĐại học A"} value={pasted} onChange={(event) => setPasted(event.target.value)} /><button className={`${buttonClass} mt-2`} disabled={!editable || !pasted.trim()} onClick={() => { try { importMatrix(parseMergeText(pasted), "Danh sách đã dán"); } catch (cause) { setError(cause instanceof Error ? cause.message : "Không đọc được danh sách."); } }}>Đọc danh sách</button></details>
       </div>}
       {fileName && <p className="mt-3 text-xs text-slate-500">{fileName} · {rows.length} dòng · {columns.length} cột</p>}

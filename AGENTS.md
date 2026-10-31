@@ -258,8 +258,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
-  separated list. The first row supplies column names; Excel reads the first
-  sheet and preserves formatted cell text. Up to 5,000 recipients / 60 columns.
+  separated list. The first row supplies column names; Excel defaults to the
+  first visible sheet and preserves formatted cell text. **Sheet Excel** can
+  switch to any sheet (hidden sheets are labeled), with confirmation before
+  replacing the current list/manual cell edits. Empty/invalid sheets retain the
+  current data and allow another selection. Switching preserves mail/card/sender
+  settings and requires saving before sending. CSV/paste/new or reopened campaigns
+  clear the local sheet selector. Up to 5,000 recipients / 60 columns.
 - Select the email column. Other columns become insertion fields such as
   `{{ho_ten}}`, `{{truong}}`; duplicate column labels receive unique keys.
   Compose headings, paragraphs, images, buttons or dividers, then preview each
@@ -349,6 +354,8 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   setup is documented there. `node scripts/test-mail-merge-ui.cjs` exercises XLSX,
   field insertion, preview, Resend/SMTP forms and mobile layout against mocked APIs
   (requires Playwright; its dependency directory can be set via `MAIL_MERGE_UI_DEPS`).
+  `node scripts/test-mail-merge-sheets-ui.cjs` uses the same setup for multi-sheet
+  XLSX/XLS, switching/cancel/error preservation, save/reload, CSV/paste and mobile.
 
 ## Tools & mini-games (added)
 
