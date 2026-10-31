@@ -270,7 +270,8 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Compose headings, paragraphs, images, buttons or dividers, then preview each
   row, select Resend or a private SMTP account, verify and send a test.
 - **Cách gửi thư → Kênh gửi thư** defaults to Resend for new campaigns, with
-  `bantochuc@vsot.com.vn` as the suggested sender. Resend can use server
+  `bantochuc@dangkyhoithao.online` as the suggested sender. Saved campaigns keep
+  their explicit sender until edited. Resend can use server
   `RESEND_API_KEY` or a private API key entered in the UI and encrypted for the
   campaign owner. It does not change `RESEND_FROM` or the check-in mail settings.
   Saved configs use `smtp_public.provider: "resend"` with `keySource`, sender

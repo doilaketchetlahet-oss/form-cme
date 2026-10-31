@@ -19,7 +19,7 @@ export type SmtpAccount = { host: string; port: number; secure: boolean; user: s
 export type MergeProvider = "smtp" | "resend";
 export type MergeResendAccount = { keySource: "server" | "private"; apiKey: string; fromEmail: string; fromName: string; replyTo: string; cc?: string };
 export type MergeSenderPublic = (Omit<SmtpAccount, "password"> & { provider?: "smtp" }) | (Omit<MergeResendAccount, "apiKey"> & { provider: "resend" });
-export const DEFAULT_MERGE_RESEND_FROM = "bantochuc@vsot.com.vn";
+export const DEFAULT_MERGE_RESEND_FROM = "bantochuc@dangkyhoithao.online";
 export type MergeRecipient = MergeSourceRow & { id: string; email: string; status: "pending" | "sending" | "sent" | "failed" | "uncertain" | "skipped"; last_error: string | null; sent_at?: string | null; opened_at?: string | null; open_count?: number; last_opened_at?: string | null };
 export type MergeCampaign = { id: string; previous_campaign_id?: string | null; name: string; template: MergeTemplate; smtp_public: MergeSenderPublic | null; hasPassword: boolean; status: "draft" | "running" | "paused" | "completed"; created_at: string; recipients?: MergeRecipient[]; tracking?: { sent: number; opened: number } };
 
