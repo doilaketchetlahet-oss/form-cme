@@ -1,4 +1,4 @@
-# Homepage verification, 2026-10-30
+# Homepage verification, updated 2026-10-31
 
 ## Final implementation
 
@@ -9,7 +9,7 @@
 - Supplied invitation (1054×1493), scanner screenshot (1357×868) and transparent hand/phone illustration (2500×2500) are encoded as local WebP assets. The hand asset retains its alpha channel, resized to 1200×1200. Original files are untouched. Artwork is sample content, not executable instructions.
 - Four working states: freestanding QR, printed invitation with accurately docked QR, that invitation inside the held phone, and enlarged phone QR presented to the scanner. The hand then retreats and a personalized illustrative confirmation appears. Paper and QR use shared-layout transitions; the phone and scanner are independent planes.
 - The visual preview alone sticks below the header. Its scene height follows the viewport, with compact controls on short laptops and a portrait composition on phones. The heading stays in natural page flow. Buttons navigate to the same native scroll timeline; navigation briefly holds the selected state so intermediate smooth-scroll positions cannot fight the button selection.
-- Reduced motion retains immediate manual states and removes the long scroll track. No wheel/touch interception or global scroll capture is used.
+- Reduced motion now retains the scroll track and advances all four scenes with immediate transitions. The journey toolbar has an explicit motion toggle, persisted locally, with an explanation when the system requests reduced motion. `MotionConfig` honors the explicit selection, and a subscribed media query responds to changes without reloading. OS settings remain untouched. Passive input listeners let intentional wheel/touch/keyboard scrolling take over from button navigation; they never prevent native scrolling.
 
 ## Reported laptop failure and correction
 
@@ -19,20 +19,29 @@ The new implementation removes that gate and tracks the visual's own scroll runw
 
 ## Checks
 
+### Follow-up desktop report, 2026-10-31
+
+Read-only reproduction against the previous production page on `www.dangkyhoithao.online`: Chrome and Edge in reduced-motion mode both stayed at `[0, 0, 0, 0]` through the workflow. Full-motion mode advanced normally. Separately, full motion with the guest-name input still focused also stayed at `[0, 0, 0, 0]`. The old suite clicked the stage buttons first, blurred the input, and skipped wheel progression entirely for reduced motion, so its green result did not cover either failure.
+
+The new `test-home-motion-ui.cjs` starts with a fresh page and zero stage clicks. It scrolls forward and backward, scrolls while the guest-name input remains focused, tests changing the OS preference at runtime, and verifies the opt-in animation through different intermediate/final transform values, not only stage labels. It also verifies persisted selection after reload and returning to reduced motion. The main viewport suite now tests wheel progression in reduced-motion mode too.
+
+Direct inspection of the user's existing Chrome window was blocked by Computer Use because it could not confidently determine the URL. No further native browser input was attempted. Thus the two production failures are reproduced, but the user's exact native-browser preference is not claimed as confirmed.
+
 - `npm run build`: passed, including TypeScript and static homepage generation.
-- `npx eslint src/app/page.tsx src/components/landing/GuestJourney.tsx`: passed.
+- `npx eslint src/app/page.tsx src/components/landing/GuestJourney.tsx src/components/landing/useJourneyMotion.ts`: passed.
 - `git diff --check`: passed.
-- `node scripts/test-home-ui.cjs`: all eight configurations passed against the production server at `http://127.0.0.1:3115`.
-- Eight configurations: desktop 1440×900, laptop 1366×768, short laptop 1280×600, phone 390×844, compact phone 360×640, tablet 820×1180, landscape 844×390 and desktop reduced motion.
+- `node scripts/test-home-motion-ui.cjs`: passed on Chrome (development) and Edge (production), with both motion preferences.
+- `node scripts/test-home-ui.cjs`: all ten configurations passed against the production server at `http://127.0.0.1:3115`.
+- Ten configurations: desktop 1440×900, laptop 1366×768, short laptop 1280×600, phone 390×844, compact phone 360×640, tablet 820×1180, landscape 844×390 desktop reduced motion, reduced-motion phone and reduced-motion compact phone.
 - Checks cover initial CTA visibility, menu/Escape/focus, all four direct controls, name continuity, QR placement in the printed invitation and in the phone, the scanner confirmation, gallery controls, loaded images, no horizontal overflow, no browser/hydration exceptions, no non-GET writes and no external browser requests. All headless contexts disable native pointer lock/capture.
-- In every motion-enabled viewport, wheel input at timeline fractions 12.5%, 37.5%, 62.5% and 87.5% must reach states 0–3. The entire animated preview must stay within the viewport. This explicitly includes the two laptop windows excluded or constrained before.
-- Axe WCAG A/AA checks: zero violations in all eight configurations. This is an automated check, not full accessibility certification.
+- In every viewport, including reduced motion, wheel input at timeline fractions 12.5%, 37.5%, 62.5% and 87.5% must reach states 0–3. The entire preview must stay within the viewport. This explicitly includes the two laptop windows excluded or constrained before.
+- Axe WCAG A/AA checks: zero violations in all ten configurations. This is an automated check, not full accessibility certification.
 - JavaScript-disabled phone: reading and ordinary links remain available; no form can submit personal input in a URL.
 - Prior runtime checks remain applicable: actual pointer-state screenshots differ; leaving for `/login` destroys the Scrollcraft runtime and returning creates exactly one instance. Runtime mounting and engine source were not changed in this revision.
 
 ## Visual evidence and revisions
 
-Screenshots and reports are outside Git under the session visualization folder. `phone-motion-release/` is the final set for the hand/phone and laptop correction; `phone-motion-review/` and `phone-motion-short/` preserve development findings. `wow-release/` records the previous supplied invitation/scanner revision. `home-release/` records the initial placeholder design.
+Screenshots and reports are outside Git under the session visualization folder. `motion-fix-release/` and `motion-fix-release-edge/` cover the motion-preference/focus correction; `motion-fix-compact/` supersedes the initial short-laptop, compact and landscape results after reserving room for the toolbar. `motion-fix-mobile-reduced/` covers the added reduced-motion phone sizes. `motion-fix-review/` preserves development evidence. `phone-motion-release/` records the previous hand/phone revision; `wow-release/` records the supplied invitation/scanner revision. `home-release/` records the initial placeholder design.
 
 Reviewed the actual printed invitation, its QR slot, invitation inside the phone, the enlarged QR during scan, final phone retreat, and all four wheel-driven sticky states on laptop and phone. Intended and observed overall curve: curiosity → clarity → confidence → possibility → readiness. The workflow adds recognition as the invitation enters the phone, then a scan-and-confirm peak. The same event-desk grammar and fingerprint remain; no extra page-wide scene was added.
 

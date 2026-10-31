@@ -344,7 +344,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <GuestJourney reduceMotion={Boolean(reduceMotion)} />
+      <GuestJourney />
 
       <section
         id="features"

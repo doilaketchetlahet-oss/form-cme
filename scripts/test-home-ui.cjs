@@ -22,6 +22,8 @@ const views = [
   { name: 'tablet', width: 820, height: 1180 },
   { name: 'landscape', width: 844, height: 390 },
   { name: 'reduced', width: 1440, height: 900, reduced: true },
+  { name: 'reduced-phone', width: 390, height: 844, reduced: true },
+  { name: 'reduced-compact', width: 360, height: 640, reduced: true },
 ];
 
 (async () => {
@@ -100,7 +102,7 @@ const views = [
         await page.getByRole('button', { name: 'Thử lại hành trình' }).click();
         assert.equal(await page.getByLabel('Tên khách minh họa').inputValue(), 'Trần Ánh Dương');
 
-        if (!view.reduced) {
+        {
           await page.getByLabel('Tên khách minh họa').blur();
           const bounds = await page.locator('[data-journey-track]').evaluate((el) => { const top = el.getBoundingClientRect().top + scrollY; return { top: top - innerHeight * .15, travel: el.offsetHeight - innerHeight * .85 }; });
           for (const [fraction, expected] of [[.125, '0'], [.375, '1'], [.625, '2'], [.875, '3']]) {

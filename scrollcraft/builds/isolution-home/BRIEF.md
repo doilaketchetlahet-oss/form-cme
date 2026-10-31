@@ -28,6 +28,10 @@ Native sticky now applies to the visual alone, with a viewport-sized scene and a
 
 ## Eight topics
 
+### Follow-up: motion preferences and focused-input freeze (2026-10-31)
+
+User reports the desktop still looks static after the viewport fix. The prior production page reproduces two independent freezes: reduced-motion mode never advances on scroll, and a focused guest-name input blocks all scroll updates. Repair these without changing the visual story: every preference progresses through the four states; reduced motion uses immediate transitions. Add an explicit, persisted per-journey motion control so visitors can opt into full animation even when their device requests reduced motion. Keep OS preferences unchanged. Verification must start from a fresh page, before clicking any stage control, and cover both scroll directions, a still-focused name input, live preference changes and actual intermediate transforms.
+
 1. Vibe: navy and cyan, modern, clear, restrained motion (user selection). Retain the existing I-solution Manager name and QR identity.
 2. Journey: introduction, registration/check-in, interaction tools, start using the product (selected proposal). Existing routes and product capabilities are evidence from the repository.
 3. Energy: composed opening, quiet explanation, one interactive peak, playful gallery, settled close (authored).

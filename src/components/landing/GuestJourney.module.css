@@ -669,7 +669,7 @@
     padding-block: 7px;
   }
   .visualTrack {
-    --scene-height: min(460px, calc(100svh - 220px));
+    --scene-height: min(460px, calc(100svh - 245px));
     min-height: 250svh;
   }
   .visualSticky {
@@ -796,7 +796,7 @@
 }
 @media (max-height: 600px) {
   .visualTrack {
-    --scene-height: max(180px, calc(100svh - 180px));
+    --scene-height: max(180px, calc(100svh - 205px));
   }
   .visualSticky {
     top: 84px;
@@ -858,17 +858,45 @@
     padding-top: 20px;
   }
 }
-@media (prefers-reduced-motion: reduce) {
+.journey[data-motion="reduced"] {
   .visualTrack {
-    min-height: 0;
+    --scene-height: min(455px, calc(100svh - 275px));
   }
-  .visualSticky,
-  .desk {
-    position: static;
-  }
-  .journey *,
-  .journey *::before,
-  .journey *::after {
+  *,
+  *::before,
+  *::after {
     transition-duration: 0.01ms !important;
+  }
+}
+.motionToggle {
+  flex-shrink: 0;
+  color: #c7f4f7;
+  border: 1px solid #5b8796;
+  border-radius: 5px;
+  background: #193e4c;
+  padding: 6px 9px;
+  font-size: 10px !important;
+  min-height: 32px;
+}
+.motionNotice {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #c3d8e1;
+  padding: 10px 16px;
+  border-bottom: 1px solid #345262;
+}
+@media (max-width: 699px) {
+  .toolbar {
+    gap: 8px;
+  }
+  .toolbar > span:first-child {
+    font-size: 7px;
+  }
+  .motionToggle {
+    font-size: 9px !important;
+    padding-inline: 7px;
+  }
+  .journey[data-motion="reduced"] .visualTrack {
+    --scene-height: min(410px, calc(100svh - 310px));
   }
 }
