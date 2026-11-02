@@ -233,6 +233,23 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   initial loading never triggers a write. Autosave omits `pdf_attach_email` so
   the email attachment toggle still requires an explicit save. Other page layouts
   remain intact. No SQL migration is required.
+- **Lưu / nạp bố cục dùng lại** in the shared overlay editor saves a named
+  invitation copy through the existing authenticated `/api/admin/email-templates`
+  API and `email_templates` table. It appears in Kho template and can be loaded
+  in another form/email/campaign, independently of saving the current letter.
+  **Chỉ lấy vị trí** keeps the current assets and copies field coordinates/style
+  (font size scales with preview width); PDF layouts map by page number, clearing
+  old fields across those pages and rejecting targets with insufficient pages.
+  Image/single-page layouts apply to the current page. **Mở cả mẫu thiệp** copies
+  the saved background/original PDF and all page layouts into the editor, including
+  an empty editor. Replacing populated fields requires confirmation. Saved sources
+  are never edited, and loaded fields get new IDs. Mail merge also lists cards from
+  its existing owner-scoped campaign list; loading a card copies no recipients,
+  sender credentials or delivery state. Unknown field tokens are flagged; change
+  **Trường dữ liệu** on an individual box to remap without dragging it again.
+  No new table/migration. Regression: `node --test scripts/test-overlay-layouts.cjs`,
+  plus invitation/mail-merge UI suites for named save/reload, cancel/apply, saved
+  campaign reuse, independent empty-editor loading and mobile.
 - Upload/switch failures retain the current template. Saving/exporting is disabled
   while preview generation is in progress. Missing/corrupt originals fail export
   and email rather than silently sending a one-page or missing attachment.

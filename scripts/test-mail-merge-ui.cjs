@@ -96,6 +96,14 @@ let browser;
   const cardUrl = `https://${host}/storage/v1/object/public/survey-uploads/layout-fixture.png`;
   const cardPng = await require('sharp')({ create: { width: 800, height: 1000, channels: 3, background: 'white' } }).png().toBuffer();
   await context.route(cardUrl, route => route.fulfill({ body: cardPng, contentType: 'image/png' }));
+  const layouts = new Map();
+  await context.route('**/api/admin/email-templates', async route => {
+    if (route.request().method() === 'POST') {
+      const payload = route.request().postDataJSON(), id = randomUUID();
+      layouts.set(id, { id, ...payload }); return route.fulfill({ json: { ok: true, id } });
+    }
+    return route.fulfill({ json: { ok: true, templates: [...layouts.values()] } });
+  });
   const page = await context.newPage(), errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(base + '/admin/tools/mail-merge');
@@ -207,6 +215,20 @@ let browser;
   assert.equal(saved.template.card.fields[0].fontSize, 44);
   assert.equal(saved.template.card.fields[0].x, 16);
   assert.equal(outgoingCampaign, 0, 'saving a layout never starts sending');
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
+  await page.getByLabel('Tên bố cục', { exact: true }).fill('Bố cục thư theo trường');
+  await page.getByRole('button', { name: 'Lưu bố cục mới', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Đã lưu bố cục “Bố cục thư theo trường”' }).waitFor();
+  assert.equal(layouts.size, 1);
+  await page.getByLabel('Cỡ chữ', { exact: true }).fill('49');
+  await page.getByLabel('Bố cục hoặc thư đã lưu', { exact: true }).selectOption(`letter:${saved.id}`);
+  await page.getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  assert.equal(await page.getByLabel('Cỡ chữ', { exact: true }).inputValue(), '44');
+  await page.getByRole('button', { name: 'Lưu vị trí', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Đã lưu vị trí cùng chiến dịch' }).waitFor();
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
+
 
   assert.equal(await page.getByLabel('Kênh gửi thư', { exact: true }).inputValue(), 'smtp');
   assert.equal(await page.getByLabel('CC mail (tùy chọn)', { exact: true }).inputValue(), 'kiemduyet@example.test, quanly@example.test');
@@ -371,6 +393,22 @@ let browser;
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   await page.getByRole('button', { name: 'Hủy', exact: true }).click();
   assert.equal(await body.inputValue(), beforeCancel);
+  // Open an independent saved invitation into a new empty campaign, without importing its recipients or sender.
+  await page.getByRole('button', { name: 'Chiến dịch mới', exact: true }).click();
+  await page.getByText('Thiệp cá nhân hóa đính kèm', { exact: true }).click();
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
+  const savedLayout = [...layouts.values()][0];
+  await page.getByLabel('Bố cục hoặc thư đã lưu', { exact: true }).selectOption(`layout:${savedLayout.id}`);
+  await page.getByLabel('Cách nạp bố cục', { exact: true }).selectOption('full');
+  await page.getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  assert.equal(await page.getByLabel('Cỡ chữ', { exact: true }).inputValue(), '44');
+  assert.equal(await page.getByLabel('Kênh gửi thư', { exact: true }).inputValue(), 'resend');
+  assert.equal(await page.getByRole('button', { name: 'Gửi / tiếp tục', exact: true }).isDisabled(), true);
+  const libraryField = page.getByLabel('Trường dữ liệu của ô đã chọn', { exact: true });
+  assert.equal(await libraryField.inputValue(), '{{ho_ten}}');
+  await libraryField.selectOption('{{name}}');
+  await page.screenshot({ path: path.join(shots, 'reusable-layout-mobile.png'), fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: XLSX import/replacement, revisions/tracking, duplicate Email modes, recipient editing, bold/hyperlink insert/edit/remove/validation/preview/reload/locking/mobile, save-before-send, legacy SMTP and Resend accounts (all sending mocked).');
+  console.log('PASS: XLSX import/replacement, revisions/tracking, duplicate Email modes, recipient editing, bold/hyperlink insert/edit/remove/validation/preview/reload/locking/mobile, reusable layout library/save/load/open from saved letter, save-before-send, legacy SMTP and Resend accounts (all sending mocked).');
 })().catch((error) => { console.error(error); process.exitCode=1; }).finally(async () => { await browser?.close(); });

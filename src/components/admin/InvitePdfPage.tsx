@@ -314,6 +314,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
               onSaveLayout={handleSave}
               layoutSaving={saving || autoSaving}
               layoutSaveDisabled={exporting || rasterizing}
+              libraryDisabled={exporting || rasterizing || saving}
               layoutStatus={saveError ? `Chưa lưu được: ${saveError} Bấm Lưu vị trí để thử lại.` : saving || autoSaving ? "Đang lưu vị trí…" : layoutDirty ? "Có thay đổi · Tự động lưu sau khi chỉnh sửa." : "Đã lưu vị trí · Mở lại sẽ giữ bố cục trên từng trang."}
               layoutError={!!saveError}
               onBodyChange={(next) => changeOverlay(parseEmailTemplate(next).overlay ?? null)}

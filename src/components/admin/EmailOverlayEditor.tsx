@@ -14,6 +14,9 @@ import {
 } from "@/lib/email-template";
 import { DEFAULT_OVERLAY_FONT, OVERLAY_FONTS, resolveOverlayFont } from "@/lib/overlay-fonts";
 import { ensureAllCustomFonts, fetchCustomFonts, type ClientCustomFont } from "@/lib/custom-fonts-client";
+import { OverlayLayoutLibrary } from "./OverlayLayoutLibrary";
+import type { SavedOverlayLayout } from "@/lib/overlay-layouts";
+import { getInvitePdfPages } from "@/lib/invite-pdf";
 
 type Props = {
   body: string;
@@ -26,13 +29,15 @@ type Props = {
   layoutSaveDisabled?: boolean;
   layoutStatus?: string;
   layoutError?: boolean;
+  savedLetters?: SavedOverlayLayout[];
+  libraryDisabled?: boolean;
 };
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
 }
 
-export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange, hideImageUpload = false, onSaveLayout, layoutSaving = false, layoutSaveDisabled = false, layoutStatus, layoutError = false }: Props) {
+export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange, hideImageUpload = false, onSaveLayout, layoutSaving = false, layoutSaveDisabled = false, layoutStatus, layoutError = false, savedLetters, libraryDisabled = false }: Props) {
   const parsed = useMemo(() => parseEmailTemplate(body), []);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(() => parsed.overlay ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(parsed.overlay?.fields[0]?.id ?? null);
@@ -196,10 +201,14 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange,
 
   const selected = overlay?.fields.find((field) => field.id === selectedId) ?? null;
   const customFontId = selected?.fontFamily?.startsWith("custom:") ? selected.fontFamily.slice(7) : "";
+  const unknownTokens = overlay ? [...new Set(Object.values(getInvitePdfPages(overlay)).flatMap(page => page.fields)
+    .filter(field => field.kind !== "qr" && !["{{qr_image}}", "{{qr_url}}"].includes(field.token) && !mergeFields.some(option => option.token === field.token)).map(field => field.token))] : [];
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start">
       <div className="space-y-3">
+        <OverlayLayoutLibrary overlay={overlay} title={surveyTitle} savedLetters={savedLetters} disabled={uploading || layoutSaving || libraryDisabled} onApply={next => { commit(next); setSelectedId(next.fields[0]?.id ?? null); }} />
+        {!!unknownTokens.length && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Bố cục có trường chưa khớp dữ liệu hiện tại: {unknownTokens.join(", ")}. Chọn ô tương ứng rồi đổi Trường dữ liệu, giữ nguyên vị trí.</p>}
         {onSaveLayout && overlay?.imageUrl && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
           <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-800">Vị trí các trường</p><p role={layoutError ? "alert" : "status"} aria-live="polite" className={`mt-1 text-sm ${layoutError ? "text-red-700" : "text-slate-600"}`}>{layoutStatus}</p></div>
           <button type="button" onClick={onSaveLayout} disabled={uploading || layoutSaving || layoutSaveDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:opacity-50">
@@ -302,7 +311,7 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange,
         {selected && overlay && (
           <div className="rounded-2xl border border-sky-100 bg-white p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">{selected.token}</div>
+              <div className="break-all text-sm font-semibold text-slate-800">{selected.token}</div>
               <button
                 type="button"
                 onClick={() => commit({ ...overlay, fields: overlay.fields.filter((field) => field.id !== selected.id) })}
@@ -313,6 +322,12 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange,
             </div>
             {selected.kind === "text" && (
               <>
+                <label className="block text-sm text-slate-600">Trường dữ liệu
+                  <select aria-label="Trường dữ liệu của ô đã chọn" value={selected.token} onChange={event => updateField(selected.id, { token: event.target.value })} className="admin-field mt-1 min-h-11 w-full rounded-xl px-3 py-2 text-sm">
+                    {!mergeFields.some(field => field.token === selected.token) && <option value={selected.token}>{selected.token} (chưa khớp)</option>}
+                    {mergeFields.map(field => <option key={field.token} value={field.token}>{field.label}</option>)}
+                  </select>
+                </label>
                 <label className="block text-[11px] text-slate-500">
                   Font chữ
                   <select

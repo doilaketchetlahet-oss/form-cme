@@ -67,6 +67,16 @@ let failRecipients = false;
     return route.fulfill({ json: data });
   });
   await context.route('**/api/admin/fonts**', route => route.fulfill({ json: { ok: true, fonts: [] } }));
+  const reusableLayouts = new Map();
+  await context.route('**/api/admin/email-templates', async route => {
+    if (route.request().method() === 'POST') {
+      const payload = route.request().postDataJSON(), id = randomUUID();
+      reusableLayouts.set(id, { id, ...payload });
+      return route.fulfill({ json: { ok: true, id } });
+    }
+    return route.fulfill({ json: { ok: true, templates: [...reusableLayouts.values()] } });
+  });
+
   await context.route(`**/api/admin/forms/${surveyId}/pdf`, async route => {
     const payload = route.request().postDataJSON(); saveRequests.push(payload);
     if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay));
@@ -140,6 +150,32 @@ let failRecipients = false;
   await page.getByRole('button', { name: 'Lưu vị trí', exact: true }).click();
   await layoutSaved(); assert.equal(saved.fields[0].fontSize, 48);
   await page.getByText('Đã lưu mẫu PDF thư mời.', { exact: true }).waitFor();
+  // Reusable layouts survive reload independently of the current form's layout.
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
+  await page.getByLabel('Tên bố cục', { exact: true }).fill('QR trang 1, tên trang 2');
+  await page.getByRole('button', { name: 'Lưu bố cục mới', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Đã lưu bố cục “QR trang 1, tên trang 2”' }).waitFor();
+  assert.equal(reusableLayouts.size, 1);
+  const libraryEntry = [...reusableLayouts.values()][0];
+  const librarySnapshot = JSON.parse(libraryEntry.body).overlay;
+  await page.getByLabel('Cỡ chữ', { exact: true }).fill('60'); await layoutSaved();
+  await page.reload(); await select.waitFor();
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
+  const librarySelect = page.getByLabel('Bố cục hoặc thư đã lưu', { exact: true });
+  await librarySelect.selectOption(`layout:${libraryEntry.id}`);
+  await page.getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Hủy', exact: true }).click();
+  assert.equal(await page.getByLabel('Cỡ chữ', { exact: true }).inputValue(), '60', 'cancel preserves current layout');
+  const backgroundBeforeApply = saved.pdf.url;
+  await page.getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Nạp bố cục', exact: true }).click();
+  await layoutSaved();
+  assert.equal(saved.pdf.url, backgroundBeforeApply, 'position-only reuse preserves current original');
+  assert.equal(saved.fields[0].fontSize, 48);
+  for (const key of ['x','y','w','h','fontFamily','fontSize']) assert.equal(saved.fields[0][key], librarySnapshot.fields[0][key]);
+  assert.equal(saved.pdf.pages['1'].fields[0].kind, 'qr');
+  assert.deepEqual(JSON.parse(libraryEntry.body).overlay, librarySnapshot, 'source remains immutable');
+  await page.getByText('Lưu / nạp bố cục dùng lại', { exact: true }).click();
   await page.screenshot({ path: path.join(shots, 'desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 375, height: 812 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -293,5 +329,5 @@ let failRecipients = false;
   await page.getByRole('alert').filter({ hasText: 'Không tải đủ danh sách người nhận' }).waitFor();
   assert.equal(await page.getByRole('region', { name: 'Chọn người nhận để xuất PDF' }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log(`PASS: original upload, select page, fields, autosave drag/resize/font with queued edits and retry, save/reload, ZIP all pages, selectable Vietnamese vector text, 400% render, vector QR decode, unchanged rendered pages, rotated/cropped placement, mobile, individual/group/selected exports, choices and import batches, empty scope, paged reads, failed switch preserves state. Screenshots: ${shots}`);
+  console.log(`PASS: original upload, select page, fields, autosave drag/resize/font with queued edits and retry, named layout save/reload/apply/cancel, save/reload, ZIP all pages, selectable Vietnamese vector text, 400% render, vector QR decode, unchanged rendered pages, rotated/cropped placement, mobile, individual/group/selected exports, choices and import batches, empty scope, paged reads, failed switch preserves state. Screenshots: ${shots}`);
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => browser?.close());
