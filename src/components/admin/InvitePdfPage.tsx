@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, FileText, Loader2, Lock, Save } from "lucide-react";
 import { toast } from "sonner";
@@ -45,10 +45,25 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   const [editorKey, setEditorKey] = useState(0);
   const [attachToEmail, setAttachToEmail] = useState(false);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(null);
+  const [savedOverlay, setSavedOverlay] = useState<string | null>(null);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const saveLock = useRef(false);
+  const currentFormId = useRef<string | null>(formId);
+  const overlayJson = JSON.stringify(overlay);
+  const layoutDirty = savedOverlay !== null && savedOverlay !== overlayJson;
+  const changeOverlay = (next: EmailOverlay | null) => { setOverlay(next); setSaveError(""); };
+
+  useEffect(() => {
+    currentFormId.current = formId;
+    return () => { currentFormId.current = null; };
+  }, [formId]);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
+      setSavedOverlay(null);
+      setSaveError("");
       setLoadError("");
       setResponses([]);
       const next = await getRegistrationForm(formId);
@@ -70,10 +85,41 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       }
       const template = (next as { pdf_template?: EmailOverlay | null } | null)?.pdf_template ?? null;
       setOverlay(template);
+      setSavedOverlay(JSON.stringify(template));
       setAttachToEmail(!!(next as { pdf_attach_email?: boolean } | null)?.pdf_attach_email);
       setLoading(false);
     })();
   }, [formId]);
+
+  // Serialize writes: moving another field during a save queues the newest
+  // layout afterwards, so an older response can never mark new edits as saved.
+  useEffect(() => {
+    if (loading || !canManageForms || !layoutDirty || !overlay || rasterizing || saving || autoSaving || saveError) return;
+    const timer = window.setTimeout(async () => {
+      if (saveLock.current) return;
+      saveLock.current = true;
+      setAutoSaving(true);
+      try {
+        await savePdfTemplate(formId, JSON.parse(overlayJson));
+        if (currentFormId.current === formId) setSavedOverlay(overlayJson);
+      } catch (error) {
+        if (currentFormId.current === formId) setSaveError(error instanceof Error ? error.message : "Không lưu được vị trí.");
+      } finally {
+        saveLock.current = false;
+        // Edits can change while this request is in flight. Always unlock;
+        // the next effect will save the latest snapshot.
+        setAutoSaving(false);
+      }
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [formId, loading, canManageForms, layoutDirty, overlay, overlayJson, rasterizing, saving, autoSaving, saveError]);
+
+  useEffect(() => {
+    if (!layoutDirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [layoutDirty]);
 
   const questionPayload: EmailMergeQuestion[] = useMemo(
     () => (form?.questions ?? []).map((q) => ({ id: q.id, text: q.text, type: q.type, options: q.options })),
@@ -91,21 +137,20 @@ export function InvitePdfPage({ formId }: { formId: string }) {
   });
 
   const handleSave = async () => {
-    if (!canManageForms || saving || rasterizing || exporting) return;
+    if (!canManageForms || saveLock.current || saving || rasterizing || exporting) return;
+    saveLock.current = true;
     setSaving(true);
+    setSaveError("");
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) { toast.error("Phiên đăng nhập đã hết hạn."); return; }
-      const response = await fetch(`/api/admin/forms/${formId}/pdf`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_template: overlay, pdf_attach_email: attachToEmail }),
-      });
-      const result = await response.json().catch(() => null);
-      if (!response.ok || !result?.ok) { toast.error(result?.error ?? "Lưu thất bại."); return; }
+      await savePdfTemplate(formId, overlay, attachToEmail);
+      setSavedOverlay(overlayJson);
       toast.success("Đã lưu mẫu PDF thư mời.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Lưu thất bại.";
+      setSaveError(message);
+      toast.error(message);
     } finally {
+      saveLock.current = false;
       setSaving(false);
     }
   };
@@ -222,7 +267,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || exporting || rasterizing}
+              disabled={saving || autoSaving || exporting || rasterizing}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-on-brand hover:bg-sky-400 disabled:opacity-50"
             >
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Lưu mẫu
@@ -244,7 +289,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
         {loadError ? <div role="alert" className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{loadError}<button type="button" onClick={() => window.location.reload()} className="ml-3 min-h-11 underline">Tải lại trang</button></div> : <InvitePdfRecipients key={formId} responses={responses} questions={form.questions} busy={exporting || saving || rasterizing} ready={!!overlay?.imageUrl} onExport={exportPdfs} />}
         <div className="rounded-2xl border border-sky-100 bg-white p-4 sm:p-6">
           <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
-            Tải <strong>file PDF gốc</strong>, lần lượt chọn từng trang để đặt <strong>tên / QR riêng</strong>, rồi lưu mẫu. Xuất ZIP và gửi email đều cá nhân hóa tất cả các trang đã thiết kế. Mẫu ảnh cũ vẫn xuất thành PDF một trang.
+            Tải <strong>file PDF gốc</strong>, lần lượt chọn từng trang để đặt <strong>tên / QR riêng</strong>. Vị trí được tự động lưu; chờ trạng thái <strong>Đã lưu vị trí</strong> trước khi rời trang. Xuất ZIP và gửi email đều cá nhân hóa tất cả các trang đã thiết kế. Mẫu ảnh cũ vẫn xuất thành PDF một trang.
           </div>
           <label className="mb-4 flex cursor-pointer items-start gap-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2.5 text-sm text-slate-700">
             <input
@@ -258,7 +303,7 @@ export function InvitePdfPage({ formId }: { formId: string }) {
               <span className="mt-0.5 block text-xs text-slate-500">Mỗi người nhận email sẽ có file PDF (nền + tên + QR) riêng của họ đính kèm.</span>
             </span>
           </label>
-          <InvitePdfSource overlay={overlay} disabled={saving || exporting} onBusy={setRasterizing} onChange={next => { setOverlay(next); setEditorKey(key => key + 1); }} />
+          <InvitePdfSource overlay={overlay} disabled={saving || exporting} onBusy={setRasterizing} onChange={next => { changeOverlay(next); setEditorKey(key => key + 1); }} />
           <fieldset disabled={rasterizing || saving || exporting} className={rasterizing || saving || exporting ? "pointer-events-none opacity-60" : ""}>
             <EmailOverlayEditor
               key={editorKey}
@@ -266,7 +311,12 @@ export function InvitePdfPage({ formId }: { formId: string }) {
               surveyTitle={form.title}
               questions={questionPayload}
               hideImageUpload={!!overlay?.pdf}
-              onBodyChange={(next) => setOverlay(parseEmailTemplate(next).overlay ?? null)}
+              onSaveLayout={handleSave}
+              layoutSaving={saving || autoSaving}
+              layoutSaveDisabled={exporting || rasterizing}
+              layoutStatus={saveError ? `Chưa lưu được: ${saveError} Bấm Lưu vị trí để thử lại.` : saving || autoSaving ? "Đang lưu vị trí…" : layoutDirty ? "Có thay đổi · Tự động lưu sau khi chỉnh sửa." : "Đã lưu vị trí · Mở lại sẽ giữ bố cục trên từng trang."}
+              layoutError={!!saveError}
+              onBodyChange={(next) => changeOverlay(parseEmailTemplate(next).overlay ?? null)}
             />
           </fieldset>
           <p className="mt-4 flex items-center gap-1.5 text-xs text-slate-400">
@@ -277,4 +327,17 @@ export function InvitePdfPage({ formId }: { formId: string }) {
       )}
     </div>
   );
+}
+
+async function savePdfTemplate(formId: string, overlay: EmailOverlay | null, attachToEmail?: boolean) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Phiên đăng nhập đã hết hạn.");
+  const response = await fetch(`/api/admin/forms/${formId}/pdf`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ pdf_template: overlay, ...(attachToEmail === undefined ? {} : { pdf_attach_email: attachToEmail }) }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.ok) throw new Error(result?.error ?? "Lưu thất bại.");
 }

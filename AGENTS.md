@@ -211,7 +211,7 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - `/admin/forms/[id]/pdf` preserves the uploaded original PDF (up to 10MB / 100
   pages) in `survey-uploads`. **Trang đang chỉnh sửa** selects an independent
   page layout (e.g. QR on page 1, name on page 2); each option shows its field
-  count. Switching pages preserves all layouts; save after editing. ZIP export
+  count. Switching pages preserves all layouts. ZIP export
   and email stamp every configured page in one PDF, preserving untouched pages,
   page sizes, rotations and original content. Limits: 40 fields/page, 400 total.
 - `EmailOverlay.pdf` stores `{url, name, page, pageCount, pages?}` in existing JSON.
@@ -224,6 +224,15 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   No SQL migration is needed. Old image-only templates still export one page;
   re-upload the original PDF to recover pages never stored by the old uploader.
   PDF upload uses the document MIME policy in `supabase/email-attachments.sql`.
+- Field positions, box sizes and font settings autosave to the form's existing
+  `pdf_template` JSON one second after edits stop. **Lưu vị trí** beside the
+  canvas also saves immediately through the existing authenticated save API.
+  Visible pending/saving/saved/error states distinguish persistence; failed saves
+  retain the layout for retry, and unload warns while a layout is unsaved.
+  Autosave writes are serialized, queuing edits made during an in-flight save;
+  initial loading never triggers a write. Autosave omits `pdf_attach_email` so
+  the email attachment toggle still requires an explicit save. Other page layouts
+  remain intact. No SQL migration is required.
 - Upload/switch failures retain the current template. Saving/exporting is disabled
   while preview generation is in progress. Missing/corrupt originals fail export
   and email rather than silently sending a one-page or missing attachment.
@@ -253,7 +262,8 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   are mocked; real PDF render checks compare untouched pages and rotated/cropped
   placement, selectable Vietnamese text, 400% rendering and vector QR decoding
   at all four page rotations, individual/group/selected ZIP contents, search,
-  pagination and failed recipient reads. No real email or storage writes.
+  pagination, failed recipient reads, drag/resize/font autosave, queued edits and
+  save-error retry. No real email or storage writes.
 
 ## Standalone Resend / SMTP mail merge
 
@@ -307,6 +317,10 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   and can attach a personalized invitation card rendered from the existing
   overlay editor as a JPG, PDF, or both. Each row is rendered server-side before
   its delivery request; both providers accept only server-prepared buffers.
+  The card editor's **Lưu vị trí** reuses **Lưu chiến dịch** to persist the layout
+  alongside the current list/template/sender; it never starts sending. The button
+  respects existing draft, row and sender validation, and saved campaigns reopen
+  with the same fields. Campaign cards keep explicit saving rather than autosave.
 - `survey-uploads` accepts images, PDF, Word, Excel and PowerPoint attachments.
   Existing installations run `supabase/email-attachments.sql` to add document
   MIME types while preserving current limits, custom types and storage policies.

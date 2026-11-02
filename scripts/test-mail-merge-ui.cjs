@@ -93,6 +93,9 @@ let browser;
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
   });
+  const cardUrl = `https://${host}/storage/v1/object/public/survey-uploads/layout-fixture.png`;
+  const cardPng = await require('sharp')({ create: { width: 800, height: 1000, channels: 3, background: 'white' } }).png().toBuffer();
+  await context.route(cardUrl, route => route.fulfill({ body: cardPng, contentType: 'image/png' }));
   const page = await context.newPage(), errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(base + '/admin/tools/mail-merge');
@@ -186,6 +189,8 @@ let browser;
   await page.getByRole('button', { name: 'Lưu chiến dịch', exact: true }).click();
   await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some((button) => button.textContent.trim() === 'Gửi / tiếp tục' && !button.disabled));
   assert.equal(saved.template.duplicateEmailPolicy, 'allow');
+  saved.template.card = { imageUrl: cardUrl, width: 800, height: 1000, fields: [{ id: 'name-layout', token: '{{ho_ten}}', kind: 'text', x: 16, y: 24, w: 52, h: 9, fontSize: 36 }] };
+
   assert.deepEqual(saved.recipients.map((row) => row.status), ['pending', 'pending', 'pending', 'skipped']);
   assert.equal(saved.recipients[0].email, saved.recipients[2].email);
   assert.notEqual(saved.recipients[0].fields.bai_bao_cao, saved.recipients[2].fields.bai_bao_cao);
@@ -193,6 +198,16 @@ let browser;
   await page.getByLabel('Chiến dịch đã lưu', { exact: true }).selectOption(saved.id);
   await page.getByText('Chờ gửi: 3', { exact: true }).waitFor();
   assert.equal(await duplicatePolicy.inputValue(), 'allow');
+  const cardEditor = page.getByText('Vị trí các trường', { exact: true });
+  await page.getByText('Thiệp cá nhân hóa đính kèm', { exact: true }).click();
+  await cardEditor.waitFor();
+  await page.getByLabel('Cỡ chữ', { exact: true }).fill('44');
+  await page.getByRole('button', { name: 'Lưu vị trí', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Đã lưu vị trí cùng chiến dịch' }).waitFor();
+  assert.equal(saved.template.card.fields[0].fontSize, 44);
+  assert.equal(saved.template.card.fields[0].x, 16);
+  assert.equal(outgoingCampaign, 0, 'saving a layout never starts sending');
+
   assert.equal(await page.getByLabel('Kênh gửi thư', { exact: true }).inputValue(), 'smtp');
   assert.equal(await page.getByLabel('CC mail (tùy chọn)', { exact: true }).inputValue(), 'kiemduyet@example.test, quanly@example.test');
   assert.equal(await body.inputValue(), linkBody);

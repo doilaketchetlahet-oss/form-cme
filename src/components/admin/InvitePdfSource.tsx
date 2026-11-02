@@ -86,7 +86,7 @@ export function InvitePdfSource({ overlay, disabled, onBusy, onChange }: Props) 
         </select>
       </label>
       <p className="text-sm text-slate-600">Đang sửa trang {overlay.pdf.page}. Mỗi trang có tên/QR riêng; chuyển trang giữ nguyên các trường đã đặt. Khi xuất hoặc gửi email, tất cả trang được cá nhân hóa trong cùng một PDF đủ {overlay.pdf.pageCount} trang.</p>
-      <p className="text-sm font-medium text-sky-800">{Object.values(pageLayouts).filter(layout => layout.fields.length > 0).length} trang đã đặt trường · Nhấn Lưu mẫu sau khi chỉnh sửa xong.</p>
+      <p className="text-sm font-medium text-sky-800">{Object.values(pageLayouts).filter(layout => layout.fields.length > 0).length} trang đã đặt trường · Theo dõi trạng thái lưu vị trí bên dưới khung chọn trang.</p>
     </> : <p className="text-sm text-slate-600">PDF tối đa 10MB / 100 trang. Mẫu cũ chỉ có ảnh nền: tải lại PDF gốc để giữ đủ các trang.</p>}
     <p role="status" className="text-sm text-sky-800">{busy ? "Đang tải và tạo bản xem trước. Vui lòng chờ trước khi lưu hoặc xuất." : ""}</p>
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}

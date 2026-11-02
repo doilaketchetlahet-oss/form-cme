@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, QrCode, Trash2, Type, Upload } from "lucide-react";
+import { Loader2, QrCode, Save, Trash2, Type, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   listMergeFields,
@@ -21,13 +21,18 @@ type Props = {
   questions: EmailMergeQuestion[];
   onBodyChange: (value: string) => void;
   hideImageUpload?: boolean;
+  onSaveLayout?: () => void;
+  layoutSaving?: boolean;
+  layoutSaveDisabled?: boolean;
+  layoutStatus?: string;
+  layoutError?: boolean;
 };
 
 function tokenKey(token: string) {
   return token.replace(/^\{\{|\}\}$/g, "").trim();
 }
 
-export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange, hideImageUpload = false }: Props) {
+export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange, hideImageUpload = false, onSaveLayout, layoutSaving = false, layoutSaveDisabled = false, layoutStatus, layoutError = false }: Props) {
   const parsed = useMemo(() => parseEmailTemplate(body), []);
   const [overlay, setOverlay] = useState<EmailOverlay | null>(() => parsed.overlay ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(parsed.overlay?.fields[0]?.id ?? null);
@@ -195,6 +200,12 @@ export function EmailOverlayEditor({ body, surveyTitle, questions, onBodyChange,
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-start">
       <div className="space-y-3">
+        {onSaveLayout && overlay?.imageUrl && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-800">Vị trí các trường</p><p role={layoutError ? "alert" : "status"} aria-live="polite" className={`mt-1 text-sm ${layoutError ? "text-red-700" : "text-slate-600"}`}>{layoutStatus}</p></div>
+          <button type="button" onClick={onSaveLayout} disabled={uploading || layoutSaving || layoutSaveDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-800 hover:bg-sky-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 disabled:opacity-50">
+            {layoutSaving ? <Loader2 size={16} aria-hidden="true" className="animate-spin" /> : <Save size={16} aria-hidden="true" />}{layoutSaving ? "Đang lưu vị trí…" : "Lưu vị trí"}
+          </button>
+        </div>}
         {!hideImageUpload && <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
           {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
           {overlay?.imageUrl ? "Đổi ảnh thiệp" : "Tải ảnh thiệp"}
