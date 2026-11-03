@@ -263,7 +263,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     if (derivedHall !== undefined) patch.hall = derivedHall;
     if (emailChanged && newEmail) patch.email = newEmail;
 
-    await supabase.from("survey_responses").update(patch).eq("id", editingId);
+    const { error } = await supabase.from("survey_responses").update(patch).eq("id", editingId);
+    if (error) {
+      toast.error("Chưa lưu được thông tin. Vui lòng thử lại.");
+      return;
+    }
     setResponses((prev) => prev.map((r) => r.id === editingId
       ? { ...r, answers: finalAnswers, ...(derivedHall !== undefined ? { hall: derivedHall } : {}), ...(emailChanged && newEmail ? { email: newEmail } : {}) }
       : r));
@@ -272,13 +276,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     }
     setEditingId(null);
 
-    // Auto re-send the check-in email when the email address changed.
-    if (emailChanged && newEmail) {
-      const merged: SurveyResponse = { ...(original ?? ({} as SurveyResponse)), id: editingId, answers: finalAnswers, email: newEmail };
-      const ok = await sendCheckinFor(merged, newEmail);
-      if (ok) toast.success(`Đã lưu và gửi lại QR đến ${newEmail}.`);
-      else toast.error('Đã lưu email mới nhưng gửi thất bại. Bấm "Gửi lại QR" để thử lại.');
-    }
+    toast.success(emailChanged ? 'Đã lưu email mới, chưa gửi thư. Bấm "Gửi lại QR" khi cần.' : "Đã lưu thông tin.");
   };
 
   const loadCheckinLogs = async (responseId: string) => {

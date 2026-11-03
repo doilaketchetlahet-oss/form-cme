@@ -178,6 +178,14 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Regression: `node scripts/test-attendees-display-ui.cjs` (port 3107, same
   Playwright setup as attendance tests; mocked data, no writes or email).
 
+- Adding a guest or adding/changing their email in the attendee list only saves
+  registration data; it never automatically sends a QR email. Operators send
+  explicitly with **Gửi lại QR** or the existing bulk actions. Save failures keep
+  the edit open for retry. Public registration confirmation remains unchanged.
+  Regression: `node scripts/test-attendees-display-ui.cjs` also checks add/change,
+  save/reload without sending, failed saves and an explicit send to the new email;
+  every database write and email request is mocked.
+
 - Editor sortable question cards must remain direct children of the question
   list: `restrictToParentElement` otherwise locks dragging inside a card wrapper.
   CME scroll/focus uses the same sortable root. Regression: start on port 3109,

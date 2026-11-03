@@ -31,17 +31,43 @@ let browser;
 
 async function run(viewport) {
   let withHall = false;
-  const errors = [], writes = [];
+  let allowWrites = false, failNextSave = false;
+  const errors = [], writes = [], emails = [];
+  const savedRecords = structuredClone(records);
   const context = await browser.newContext({ viewport });
   try {
     await context.route('**/*', async (route) => {
       const request = route.request(), url = new URL(request.url());
+      if (url.origin === new URL(base).origin && url.pathname === '/api/send-checkin-email') {
+        emails.push(request.postDataJSON());
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+      }
       if (url.host === host) {
-        if (request.method() !== 'GET') { writes.push(request.method()); return route.abort(); }
+        if (request.method() !== 'GET') {
+          writes.push(request.method());
+          if (!allowWrites || !url.pathname.endsWith('/survey_responses')) return route.abort();
+          if (failNextSave) {
+            failNextSave = false;
+            return route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"Mock save failure"}' });
+          }
+          const patch = request.postDataJSON();
+          if (request.method() === 'PATCH') {
+            const row = savedRecords.find((r) => `eq.${r.id}` === url.searchParams.get('id'));
+            assert.ok(row);
+            Object.assign(row, patch);
+            return route.fulfill({ status: 204 });
+          }
+          if (request.method() === 'POST') {
+            const row = { ...patch, id: randomUUID(), submitted_at: new Date().toISOString(), checked_in: false };
+            savedRecords.unshift(row);
+            return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(row) });
+          }
+          return route.abort();
+        }
         let body = [];
         if (url.pathname.endsWith('/surveys')) body = { id: surveyId, title: 'Attendee display test', checkin_pin: '', checkin_theme: {} };
         if (url.pathname.endsWith('/survey_questions')) body = withHall ? [...fields, { id: 'hall', text: 'Phân hội trường', type: 'choice', options: ['A', 'B'], is_hall_selector: true, position: fields.length }] : fields;
-        if (url.pathname.endsWith('/survey_responses')) body = records;
+        if (url.pathname.endsWith('/survey_responses')) body = savedRecords;
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
       }
       if (url.origin === new URL(base).origin && !url.pathname.startsWith('/api/')) return route.continue();
@@ -86,8 +112,49 @@ async function run(viewport) {
     await detail.getByText('Hội trường:', { exact: true }).waitFor();
     assert.deepEqual((await detail.locator('label').allTextContents()).slice(0, 4), expectedLabels.slice(0, 4));
     assert.deepEqual(writes, []);
+    allowWrites = true;
+    const field = (container, label) => container.locator('label').filter({ hasText: new RegExp(`^${label}$`) }).locator('..').locator('input');
+    // Adding an email to an existing guest and replacing it must only save data.
+    for (const email of ['added@example.test', 'corrected@example.test']) {
+      await detail.getByRole('button', { name: 'Sửa', exact: true }).click();
+      await field(detail, 'Email').fill(email);
+      await detail.getByRole('button', { name: 'Lưu', exact: true }).click();
+      await detail.getByRole('button', { name: 'Sửa', exact: true }).waitFor();
+      await page.getByText('Đã lưu email mới, chưa gửi thư. Bấm "Gửi lại QR" khi cần.', { exact: true }).first().waitFor();
+      assert.equal(savedRecords.find((r) => r.id === records[0].id).email, email);
+      assert.deepEqual(emails, [], 'Saving an added/changed email must never send QR');
+    }
+    await page.reload();
+    await page.getByRole('checkbox').nth(records.length - 1).waitFor();
+    await rows().first().locator('p').first().click();
+    await detail.getByText('corrected@example.test', { exact: true }).waitFor();
+    assert.deepEqual(emails, [], 'Reloading a saved email must not send mail');
+
+    failNextSave = true;
+    await detail.getByRole('button', { name: 'Sửa', exact: true }).click();
+    await field(detail, 'Email').fill('not-saved@example.test');
+    await detail.getByRole('button', { name: 'Lưu', exact: true }).click();
+    await page.getByText('Chưa lưu được thông tin. Vui lòng thử lại.', { exact: true }).waitFor();
+    assert.equal(await field(detail, 'Email').inputValue(), 'not-saved@example.test', 'Failed save retains edits for retry');
+    assert.equal(savedRecords.find((r) => r.id === records[0].id).email, 'corrected@example.test');
+    assert.deepEqual(emails, []);
+    await detail.getByRole('button', { name: 'Huỷ', exact: true }).click();
+    await detail.getByRole('button', { name: 'Gửi lại QR', exact: true }).click();
+    await page.getByText('Đã gửi lại QR đến corrected@example.test', { exact: true }).waitFor();
+    assert.deepEqual(emails, [{ responseId: records[0].id, to: 'corrected@example.test' }], 'Explicit send uses the saved new email');
+    await page.keyboard.press('Escape');
+    await detail.waitFor({ state: 'hidden' });
+
+    await page.getByRole('button', { name: 'Thêm', exact: true }).click();
+    const addForm = page.getByRole('heading', { name: 'Thêm người mới' }).locator('../..');
+    await field(addForm, 'Họ và tên').fill('Khách mới');
+    await field(addForm, 'Email').fill('new-guest@example.test');
+    await addForm.getByRole('button', { name: 'Thêm vào danh sách' }).click();
+    await page.getByRole('heading', { name: 'Thêm người mới' }).waitFor({ state: 'hidden' });
+    assert.equal(savedRecords[0].answers.email, 'new-guest@example.test');
+    assert.equal(emails.length, 1, 'Adding a guest with an email must not send mail');
     assert.deepEqual(errors, []);
-    console.log(`${viewport.width}px: attendee names, contact fallbacks, identity order, sorting and conditional halls passed without writes.`);
+    console.log(`${viewport.width}px: display, add/edit/reload without email, failed-save preservation and explicit QR send passed (all writes/mail mocked).`);
   } finally { await context.close(); }
 }
 
