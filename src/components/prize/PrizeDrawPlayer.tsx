@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight, Check, Gift, Sparkles } from "lucide-react";
 import { PrizeWheel, nextWheelRotation } from "@/components/ui/PrizeWheel";
-import { prizeAvailability, prizeTextColor, type PrizeSnapshot } from "@/lib/prize-draw";
+import { isPrizeQuiz, prizeAvailability, prizeTextColor, type PrizeSnapshot } from "@/lib/prize-draw";
 import { PrizeImage } from "./PrizeImage";
 import styles from "./prize-studio.module.css";
 
@@ -74,9 +74,10 @@ export function PrizeDrawPlayer({ id }: { id: string }) {
         <p className="mt-5 text-xs leading-5 text-slate-500">Kết quả đã được lưu. Tải lại trang không tạo lượt mới.</p>
       </section> : <div className="grid items-start gap-6 lg:grid-cols-[1.1fr_.9fr]">
         <section className={`${styles.card} space-y-6 p-5 pt-8 text-center sm:p-8`}>
-          <PrizeWheel items={items} rotation={rotation} center={busy ? "ĐANG QUAY" : "NHẬN QUÀ"} spinning={busy} />
+          {/* Sold-out gifts stay on the wheel greyed out; the server never lands on them. */}
+          <PrizeWheel items={items.map(p => p.remaining > 0 ? p : { ...p, color: "#94a3b8", name: `${p.name} · Hết` })} rotation={rotation} center={busy ? "ĐANG QUAY" : "NHẬN QUÀ"} spinning={busy} />
           {unavailable && <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900"><p role="status">{unavailable}</p><button className={`${styles.secondary} mt-3`} onClick={() => void load().catch(e => setError(e.message))}>Cập nhật trạng thái</button></div>}
-          {!entry ? <Link href={`/prize-draw/${id}/register`} className={`${styles.primary} w-full`}>Điền form để nhận lượt quay<ArrowRight size={18} aria-hidden="true" /></Link> : <button onClick={() => void spin()} disabled={busy || !!unavailable} className={`${styles.primary} w-full py-4 text-lg`}>{busy ? "Đang quay…" : "Quay nhận quà"}<Sparkles size={20} aria-hidden="true" /></button>}
+          {!entry ? <Link href={`/prize-draw/${id}/register`} className={`${styles.primary} w-full`}>{campaign.form_fields.some(isPrizeQuiz) ? "Trả lời câu hỏi để nhận lượt quay" : "Điền form để nhận lượt quay"}<ArrowRight size={18} aria-hidden="true" /></Link> : <button onClick={() => void spin()} disabled={busy || !!unavailable} className={`${styles.primary} w-full py-4 text-lg`}>{busy ? "Đang quay…" : "Quay nhận quà"}<Sparkles size={20} aria-hidden="true" /></button>}
           <p className="text-xs leading-5 text-slate-500">Mỗi lượt quay thành công có một quà khi còn hàng. Tỷ lệ theo tồn kho; kích thước ô chỉ để hiển thị.</p>
         </section>
         <section><h2 className="mb-4 flex items-center gap-2 text-lg font-bold"><Gift size={20} aria-hidden="true" />Những món quà đang chờ bạn</h2><ul className="grid grid-cols-2 gap-3">{items.map(item => <li key={item.id} className={`${styles.card} overflow-hidden p-3`}><PrizeImage src={item.image_url} name={item.name} /><p className="mt-3 text-sm font-semibold leading-6">{item.name}</p><p className={`mt-1 text-xs ${item.remaining ? "text-emerald-700" : "text-slate-500"}`}>{item.remaining ? "Sẵn sàng trao tặng" : "Hết quà"}</p></li>)}</ul></section>

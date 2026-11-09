@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createBoothServiceClient, checkPublicBoothRateLimit } from "@/lib/server/booth-public-access";
 import { prizeCookie, prizeHash, publicPrizeEntry, prizeError } from "@/lib/server/prize-draw";
-import { UUID_RE, validatePrizeAnswers } from "@/lib/prize-draw";
+import { UUID_RE, prizeQuizMistakes, publicPrizeFields, validatePrizeAnswers, type PrizeField } from "@/lib/prize-draw";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, context: Context) {
   const error = campaign.error || items.error || entry.error;
   if (error) return prizeError(error);
   if (!campaign.data) return fail("Không tìm thấy chương trình.", 404);
-  const response = NextResponse.json({ ok: true, campaign: campaign.data, items: items.data, entry: publicPrizeEntry(entry.data) }, { headers: { "Cache-Control": "private, no-store" } });
+  const response = NextResponse.json({ ok: true, campaign: { ...campaign.data, form_fields: publicPrizeFields(campaign.data.form_fields as PrizeField[]) }, items: items.data, entry: publicPrizeEntry(entry.data) }, { headers: { "Cache-Control": "private, no-store" } });
   if (token !== oldToken) response.cookies.set(prizeCookie(id), token, { httpOnly: true, sameSite: "lax", secure: request.nextUrl.protocol === "https:", path: `/api/prize-draw/${id}`, maxAge: 60 * 60 * 24 * 365 });
   return response;
 }
@@ -55,6 +55,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (!campaign) return fail("Không tìm thấy chương trình.", 404);
     try {
       const validated = validatePrizeAnswers(campaign.form_fields, campaign.phone_question_id, body.answers);
+      const wrong = prizeQuizMistakes(campaign.form_fields as PrizeField[], validated.answers);
+      if (wrong.length) return NextResponse.json({ ok: false, error: wrong.length === 1 ? "Có 1 câu trả lời chưa đúng. Bạn thử lại nhé!" : `Có ${wrong.length} câu trả lời chưa đúng. Bạn thử lại nhé!`, wrong }, { status: 422 });
       result = await service.rpc("prize_draw_register_current", { p_id: id, p_hash: prizeHash(token), p_phone: validated.phone, p_answers: validated.answers, p_revision: campaign.revision });
     } catch (e) { return fail(e instanceof Error ? e.message : "Thông tin không hợp lệ."); }
   }

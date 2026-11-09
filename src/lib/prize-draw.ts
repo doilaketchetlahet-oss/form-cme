@@ -1,7 +1,9 @@
 import { normalizeAnswer, normalizePhone } from "./normalize";
 import type { SurveyQuestion } from "./surveys";
 
-export type PrizeField = Omit<SurveyQuestion, "survey_id"> & { survey_id?: string };
+// `correct` (admin only) turns a choice question into a quiz question: indexes of the right options.
+// Public payloads strip it and expose only `quiz: true`, so answers never reach the browser.
+export type PrizeField = Omit<SurveyQuestion, "survey_id"> & { survey_id?: string; correct?: number[] | null; quiz?: boolean };
 export type PrizeItem = { id: string; name: string; color: string; image_url?: string; total: number; remaining: number; position: number };
 export type PrizeCampaign = {
   id: string; phone_question_id: string; name: string;
@@ -47,8 +49,13 @@ export function validatePrizeFields(raw: unknown, phoneId: string): PrizeField[]
     if (q.type === "choice" && (!q.options?.length || q.options.some((v: string) => !v.trim()))) throw new Error("Câu hỏi lựa chọn cần ít nhất một đáp án.");
     if (q.type === "image_banner" && q.options?.[0] && !validPrizeImage(q.options[0])) throw new Error("Ảnh trong form cần là URL HTTPS.");
     if (q.type === "nps" && q.options?.[2] && (!Number.isInteger(Number(q.options[2])) || Number(q.options[2]) < 1 || Number(q.options[2]) > 10)) throw new Error("Thang điểm cần nằm trong khoảng 1–10.");
+    if (q.correct != null) {
+      if (q.type !== "choice" || !Array.isArray(q.correct) || q.correct.length > 50 || q.correct.some((x: unknown) => !Number.isInteger(x) || (x as number) < 0 || (x as number) >= (q.options?.length ?? 0)) || new Set(q.correct).size !== q.correct.length) throw new Error(`Đáp án đúng không hợp lệ: ${q.text}`);
+      if (q.correct.length && !q.required) throw new Error(`Câu đố cần bật "Bắt buộc": ${q.text}`);
+      if (q.correct.length && q.show_if) throw new Error(`Câu đố không dùng điều kiện hiển thị: ${q.text}`);
+    }
     if (q.show_if && (!UUID_RE.test(q.show_if.question_id) || !["eq", "neq", "lt", "lte", "gt", "gte", "contains", "not_contains"].includes(q.show_if.operator) || !["string", "number"].includes(typeof q.show_if.value))) throw new Error("Điều kiện hiển thị không hợp lệ.");
-    return { id: q.id, position, type: q.type, text: q.text.trim(), required: q.required, options: q.options ?? null, allow_multiple: q.allow_multiple === true, show_if: q.show_if ?? null } as PrizeField;
+    return { id: q.id, position, type: q.type, text: q.text.trim(), required: q.required, options: q.options ?? null, allow_multiple: q.allow_multiple === true, show_if: q.show_if ?? null, correct: q.correct?.length ? q.correct : null } as PrizeField;
   });
   const error = prizeFormError(fields, phoneId);
   if (error) throw new Error(error);
@@ -137,6 +144,28 @@ export function validatePrizeAnswers(questions: PrizeField[], phoneId: string, r
     if (q.type === "date" && (!/^\d{4}-\d{2}-\d{2}$/.test(String(v)) || Number.isNaN(Date.parse(String(v))))) throw new Error(`Ngày không hợp lệ: ${q.text}`);
   }
   return { answers, phone: normalizePhone(String(answers[phoneId] ?? "")) };
+}
+
+export const isPrizeQuiz = (q: PrizeField) => q.type === "choice" && (!!q.correct?.length || q.quiz === true);
+
+// Public copy of the form: drop the answer key, keep only a flag for the UI.
+export function publicPrizeFields(fields: PrizeField[]): PrizeField[] {
+  return fields.map(q => {
+    const { correct, ...rest } = q;
+    return { ...rest, quiz: !!correct?.length };
+  });
+}
+
+// IDs of quiz questions answered wrongly (validated answers from validatePrizeAnswers).
+// Single choice: the picked option must be one of the right ones. Multiple: exactly the right set.
+export function prizeQuizMistakes(questions: PrizeField[], answers: Record<string, string | number | number[]>) {
+  return questions.filter(q => q.type === "choice" && q.correct?.length).filter(q => {
+    const v = answers[q.id];
+    const picked = Array.isArray(v) ? v : typeof v === "number" ? [v] : [];
+    if (!picked.length) return true;
+    if (q.allow_multiple) return picked.length !== q.correct!.length || picked.some(x => !q.correct!.includes(x));
+    return !q.correct!.includes(picked[0]);
+  }).map(q => q.id);
 }
 
 export function prizeAvailability(campaign: PrizeCampaign, items: PrizeItem[]) {
