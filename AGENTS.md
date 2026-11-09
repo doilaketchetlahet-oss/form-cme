@@ -465,6 +465,18 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Browser tests mock all auth/data/writes, test portrait/landscape/desktop, independent
   form editing, uploads, deletion and permission grants; they never send email.
 
+- The public gift wheel uses `PrizeGiftWheel` (the Booth Draw wheel is unchanged).
+  It reads the existing gift `image_url`, with a gift-icon fallback for missing or
+  broken images. Up to six gifts show upright names; seven to twelve show numbered
+  images matching the full gift list. The center and lower button share one guarded
+  spin action. The server still awards the prize; the animation holds/highlights its
+  segment before revealing the saved result. Reduced motion skips the spin/hold and
+  confetti; restored results never replay confetti. No dependency or migration added.
+  Regression: `node scripts/test-prize-wheel-ui.cjs` (same port/dependencies as above)
+  covers real animation/alignment, keyboard, 320px/mobile/landscape/desktop, 1/2/4/6/12
+  gifts, long names, image fallback, paused/registration states and reload without a
+  second draw. All API calls are mocked.
+
 - `/admin/tools/booth-draw` - booth lucky draw (admin); public at `/booth-draw`.
 - `/admin/tools/flap` - MC console for the "Lắc điện thoại, Đại bàng tung cánh"
   team game; creates a room, shows the join QR and the LED board link.

@@ -15,5 +15,12 @@ that was rejected as inappropriate for a registration and inventory tool.
   fallback when absent/broken. Uploads are normalized to WebP server-side.
 - Existing wheel remains the only significant animation; reduced motion skips it.
 - Configurable button colours choose contrasting foreground automatically.
+- The public gift wheel has a navy and champagne rim with restrained fixed light
+  dots, softly tinted wedges, upright gift images/names and an operable center.
+  Existing gift uploads supply the wheel artwork; missing/broken images use Lucide
+  Gift. With seven to twelve gifts, numbered images correspond to the full gift list.
+  Only the disc moves: its labels counter-rotate, the selected wedge holds briefly,
+  then a single finite confetti burst accompanies a newly earned result. Reduced
+  motion skips all of these effects. Booth Draw retains its existing presentation.
 - Save bar appears only for dirty settings. Destructive campaign deletion requires
   an explicit dialog and preserves award history while closing the public experience.

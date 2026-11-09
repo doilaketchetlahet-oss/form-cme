@@ -24,4 +24,8 @@
 .secondary { background: white; color: var(--prize-ink); border: 1px solid #cbd5e1; }
 .secondary:hover { background: #f1f5f9; }
 .studio button:disabled { opacity: .5; }
+.wheelCard { background: radial-gradient(ellipse at 50% 15%, #fff8e7 0, #ffffff 65%); }
+.wheelHeading { display: flex; align-items: center; justify-content: center; gap: 7px; color: #6a5940; font-size: 10px; font-weight: 600; letter-spacing: .08em; line-height: 1.6; }
+.studio .spinButton { min-height: 54px; border-radius: 16px; font-size: 16px; box-shadow: 0 5px 12px color-mix(in srgb, var(--prize-primary) 18%, transparent); }
+.giftIndex { position: absolute; z-index: 1; top: 20px; left: 20px; display: grid; min-width: 26px; height: 26px; place-items: center; border: 1px solid #e2e8f0; border-radius: 50%; background: #ffffffed; color: #526b7b; font-size: 10px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .studio * { transition-duration: 0ms !important; animation-duration: 0ms !important; } }
