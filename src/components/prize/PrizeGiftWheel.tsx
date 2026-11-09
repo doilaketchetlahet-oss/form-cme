@@ -26,7 +26,7 @@ function WheelImage({ item }: { item: WheelItem }) {
   const [failed, setFailed] = useState<string | null>(null);
   return <span className={styles.giftImage}>
     {item.image_url && item.image_url !== failed ? <Image
-      src={item.image_url} alt="" fill unoptimized sizes="80px"
+      src={item.image_url} alt="" fill unoptimized loading="eager" sizes="80px"
       className={styles.image} onError={() => setFailed(item.image_url!)}
     /> : <Gift className={styles.giftIcon} aria-hidden="true" strokeWidth={1.5} />}
   </span>;
