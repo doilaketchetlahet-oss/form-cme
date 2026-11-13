@@ -35,6 +35,7 @@ let browser;
 (async () => {
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  await context.routeWebSocket('**/*', (socket) => socket.close());
   await context.route(`https://${host}/**`, async (route) => {
     const request = route.request(), url = new URL(request.url());
     let body = [];
@@ -99,7 +100,7 @@ let browser;
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(dir, 'import-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Import 2 người', exact: true }).click();
-  await page.getByText('Đã import 2 người vào danh sách.', { exact: true }).waitFor();
+  await page.getByText(/^Đã import 2 người vào (?:danh sách\.|đợt “.+”\.)$/).waitFor();
   assert.equal(writes, 1); assert.equal(records.length, 2);
   assert.deepEqual(records.map((r) => [r.answers[program], r.answers[cme], r.hall]), [[2, 0, 'A'], [0, 0, 'B']]);
 
@@ -109,10 +110,12 @@ let browser;
   const download = await downloadPromise;
   const exported = XLSX.read(readFileSync(await download.path()));
   const rows = XLSX.utils.sheet_to_json(exported.Sheets[exported.SheetNames[0]]);
-  assert.equal(rows[0]['Hội trường được phân'], 'A');
-  assert.equal(rows[0]['Đăng ký cấp CME'], 'Có');
-  assert.equal(rows[0]['Quyền tham dự: Gala dinner'], 'Có');
-  assert.equal(rows[1]['Quyền tham dự: Gala dinner'], 'Không');
+  const an = rows.find((row) => row['Họ và tên'] === 'Nguyễn An');
+  const binh = rows.find((row) => row['Họ và tên'] === 'Trần Bình');
+  assert.equal(an['Hội trường được phân'], 'A');
+  assert.equal(an['Đăng ký cấp CME'], 'Có');
+  assert.equal(an['Quyền tham dự: Gala dinner'], 'Có');
+  assert.equal(binh['Quyền tham dự: Gala dinner'], 'Không');
 
   const scan = async (id, session, hall) => {
     await page.goto(`${base}/scan/${surveyId}?session=${session}&hall=${hall}`);

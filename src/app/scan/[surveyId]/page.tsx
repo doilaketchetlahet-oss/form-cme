@@ -1,13 +1,13 @@
 "use client";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, XCircle, UserCheck, SwitchCamera, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, UserCheck, SwitchCamera, FlipHorizontal2, LoaderCircle, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { PinGate } from "@/components/ui/PinGate";
 import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
 import type { CheckinTheme } from "@/lib/surveys";
 import { logCheckinEvent } from "@/lib/checkinLogs";
-import QrScanner from "qr-scanner";
+import { useQrCamera } from "@/hooks/useQrCamera";
 import { canAttendSession, normalizeSessionConfig } from "@/lib/checkin-sessions";
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
 import { assignedHallForDisplay, attendanceDetails, attendanceQuestionPriority, formatAttendanceAnswer, type DisplayQuestion } from "@/lib/attendance-display";
@@ -77,8 +77,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const [totalCount, setTotalCount] = useState(0);
   const [hall, setHall] = useState<string>(initialQuery.hall); // current hall filter
   const [assignedHalls, setAssignedHalls] = useState<string[]>([]);
-  const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
-  const [cameraError, setCameraError] = useState("");
   const [welcome, setWelcome] = useState<{ name: string; hall: string; details: { label: string; value: string }[] } | null>(null);
   const [session] = useState<string>(initialQuery.session);
   const [theme, setTheme] = useState<CheckinTheme | null>(null);
@@ -91,7 +89,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const sessionName = configuredSession?.name ?? session;
   const currentVenue = configuredSession?.checkHall ? hall : configuredSession?.hall ?? hall;
   const videoRef = useRef<HTMLVideoElement>(null);
-  const scannerRef = useRef<QrScanner | null>(null);
   const lastScannedRef = useRef("");
   const surveyIdRef = useRef(surveyId);
   const hallRef = useRef(initialQuery.hall);
@@ -282,126 +279,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     handleScan(responseId);
   };
 
-  // Camera (qr-scanner). Tạo scanner đúng một lần; đổi camera dùng setCamera()
-  // để qr-scanner tự dừng/giải phóng thiết bị cũ trước khi mở camera mới.
-  useEffect(() => {
-    if (!surveyId || !videoRef.current) return;
-    QrScanner.WORKER_PATH = "/qr-scanner-worker.min.js";
-
-    // Chỉ giải mã vùng giữa khung (nơi có 4 góc hiển thị) thay vì cả ảnh:
-    // giảm ~45% số pixel phải xử lý mỗi frame nên bắt mã nhanh và đỡ nóng máy.
-    const calculateScanRegion = (video: HTMLVideoElement): QrScanner.ScanRegion => {
-      const width = video.videoWidth || 0;
-      const height = video.videoHeight || 0;
-      if (!width || !height) return { x: 0, y: 0, width: 0, height: 0 };
-      const w = Math.floor(width * 0.75);
-      const h = Math.floor(height * 0.75);
-      return { x: Math.floor((width - w) / 2), y: Math.floor((height - h) / 2), width: w, height: h };
-    };
-
-    const scanner = new QrScanner(
-      videoRef.current,
-      (result) => handleScannedUrl(result.data),
-      {
-        preferredCamera: "environment",
-        maxScansPerSecond: 6,
-        calculateScanRegion,
-        highlightScanRegion: false,
-        highlightCodeOutline: false,
-        returnDetailedScanResult: true,
-      },
-    );
-    scannerRef.current = scanner;
-
-    const describeCameraError = (error: unknown) => {
-      const name = error instanceof DOMException ? error.name : "";
-      if (name === "NotAllowedError" || name === "SecurityError") {
-        return "Bạn chưa cấp quyền camera. Hãy cho phép camera trong trình duyệt rồi tải lại trang.";
-      }
-      if (name === "NotFoundError" || name === "OverconstrainedError") {
-        return "Không tìm thấy camera phù hợp trên thiết bị này.";
-      }
-      if (name === "NotReadableError" || name === "AbortError") {
-        return "Camera đang bị ứng dụng khác chiếm dụng. Đóng ứng dụng đó rồi bấm đổi camera lại.";
-      }
-      return "Không mở được camera. Kiểm tra quyền camera và thử lại.";
-    };
-
-    // Sau khi mở camera: xin độ phân giải cao hơn + lấy nét liên tục để QR
-    // nhỏ/nghiêng vẫn đọc được. Không hỗ trợ thì giữ nguyên, không làm hỏng.
-    const tuneTrack = async () => {
-      const stream = videoRef.current?.srcObject as MediaStream | null;
-      const track = stream?.getVideoTracks()[0];
-      if (!track) return;
-      try {
-        await track.applyConstraints({
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          advanced: [{ focusMode: "continuous" } as unknown as MediaTrackConstraintSet],
-        });
-      } catch {
-        /* thiết bị không hỗ trợ các ràng buộc này */
-      }
-    };
-
-    scanner.start()
-      .then(() => {
-        setCameraError("");
-        void tuneTrack();
-      })
-      .catch((error) => setCameraError(describeCameraError(error)));
-    if (busyRef.current) scanner.pause();
-
-    return () => {
-      scannerRef.current = null;
-      // Đợi stop xong mới destroy để nhả thiết bị sạch, tránh lỗi khi mở lại.
-      void Promise.resolve(scanner.stop())
-        .catch(() => undefined)
-        .then(() => {
-          scanner.destroy();
-        });
-    };
-  }, [surveyId]);
-
-  // Đổi camera trước/sau. Lỗi (không có camera trước, thiết bị bận) được báo
-  // rõ và tự quay về camera sau thay vì để khung hình đen.
-  const cameraModeRef = useRef<"environment" | "user">("environment");
-  useEffect(() => {
-    if (cameraModeRef.current === facingMode) return;
-    cameraModeRef.current = facingMode;
-    const scanner = scannerRef.current;
-    if (!scanner) return;
-    let cancelled = false;
-    const run = async () => {
-      try {
-        await scanner.setCamera(facingMode);
-        if (cancelled) return;
-        setCameraError("");
-        if (busyRef.current) await scanner.pause();
-      } catch (error) {
-        if (cancelled) return;
-        const name = error instanceof DOMException ? error.name : "";
-        setCameraError(
-          name === "NotReadableError" || name === "AbortError"
-            ? "Camera trước đang bận hoặc chưa sẵn sàng. Đợi một giây rồi bấm lại."
-            : "Thiết bị không mở được camera này. Đã quay về camera sau.",
-        );
-        setFacingMode("environment");
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [facingMode]);
-
-  // Pause scanning while a modal / welcome screen is showing
-  useEffect(() => {
-    const scanner = scannerRef.current;
-    if (!scanner) return;
-    if (pending || welcome) void scanner.pause();
-    else void scanner.start().catch(() => {});
-  }, [pending, welcome]);
+  const camera = useQrCamera(videoRef, handleScannedUrl, !!pending || !!welcome);
 
   // Auto-clear toast
   useEffect(() => {
@@ -414,7 +292,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     <CheckinThemeLayer theme={theme}>
       {/* Glassmorphism check-in card */}
       <div
-        className="relative w-full max-w-[900px] rounded-[32px] p-5 sm:p-8 flex flex-col items-center"
+        className="scan-camera-card relative max-h-full w-full max-w-[900px] overflow-y-auto rounded-[32px] p-5 sm:p-8 flex flex-col items-center [&>*]:shrink-0"
         style={{
           background: "rgba(255,255,255,0.12)",
           backdropFilter: "blur(16px)",
@@ -424,31 +302,48 @@ function ScanInner({ surveyId }: { surveyId: string }) {
         }}
       >
         {/* Sub-info */}
-        <div className="absolute top-4 left-5 flex items-center gap-2 text-xs sm:text-sm">
+        {(currentVenue || session) && <div className="scan-camera-subinfo absolute top-4 left-5 flex items-center gap-2 text-xs sm:text-sm">
           {currentVenue && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🏛 {currentVenue}</span>}
           {session && <span className="px-2.5 py-1 rounded-full bg-white/15 text-on-brand font-medium">🕐 {sessionName}</span>}
-        </div>
-        <button onClick={() => setFacingMode((f) => f === "environment" ? "user" : "environment")}
-          title={facingMode === "environment" ? "Chuyển sang camera trước" : "Chuyển sang camera sau"}
-          className="absolute top-4 right-5 flex h-9 items-center gap-1.5 rounded-full bg-white/15 px-3 text-on-brand hover:bg-white/25">
-          <SwitchCamera size={16} />
-          <span className="text-xs font-semibold">Lật</span>
-        </button>
-
-        <h2 className="text-on-brand font-bold text-xl sm:text-2xl text-center mt-6 sm:mt-2 mb-4 drop-shadow">
+        </div>}
+        <h2 className="scan-camera-title text-on-brand font-bold text-xl sm:text-2xl text-center mt-6 sm:mt-2 mb-4 drop-shadow">
           Vui lòng đưa mã QR vào khung
         </h2>
+        <div className="scan-camera-controls w-full max-w-[720px]">
+        <div className="scan-camera-toolbar mb-4 flex w-full flex-wrap items-end justify-center gap-2">
+          <label className="min-w-0 basis-full text-xs font-semibold text-on-brand sm:flex-1 sm:basis-0">Camera đang dùng
+            <select aria-label="Camera đang dùng" value={camera.activeCamera} disabled={camera.switching || !!pending || !!welcome || !camera.cameras.length}
+              onChange={(event) => void camera.selectCamera(event.target.value)}
+              className="mt-1 min-h-11 w-full rounded-xl border border-white/40 bg-white px-3 text-base text-slate-900 disabled:opacity-70 sm:text-sm">
+              {!camera.activeCamera && <option value="">{camera.switching ? "Đang mở camera…" : "Camera hiện tại"}</option>}
+              {camera.cameras.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={camera.switchCamera} disabled={camera.switching || camera.cameras.length < 2 || !!pending || !!welcome}
+            title={camera.cameras.length === 1 ? "Thiết bị chỉ có một camera" : "Đổi camera trước/sau"}
+            className="flex min-h-11 items-center gap-2 rounded-xl border border-white/40 bg-white px-3 text-sm font-semibold text-slate-900 hover:bg-slate-100 disabled:opacity-60">
+            {camera.switching ? <LoaderCircle size={18} className="animate-spin" /> : <SwitchCamera size={18} />}
+            {camera.switching ? "Đang mở…" : "Đổi trước/sau"}
+          </button>
+          <button type="button" onClick={camera.toggleMirror} aria-pressed={camera.mirrored}
+            className="flex min-h-11 items-center gap-2 rounded-xl border border-white/40 bg-white px-3 text-sm font-semibold text-slate-900 hover:bg-slate-100">
+            <FlipHorizontal2 size={18} /> Lật hình
+          </button>
+          {camera.cameras.length === 1 && <p className="w-full text-center text-xs text-on-brand">Thiết bị chỉ có một camera.</p>}
+        </div>
         {configuredSession?.checkHall && <label className="mb-4 flex flex-wrap items-center gap-2 text-sm text-white">Hội trường tại quầy quét
           <select aria-label="Hội trường tại quầy quét" value={hall} disabled={!!pending || confirming} onChange={(e) => { hallRef.current = e.target.value; setHall(e.target.value); }} className="rounded-lg border bg-white p-2 text-slate-900">
             <option value="">Chọn hội trường</option>{[...new Set([...assignedHalls, ...(hall ? [hall] : [])])].map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>}
         {configuredSession && (configuredSession.opensAt || configuredSession.closesAt) && <p className="mb-3 text-center text-xs text-white/70">Giờ check-in: {configuredSession.opensAt ? new Date(configuredSession.opensAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Không giới hạn mở"} — {configuredSession.closesAt ? new Date(configuredSession.closesAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Không giới hạn đóng"}</p>}
+        </div>
 
+        <div className="scan-camera-feed flex w-full flex-col items-center">
         {/* Camera box with scan line */}
-        <div className="relative w-full max-w-[720px] aspect-video rounded-[24px] overflow-hidden bg-black/40 border border-white/20">
+        <div className="scan-camera-preview relative w-full max-w-[720px] aspect-video rounded-[24px] overflow-hidden bg-black/40 border border-white/20">
           <video ref={videoRef} className="w-full h-full object-cover" playsInline muted
-            style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }} />
+            onPlay={camera.syncVideoMirror} style={{ transform: camera.mirrored ? "scaleX(-1)" : "none" }} />
           {/* corner frame */}
           <div className="absolute inset-6 pointer-events-none">
             <span className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 rounded-tl-xl" style={{ borderColor: "var(--checkin-accent)" }} />
@@ -464,20 +359,45 @@ function ScanInner({ surveyId }: { surveyId: string }) {
             animate={{ top: ["12%", "88%", "12%"] }}
             transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
           />
-          {cameraError && (
-            <div className="absolute inset-x-3 bottom-3 z-20 rounded-xl bg-amber-500/95 px-3 py-2 text-center text-xs font-semibold text-white shadow-lg">
-              {cameraError}
+          {camera.cameraError && (
+            <div role="alert" className="absolute inset-x-3 bottom-3 z-20 rounded-xl bg-amber-100 px-3 py-2 text-center text-sm font-semibold text-amber-950 shadow-lg">
+              <p>{camera.cameraError}</p>
+              <button type="button" onClick={() => void camera.retryCamera()} disabled={camera.switching}
+                className="mt-1 min-h-11 rounded-lg border border-amber-700 px-3 font-semibold disabled:opacity-60">Thử lại camera</button>
             </div>
           )}
         </div>
 
         {/* Counter */}
-        <div className="mt-4 flex items-center gap-2 text-on-brand">
+        <div className="scan-camera-counter mt-4 flex items-center gap-2 text-on-brand">
           <UserCheck size={18} style={{ color: "var(--checkin-accent)" }} />
           <span className="text-lg font-bold">{checkedCount}</span>
           <span className="text-white/60 text-sm">/ {totalCount} đã check-in</span>
         </div>
+        </div>
       </div>
+
+      <style jsx>{`
+        @media (min-width: 640px) and (max-height: 500px) {
+          .scan-camera-card {
+            display: grid;
+            grid-template-columns: 220px minmax(0, 1fr);
+            align-items: start;
+            gap: 12px 16px;
+            padding: 12px;
+          }
+          .scan-camera-title { grid-column: 1 / -1; margin: 0; font-size: 18px; line-height: 24px; }
+          .scan-camera-controls { grid-column: 1; min-width: 0; }
+          .scan-camera-toolbar { margin-bottom: 0; }
+          .scan-camera-toolbar label { flex: 0 0 100%; }
+          .scan-camera-feed { grid-column: 2; grid-row: 2; }
+          .scan-camera-preview { width: min(100%, calc((100dvh - 206px) * 16 / 9)); }
+          .scan-camera-counter { margin-top: 8px; }
+          .scan-camera-subinfo { position: static; grid-column: 1 / -1; }
+          .scan-camera-card:has(.scan-camera-subinfo) .scan-camera-feed { grid-row: 3; }
+          .scan-camera-card:has(.scan-camera-subinfo) .scan-camera-preview { width: min(100%, calc((100dvh - 244px) * 16 / 9)); }
+        }
+      `}</style>
 
       {/* Confirmation modal */}
       <AnimatePresence>

@@ -74,6 +74,21 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 
 ## Attendance sessions (conference / gala)
 
+- QR scanner camera controls (`/scan/[surveyId]`) use `useQrCamera`: enumerate
+  devices after permission, select an explicit device ID, and verify the opened
+  stream instead of assuming `facingMode` preferences were honored. **Đổi trước/sau**
+  chooses the opposite camera when identified; **Camera đang dùng** also supports
+  USB/multiple lenses. **Lật hình** mirrors only the preview. Camera transitions
+  are serialized, release the previous device, restore the working camera on
+  failure, and offer a retry (including permission errors). Confirmation/welcome
+  pauses scanning; resume preserves and rechecks the selected camera. Unmount
+  releases tracks. Single-camera devices show a notice and disable switching.
+  Regression: `node scripts/test-scan-camera-ui.cjs` (port 3107, CHECKIN_TEST_DEPS
+  for Playwright, optional PLAYWRIGHT_CHANNEL=msedge). Synthetic front/back/USB
+  streams test ignored facing preferences, device IDs, mirror independence,
+  failure/retry, single camera, permission denial, cleanup and actual QR decoding
+  on portrait/landscape/desktop. All APIs are mocked; no real records or mail.
+
 - In `/admin/forms/[id]`, Check-in tab → enable “Điểm danh theo buổi” →
   “Tạo mẫu Hội thảo + Gala”. This adds a required three-option question and two
   sessions. Set each venue and optional opening/closing time (Vietnam time), save.
