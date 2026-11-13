@@ -36,6 +36,7 @@ async function run(viewport) {
   const savedRecords = structuredClone(records);
   const context = await browser.newContext({ viewport });
   try {
+    await context.routeWebSocket('**/*', (socket) => socket.close());
     await context.route('**/*', async (route) => {
       const request = route.request(), url = new URL(request.url());
       if (url.origin === new URL(base).origin && url.pathname === '/api/send-checkin-email') {

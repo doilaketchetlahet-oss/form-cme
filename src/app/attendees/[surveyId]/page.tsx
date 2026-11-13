@@ -16,6 +16,7 @@ import { arrivalSummary, canAttendSession, normalizeSessionConfig, sessionLabel,
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
 import { fetchBrandedQrPng, qrExportLabel, uniqueQrFilename } from "@/lib/qr-export";
 import { assignedHallForDisplay, attendanceQuestionPriority, formatAttendanceAnswer } from "@/lib/attendance-display";
+import { startAttendeeSync } from "@/lib/attendee-sync";
 
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
@@ -45,9 +46,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [hallFilter, setHallFilter] = useState<string>("");
   const [batchFilter, setBatchFilter] = useState<string>("");
-  const [halls, setHalls] = useState<string[]>([]);
+  const [savedHalls, setHalls] = useState<string[]>([]);
   const [resending, setResending] = useState(false);
-  const [sessions, setSessions] = useState<string[]>([]);
+  const [savedSessions, setSessions] = useState<string[]>([]);
   const [sessionConfig, setSessionConfig] = useState<CheckinSessionConfig | null>(null);
   const [sessionFilter, setSessionFilter] = useState("");
   const [participationFilter, setParticipationFilter] = useState("");
@@ -59,17 +60,18 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const [visibleLimit, setVisibleLimit] = useState(200);
   const [exportingQr, setExportingQr] = useState(false);
 
+  const halls = useMemo(() => [...new Set([...savedHalls, ...responses.map((r) => r.hall).filter((hall): hall is string => !!hall)])], [savedHalls, responses]);
+  const sessions = useMemo(() => [...new Set([...savedSessions, ...responses.flatMap((r) => Object.keys(r.session_checkins ?? {}))])], [savedSessions, responses]);
+
   const loadData = useCallback(async (id: string) => {
-    const [{ data: survey }, { data: resps }, { data: questions }] = await Promise.all([
+    const [{ data: survey }, { data: questions }] = await Promise.all([
       supabase.from("surveys").select("title, vip_checkin_enabled, checkin_theme").eq("id", id).single(),
-      supabase.from("survey_responses").select("*").eq("survey_id", id).order("submitted_at", { ascending: false }),
       supabase.from("survey_questions").select("id, text, position, type, options, is_hall_selector, allow_multiple").eq("survey_id", id).order("position"),
     ]);
     setSurveyTitle(survey?.title ?? "Khảo sát");
     setVipCheckinEnabled(!!(survey as { vip_checkin_enabled?: boolean } | null)?.vip_checkin_enabled);
     setQrBranding(((survey as { checkin_theme?: { qr?: QRBranding } } | null)?.checkin_theme?.qr) ?? null);
     setSessionsEnabled(!!((survey as { checkin_theme?: { sessionsEnabled?: boolean } } | null)?.checkin_theme?.sessionsEnabled));
-    setResponses(resps ?? []);
     const config = normalizeSessionConfig(survey?.checkin_theme?.sessionConfig);
     setSessionConfig(config);
     const labels: Record<string, string> = {};
@@ -85,20 +87,13 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setQuestionLabels(labels);
     setQuestionOrder(order);
     setQuestionMeta(meta);
-    // Extract unique halls
-    const uniqueHalls = [...new Set([...(resps ?? []).map((r: SurveyResponse) => r.hall)].filter(Boolean))] as string[];
-    setHalls(uniqueHalls);
-    // Load sessions: from localStorage + derive from existing session_checkins keys
+    // Response-derived halls/session keys stay current through the live list.
     let stored: string[] = [];
     try {
       const value = JSON.parse(localStorage.getItem(`sessions-${id}`) || "[]");
       if (Array.isArray(value)) stored = value.filter((item) => typeof item === "string");
     } catch { /* An unavailable/corrupt browser cache does not affect shared configuration. */ }
-    const derived = new Set<string>(config ? config.sessions.map((session) => session.id) : stored);
-    (resps ?? []).forEach((r: SurveyResponse) => {
-      Object.keys(r.session_checkins ?? {}).forEach((k) => derived.add(k));
-    });
-    setSessions([...derived]);
+    setSessions(config ? config.sessions.map((session) => session.id) : stored);
   }, []);
 
   useEffect(() => {
@@ -121,26 +116,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     localStorage.setItem(`sessions-${surveyId}`, JSON.stringify(next));
   };
 
-  const refreshData = useCallback(async () => {
-    if (!surveyId) return;
-    const { data } = await supabase.from("survey_responses").select("*").eq("survey_id", surveyId).order("submitted_at", { ascending: false });
-    if (data) setResponses(data);
-  }, [surveyId]);
-
-  // Realtime + polling fallback
   useEffect(() => {
     if (!surveyId) return;
-    const channel = supabase
-      .channel(`attendees-${surveyId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "survey_responses", filter: `survey_id=eq.${surveyId}` },
-        () => { refreshData(); })
-      .subscribe();
-
-    // Polling fallback every 5s in case realtime doesn't fire
-    const interval = setInterval(refreshData, 5000);
-
-    return () => { supabase.removeChannel(channel); clearInterval(interval); };
-  }, [surveyId, refreshData]);
+    return startAttendeeSync(supabase, surveyId, setResponses);
+  }, [surveyId]);
 
   // Close the detail modal with Esc
   useEffect(() => {
@@ -325,7 +304,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       answers,
     }).select("*").single();
     if (data) {
-      setResponses((prev) => [data, ...prev]);
+      setResponses((prev) => [data, ...prev.filter((r) => r.id !== data.id)]);
       setShowAddForm(false);
       setNewAnswers({});
     }

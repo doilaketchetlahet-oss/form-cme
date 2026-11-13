@@ -178,6 +178,21 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   Regression: `node scripts/test-attendees-display-ui.cjs` (port 3107, same
   Playwright setup as attendance tests; mocked data, no writes or email).
 
+- Attendee lists use `src/lib/attendee-sync.ts`: INSERT/UPDATE/DELETE events
+  patch rows locally in 100ms batches instead of rereading every 5 seconds or
+  on every event. Full snapshots reconcile missed events (including filtered
+  DELETE limitations) every 60s while subscribed, or every 30s after connection
+  / read failures. Hidden/offline tabs suspend reads and remove their channel;
+  returning online/visible or rejoining immediately reconciles. Reads are
+  serialized, abortable and page by stable ID in 500-row batches; errors retain
+  the previous complete list, and events received during a read are replayed.
+  Halls/session keys derive from the current rows. No SQL migration is needed.
+  Regression: `node --test scripts/test-attendee-sync.cjs` (mocked browser/time
+  and Supabase); `node scripts/test-attendee-sync-ui.cjs` uses port 3107 and the
+  same Playwright setup as attendance tests, with REST and WebSockets mocked.
+  It verifies live inserts/check-ins/deletes, request counts, hidden/returning
+  tabs and desktop/mobile. No real records, connections or emails are used.
+
 - Adding a guest or adding/changing their email in the attendee list only saves
   registration data; it never automatically sends a QR email. Operators send
   explicitly with **Gửi lại QR** or the existing bulk actions. Save failures keep
