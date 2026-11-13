@@ -87,9 +87,17 @@ async function run(viewport) {
     assert.equal(await page.getByRole('option', { name: 'Theo hội trường', exact: true }).count(), 0);
     assert.equal(await page.getByRole('option', { name: 'Tất cả hội trường được phân' }).count(), 0);
 
+    await page.getByRole('checkbox').first().check();
+    await page.getByRole('button', { name: 'Chọn tất cả', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Xoá đã chọn', exact: true }).count(), 0, 'Bulk deletion is temporarily unavailable even after selecting all guests');
+    await page.getByRole('button', { name: 'Bỏ chọn', exact: true }).click();
+
     await rows().first().locator('p').first().click();
     const detail = page.getByRole('dialog', { name: 'Chi tiết người tham dự' });
     await detail.waitFor();
+    assert.equal(await detail.getByRole('button', { name: 'Xoá', exact: true }).count(), 0, 'Single-registration deletion is temporarily unavailable');
+    await page.waitForTimeout(250); // Capture the settled dialog, after its entry animation.
+    await page.screenshot({ path: path.join(require('node:os').tmpdir(), `attendees-deletion-paused-${viewport.width}.png`), fullPage: true });
     assert.equal(await detail.getByRole('heading').textContent(), 'Nguyễn An');
     assert.equal(await detail.getByText('PGS, TS', { exact: true }).count(), 1, 'Detail decodes every selected qualification');
     const expectedLabels = ['Họ và tên', 'Học hàm học vị', 'Vai trò', 'Chức danh', 'Đơn vị công tác', 'Email', 'Số điện thoại'];
@@ -155,6 +163,7 @@ async function run(viewport) {
     assert.equal(savedRecords[0].answers.email, 'new-guest@example.test');
     assert.equal(emails.length, 1, 'Adding a guest with an email must not send mail');
     assert.deepEqual(errors, []);
+    assert.equal(writes.includes('DELETE'), false, 'Attendee operations must never issue a deletion while paused');
     console.log(`${viewport.width}px: display, add/edit/reload without email, failed-save preservation and explicit QR send passed (all writes/mail mocked).`);
   } finally { await context.close(); }
 }

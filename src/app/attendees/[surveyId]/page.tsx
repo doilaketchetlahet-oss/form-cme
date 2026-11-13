@@ -18,6 +18,9 @@ import { fetchBrandedQrPng, qrExportLabel, uniqueQrFilename } from "@/lib/qr-exp
 import { assignedHallForDisplay, attendanceQuestionPriority, formatAttendanceAnswer } from "@/lib/attendance-display";
 import { startAttendeeSync } from "@/lib/attendee-sync";
 
+// Temporary pause: restore this flag to re-enable both controls and handlers.
+const ATTENDEE_DELETION_ENABLED = false;
+
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
   useEffect(() => { params.then(({ surveyId }) => setSid(surveyId)); }, [params]);
@@ -197,6 +200,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   };
 
   const deleteResponse = async (id: string) => {
+    if (!ATTENDEE_DELETION_ENABLED) return;
     if (!(await confirm({ title: "Xoá người này?", destructive: true, confirmText: "Xoá" }))) return;
     await supabase.from("survey_responses").delete().eq("id", id);
     setResponses((prev) => prev.filter((r) => r.id !== id));
@@ -563,6 +567,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     if (!halls.includes(hallName)) setHalls([...halls, hallName]);
   };
   const bulkDelete = async () => {
+    if (!ATTENDEE_DELETION_ENABLED) return;
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     if (!(await confirm({ title: `Xoá ${ids.length} người đã chọn?`, description: "Thao tác này không thể hoàn tác.", destructive: true, confirmText: "Xoá" }))) return;
@@ -1099,7 +1104,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
               if (name) bulkAssignHall(name);
             }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-on-brand" style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)" }}>Gán hội trường</button>}
             <button onClick={printAllBadges} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-on-brand hover:bg-slate-600">In thẻ đã chọn</button>
-            <button onClick={bulkDelete} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Xoá đã chọn</button>
+            {ATTENDEE_DELETION_ENABLED && <button onClick={bulkDelete} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Xoá đã chọn</button>}
             <button onClick={clearSelection} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Bỏ chọn</button>
             <button onClick={selectAll} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Chọn tất cả</button>
             <span className="hidden text-[11px] text-slate-500 sm:inline">Giữ <kbd className="rounded border border-slate-300 bg-white px-1">Shift</kbd> rồi bấm để chọn cả khoảng</span>
@@ -1358,10 +1363,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
                         <RotateCcw size={14} /> Huỷ check-in
                       </button>
                     ))}
-                    <button onClick={() => { deleteResponse(selectedResponse.id); setSelectedResponse(null); }}
+                    {ATTENDEE_DELETION_ENABLED && <button onClick={() => { deleteResponse(selectedResponse.id); setSelectedResponse(null); }}
                       className="flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100">
                       <Trash2 size={14} /> Xoá
-                    </button>
+                    </button>}
                   </>
                 )}
 

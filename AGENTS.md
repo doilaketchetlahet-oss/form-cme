@@ -223,6 +223,15 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   save/reload without sending, failed saves and an explicit send to the new email;
   every database write and email request is mocked.
 
+- Registration deletion is temporarily disabled on `/attendees/[surveyId]` via
+  `ATTENDEE_DELETION_ENABLED = false` in that page. The single-guest detail and
+  bulk-delete buttons are hidden, and both handlers return before confirming or
+  writing. Set this single flag back to true to restore the existing behavior.
+  This is a page-level pause; existing database policies are unchanged. Removing
+  unsaved rows from the import preview and undoing check-in remain available.
+  `test-attendees-display-ui.cjs` checks the detail, select-all toolbar and absence
+  of DELETE requests on desktop/mobile alongside existing add/edit/send checks.
+
 - Editor sortable question cards must remain direct children of the question
   list: `restrictToParentElement` otherwise locks dragging inside a card wrapper.
   CME scroll/focus uses the same sortable root. Regression: start on port 3109,
