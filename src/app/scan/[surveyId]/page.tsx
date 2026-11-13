@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, XCircle, UserCheck, SwitchCamera, FlipHorizontal2, LoaderCircle, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, UserCheck, SwitchCamera, FlipHorizontal2, LoaderCircle, AlertTriangle, Maximize2, Minimize2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { PinGate } from "@/components/ui/PinGate";
 import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
 import type { CheckinTheme } from "@/lib/surveys";
 import { logCheckinEvent } from "@/lib/checkinLogs";
 import { useQrCamera } from "@/hooks/useQrCamera";
+import { useFullscreen } from "@/hooks/useFullscreen";
 import { canAttendSession, normalizeSessionConfig } from "@/lib/checkin-sessions";
 import { recordSessionCheckin } from "@/lib/session-checkin-client";
 import { assignedHallForDisplay, attendanceDetails, attendanceQuestionPriority, formatAttendanceAnswer, type DisplayQuestion } from "@/lib/attendance-display";
@@ -89,6 +90,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const sessionName = configuredSession?.name ?? session;
   const currentVenue = configuredSession?.checkHall ? hall : configuredSession?.hall ?? hall;
   const videoRef = useRef<HTMLVideoElement>(null);
+  const scanRootRef = useRef<HTMLDivElement>(null);
+  const fullscreen = useFullscreen(scanRootRef);
   const lastScannedRef = useRef("");
   const surveyIdRef = useRef(surveyId);
   const hallRef = useRef(initialQuery.hall);
@@ -289,9 +292,11 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   }, [scanResult]);
 
   return (
+    <div ref={scanRootRef} data-scan-root data-scan-expanded={fullscreen.expanded}>
     <CheckinThemeLayer theme={theme}>
       {/* Glassmorphism check-in card */}
       <div
+        data-expanded={fullscreen.expanded}
         className="scan-camera-card relative max-h-full w-full max-w-[900px] overflow-y-auto rounded-[32px] p-5 sm:p-8 flex flex-col items-center [&>*]:shrink-0"
         style={{
           background: "rgba(255,255,255,0.12)",
@@ -344,6 +349,13 @@ function ScanInner({ surveyId }: { surveyId: string }) {
         <div className="scan-camera-preview relative w-full max-w-[720px] aspect-video rounded-[24px] overflow-hidden bg-black/40 border border-white/20">
           <video ref={videoRef} className="w-full h-full object-cover" playsInline muted
             onPlay={camera.syncVideoMirror} style={{ transform: camera.mirrored ? "scaleX(-1)" : "none" }} />
+          <button type="button" onClick={() => void fullscreen.toggle()} disabled={fullscreen.busy}
+            aria-label={fullscreen.expanded ? "Thoát toàn màn hình" : "Toàn màn hình"}
+            title={fullscreen.expanded ? "Thoát toàn màn hình (Esc)" : "Toàn màn hình"}
+            aria-pressed={fullscreen.expanded}
+            className="absolute right-2 top-2 z-20 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-60">
+            {fullscreen.expanded ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+          </button>
           {/* corner frame */}
           <div className="absolute inset-6 pointer-events-none">
             <span className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 rounded-tl-xl" style={{ borderColor: "var(--checkin-accent)" }} />
@@ -378,6 +390,13 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       </div>
 
       <style jsx>{`
+        :global([data-scan-root][data-scan-expanded="true"] header), :global([data-scan-root][data-scan-expanded="true"] footer) { display: none; }
+        :global([data-scan-root][data-scan-expanded="true"] main) { padding: 12px; }
+        .scan-camera-card[data-expanded="true"] { max-width: none; }
+        .scan-camera-card[data-expanded="true"] .scan-camera-preview {
+          max-width: none;
+          width: min(100%, calc((100dvh - 260px) * 16 / 9));
+        }
         @media (min-width: 640px) and (max-height: 500px) {
           .scan-camera-card {
             display: grid;
@@ -396,6 +415,8 @@ function ScanInner({ surveyId }: { surveyId: string }) {
           .scan-camera-subinfo { position: static; grid-column: 1 / -1; }
           .scan-camera-card:has(.scan-camera-subinfo) .scan-camera-feed { grid-row: 3; }
           .scan-camera-card:has(.scan-camera-subinfo) .scan-camera-preview { width: min(100%, calc((100dvh - 244px) * 16 / 9)); }
+          .scan-camera-card[data-expanded="true"] .scan-camera-preview { width: min(100%, calc((100dvh - 110px) * 16 / 9)); }
+          .scan-camera-card[data-expanded="true"]:has(.scan-camera-subinfo) .scan-camera-preview { width: min(100%, calc((100dvh - 148px) * 16 / 9)); }
         }
       `}</style>
 
@@ -540,5 +561,6 @@ function ScanInner({ surveyId }: { surveyId: string }) {
         )}
       </AnimatePresence>
     </CheckinThemeLayer>
+    </div>
   );
 }

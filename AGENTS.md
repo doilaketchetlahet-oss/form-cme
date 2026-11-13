@@ -88,6 +88,13 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   streams test ignored facing preferences, device IDs, mirror independence,
   failure/retry, single camera, permission denial, cleanup and actual QR decoding
   on portrait/landscape/desktop. All APIs are mocked; no real records or mail.
+  The preview's upper-right **Toàn màn hình** button expands the whole scanner
+  (including camera controls and confirmation dialogs), hides the theme header/
+  footer, and enlarges the preview. It uses element Fullscreen API (plus WebKit)
+  with an in-page expanded fallback when unavailable/rejected. Button/Escape,
+  browser fullscreen changes and route cleanup restore normal mode without
+  restarting the camera. The same UI suite covers native/fallback fullscreen,
+  Escape, camera switching/QR decoding while expanded and cleanup on navigation.
 
 - In `/admin/forms/[id]`, Check-in tab → enable “Điểm danh theo buổi” →
   “Tạo mẫu Hội thảo + Gala”. This adds a required three-option question and two

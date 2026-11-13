@@ -15,7 +15,7 @@ const base = process.env.ATTENDANCE_E2E_BASE || 'http://localhost:3107';
 const screenshots = mkdtempSync(path.join(tmpdir(), 'scan-camera-ui-'));
 let browser;
 
-async function run(viewport, count = 2, denied = false) {
+async function run(viewport, count = 2, denied = false, fullscreenMode = 'native') {
   const surveyId = randomUUID(), responseId = randomUUID();
   const errors = [], writes = [];
   const context = await browser.newContext({ viewport });
@@ -36,7 +36,12 @@ async function run(viewport, count = 2, denied = false) {
       if (url.origin === new URL(base).origin && !url.pathname.startsWith('/api/')) return route.continue();
       return route.abort();
     });
-    await context.addInitScript(({ count, denied }) => {
+    await context.addInitScript(({ count, denied, fullscreenMode }) => {
+      if (fullscreenMode !== 'native') {
+        Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true,
+          value: fullscreenMode === 'missing' ? undefined : async () => { throw new DOMException('Mock fullscreen rejection', 'NotAllowedError'); } });
+        Object.defineProperty(HTMLElement.prototype, 'webkitRequestFullscreen', { configurable: true, value: undefined });
+      }
       const devices = [
         { deviceId: 'back-camera', kind: 'videoinput', label: 'Back Camera', facing: 'environment' },
         { deviceId: 'front-camera', kind: 'videoinput', label: 'Front Camera', facing: 'user' },
@@ -74,7 +79,7 @@ async function run(viewport, count = 2, denied = false) {
         test.maxLive = Math.max(test.maxLive, test.streams.filter((item) => item.track.readyState === 'live').length);
         return stream;
       } });
-    }, { count, denied });
+    }, { count, denied, fullscreenMode });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}/attendees/${surveyId}`);
@@ -104,6 +109,23 @@ async function run(viewport, count = 2, denied = false) {
       await waitCamera('back-camera');
       await cameraAlert.waitFor({ state: 'hidden' });
     } else await waitCamera('back-camera');
+
+    const scanRoot = page.locator('[data-scan-root]');
+    const enterFullscreen = () => page.getByRole('button', { name: 'Toàn màn hình', exact: true });
+    const exitFullscreen = () => page.getByRole('button', { name: 'Thoát toàn màn hình', exact: true });
+    const originalWidth = (await page.locator('.scan-camera-preview').boundingBox()).width;
+    const callsBeforeFullscreen = await page.evaluate(() => window.cameraTest.calls.length);
+    await enterFullscreen().click();
+    await page.waitForFunction(() => document.querySelector('[data-scan-root]')?.dataset.scanExpanded === 'true');
+    if (fullscreenMode === 'native') assert.equal(await page.evaluate(() => document.fullscreenElement?.hasAttribute('data-scan-root')), true);
+    assert.equal(await page.locator('header').isVisible(), false, 'Fullscreen gives the scanner the header space');
+    assert.equal(await exitFullscreen().getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.evaluate(() => window.cameraTest.calls.length), callsBeforeFullscreen, 'Fullscreen preserves the camera stream');
+    if (viewport.width > 1000) assert.ok((await page.locator('.scan-camera-preview').boundingBox()).width > originalWidth, 'Fullscreen enlarges the camera preview');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('[data-scan-root]')?.dataset.scanExpanded === 'false');
+    await enterFullscreen().click();
+    await page.waitForFunction(() => document.querySelector('[data-scan-root]')?.dataset.scanExpanded === 'true');
 
     if (count === 1) {
       assert.equal(await switcher.isDisabled(), true);
@@ -157,17 +179,26 @@ async function run(viewport, count = 2, denied = false) {
     await page.locator('main > div').first().evaluate((card) => { card.scrollTop = 0; });
     if (viewport.height < 500) {
       const bounds = await page.locator('.scan-camera-preview').boundingBox();
-      assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, 'Landscape keeps the entire camera preview visible beside the controls');
+      await page.screenshot({ path: path.join(screenshots, 'landscape-bounds.png'), fullPage: true });
+      assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, `Landscape keeps the entire camera preview visible beside the controls: ${JSON.stringify(bounds)}, ${await page.evaluate(() => innerHeight)}px. ${screenshots}`);
     }
+    await page.screenshot({ path: path.join(screenshots, `fullscreen-${viewport.width}-${viewport.height}-${fullscreenMode}.png`), fullPage: true });
+    await exitFullscreen().click();
+    await page.waitForFunction(() => document.querySelector('[data-scan-root]')?.dataset.scanExpanded === 'false');
+    assert.equal(await page.evaluate(() => document.fullscreenElement), null);
     await page.screenshot({ path: path.join(screenshots, `${viewport.width}-${viewport.height}-${count}-${denied}.png`), fullPage: true });
+    await enterFullscreen().click();
+    await page.waitForFunction(() => document.querySelector('[data-scan-root]')?.dataset.scanExpanded === 'true');
     const streams = await page.evaluate(() => window.cameraTest.streams.length);
     await page.goBack();
     await page.getByRole('heading', { name: 'Kiểm tra đổi camera', exact: true }).waitFor();
     await page.waitForFunction(() => window.cameraTest.streams.every((item) => item.track.readyState === 'ended'));
     assert.equal(await page.evaluate(() => window.cameraTest.streams.length), streams, 'Cleanup is checked in the original document');
+    assert.equal(await page.evaluate(() => document.fullscreenElement), null, 'Leaving Scan exits fullscreen');
+    assert.equal(await scanRoot.count(), 0);
     assert.deepEqual(writes, []);
     assert.deepEqual(errors, []);
-    console.log(`${viewport.width}x${viewport.height}, ${count} camera(s), permission retry=${denied}: camera IDs, mirror, recovery, QR decoding and cleanup passed. ${screenshots}`);
+    console.log(`${viewport.width}x${viewport.height}, ${count} camera(s), permission retry=${denied}, fullscreen=${fullscreenMode}: camera controls, fullscreen/Escape, QR decoding and cleanup passed. ${screenshots}`);
   } finally { await context.close(); }
 }
 
@@ -178,4 +209,6 @@ async function run(viewport, count = 2, denied = false) {
   await run({ width: 1440, height: 1000 }, 3);
   await run({ width: 390, height: 844 }, 1);
   await run({ width: 390, height: 844 }, 2, true);
+  await run({ width: 390, height: 844 }, 2, false, 'missing');
+  await run({ width: 1440, height: 1000 }, 2, false, 'rejected');
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => { await browser?.close(); });
