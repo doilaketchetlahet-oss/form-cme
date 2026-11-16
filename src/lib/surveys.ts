@@ -311,13 +311,25 @@ export interface QuestionStat {
 }
 
 export async function getSurveyAnalytics(surveyId: string): Promise<SurveyAnalytics | null> {
-  const [{ data: survey }, { data: questions }, { data: responses }] = await Promise.all([
+  const [{ data: survey, error: surveyError }, { data: questions, error: questionsError }] = await Promise.all([
     supabase.from("surveys").select("*").eq("id", surveyId).single(),
     supabase.from("survey_questions").select("*").eq("survey_id", surveyId).order("position"),
-    supabase.from("survey_responses").select("*").eq("survey_id", surveyId),
   ]);
 
-  if (!survey || !questions) return null;
+  if (surveyError || questionsError || !survey || !questions) return null;
+
+  // Reports/exports must include the whole event, not the API's default row cap.
+  const responses: SurveyResponse[] = [];
+  let after: string | undefined;
+  while (true) {
+    let query = supabase.from("survey_responses").select("*").eq("survey_id", surveyId).order("id").limit(500);
+    if (after) query = query.gt("id", after);
+    const { data, error } = await query;
+    if (error || !data) return null; // Never present a partial report as complete.
+    responses.push(...data);
+    if (data.length < 500) break;
+    after = data[data.length - 1].id;
+  }
 
   const config = normalizeSessionConfig(survey.checkin_theme?.sessionConfig);
   const arrivals = (responses ?? []).map((response) => ({ ...response, ...arrivalSummary(response, config) }));

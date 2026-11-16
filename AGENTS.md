@@ -232,6 +232,25 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   `test-attendees-display-ui.cjs` checks the detail, select-all toolbar and absence
   of DELETE requests on desktop/mobile alongside existing add/edit/send checks.
 
+- Form Report exports default to **Người đã check-in**; **Toàn bộ danh sách đang
+  lọc** explicitly includes pending registrations. Both Excel/CSV respect the
+  current search, check-in and assigned-hall filters. Every download rereads saved
+  form metadata and all response pages (500 rows by stable ID); a failed read or
+  empty scope never falls back to the whole list or produces a partial file.
+  Managed-session arrivals count once per guest. Columns contain the actual form
+  questions plus STT/registration/check-in metadata and configured session details.
+  Email/hall are not invented or duplicated; payment fields appear only when
+  `payment_config.enabled` is true. Choice answers use labels; phone numbers stay
+  text, and face/signature fields export presence only. ExcelJS is loaded only on
+  an Excel download and writes styled/wrapped headers, alternating rows, bounded
+  column widths, frozen header/STT, filters and landscape print settings. CSV stays
+  UTF-8 with BOM, quoted fields and formula-safe text. No SQL migration.
+  Regression: `node --test scripts/test-report-export.cjs`; browser downloads:
+  `node scripts/test-report-export-ui.cjs` (port 3107, CHECKIN_TEST_DEPS for
+  Playwright, optional PLAYWRIGHT_CHANNEL=msedge). Synthetic data/mock auth and
+  APIs only; tests read actual XLSX/CSV, fresh settings/check-ins, session/hall
+  filters, formatting, 1,201 registrations, partial failures and desktop/mobile.
+
 - Editor sortable question cards must remain direct children of the question
   list: `restrictToParentElement` otherwise locks dragging inside a card wrapper.
   CME scroll/focus uses the same sortable root. Regression: start on port 3109,
