@@ -1508,3 +1508,143 @@
     animation: none !important;
   }
 }
+
+/* Demo video (sits between the intro strip and the guest journey) */
+.demo {
+  padding-block: var(--sc-section);
+  background: #fff;
+  color: #173b4a;
+}
+.demoHeading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 48px;
+}
+.demoHeading .eyebrow {
+  color: #407384;
+  font-size: 10px;
+  margin-bottom: 17px;
+}
+.home .demoHeading h2 {
+  font-size: clamp(30px, 3.2vw, 43px);
+  line-height: 1.4;
+  letter-spacing: -1.4px;
+  font-weight: 600;
+}
+.demoHeading h2 span {
+  color: #62808b;
+}
+.demoHeading > p {
+  max-width: 300px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: #53717f;
+  padding-bottom: 8px;
+}
+.demoFrame {
+  position: relative;
+  margin-top: 42px;
+  aspect-ratio: 16 / 9;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #0c202d;
+  box-shadow:
+    0 30px 70px rgba(12, 32, 45, 0.18),
+    0 0 0 1px rgba(12, 32, 45, 0.06);
+}
+.demoVideo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #0c202d;
+}
+.demoPlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  border: 0;
+  padding: clamp(18px, 3.2vw, 40px);
+  background: linear-gradient(180deg, rgba(12, 32, 45, 0) 55%, rgba(12, 32, 45, 0.55));
+  color: #f3f8fa;
+  text-align: left;
+}
+.demoPlayInner {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+}
+.demoPlayIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #80dce4;
+  color: #102d3a;
+  box-shadow: 0 16px 40px rgba(12, 32, 45, 0.35);
+  transition: transform 180ms var(--sc-ease-out);
+}
+.demoPlayIcon svg {
+  margin-left: 4px;
+}
+.demoPlayLabel {
+  padding: 8px 15px;
+  border-radius: 999px;
+  background: rgba(12, 32, 45, 0.7);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .demoPlay:hover .demoPlayIcon {
+    transform: scale(1.06);
+  }
+}
+@media (max-width: 999px) {
+  .demoHeading {
+    gap: 30px;
+  }
+  .demoHeading > p {
+    max-width: 240px;
+  }
+}
+@media (max-width: 699px) {
+  .home .demoHeading h2 {
+    font-size: 27px;
+    letter-spacing: -0.9px;
+    line-height: 1.5;
+  }
+  .demoHeading {
+    display: block;
+  }
+  .demoHeading > p {
+    max-width: 320px;
+    margin-top: 18px;
+    padding-bottom: 0;
+    font-size: 12px;
+  }
+  .demoFrame {
+    margin-top: 28px;
+    border-radius: 12px;
+  }
+  .demoPlayInner {
+    gap: 10px;
+  }
+  .demoPlayIcon {
+    width: 48px;
+    height: 48px;
+  }
+  .demoPlayIcon svg {
+    width: 18px;
+    height: 18px;
+  }
+  .demoPlayLabel {
+    padding: 6px 11px;
+    font-size: 12px;
+  }
+}

@@ -18,6 +18,7 @@ import {
   Heart,
   Mail,
   Menu,
+  Play,
   QrCode,
   ScanFace,
   ScanLine,
@@ -74,6 +75,8 @@ export default function HomePage() {
   const rootRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const galleryRef = useRef<HTMLDivElement>(null);
+  const demoRef = useRef<HTMLVideoElement>(null);
+  const [demoStarted, setDemoStarted] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [runtimeReady, setRuntimeReady] = useState(false);
@@ -113,6 +116,14 @@ export default function HomePage() {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [menuOpen]);
+
+  function playDemo() {
+    const video = demoRef.current;
+    if (!video) return;
+    setDemoStarted(true);
+    // Started by the visitor's click, so the clip can play with its sound.
+    void video.play().catch(() => undefined);
+  }
 
   function moveGallery(direction: number) {
     const rail = galleryRef.current;
@@ -340,6 +351,58 @@ export default function HomePage() {
             <span>
               <BarChart3 size={18} /> Sau sự kiện
             </span>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="demo"
+        className={styles.demo}
+        aria-labelledby="demo-heading"
+      >
+        <div className={styles.container}>
+          <div className={styles.demoHeading} data-sc-in>
+            <div>
+              <p className={styles.eyebrow}>
+                <span /> VIDEO GIỚI THIỆU · 1 PHÚT
+              </p>
+              <h2 id="demo-heading">
+                Xem trong một phút.
+                <br />
+                <span>Từ đăng ký đến lời chào.</span>
+              </h2>
+            </div>
+            <p>
+              Form đăng ký, thư mời kèm mã QR, check-in tại quầy và báo cáo
+              trực tiếp — trong cùng một nền tảng.
+            </p>
+          </div>
+          <div className={styles.demoFrame} data-sc-in>
+            <video
+              ref={demoRef}
+              className={styles.demoVideo}
+              src="/landing/intro-demo.mp4"
+              poster="/landing/intro-demo-poster.webp"
+              preload="none"
+              playsInline
+              controls={demoStarted}
+              aria-label="Video giới thiệu I-solution Manager, dài 1 phút"
+            />
+            {!demoStarted && (
+              <button
+                type="button"
+                className={styles.demoPlay}
+                onClick={playDemo}
+                aria-label="Phát video giới thiệu dài 1 phút"
+              >
+                <span className={styles.demoPlayInner}>
+                  <span className={styles.demoPlayIcon}>
+                    <Play size={28} fill="currentColor" strokeWidth={0} />
+                  </span>
+                  <span className={styles.demoPlayLabel}>Xem video · 1:00</span>
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </section>
