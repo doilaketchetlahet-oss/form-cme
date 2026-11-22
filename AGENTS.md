@@ -123,6 +123,24 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
 - Regression: `node --test scripts/test-checkin-sessions.cjs`; optional real
   PostgreSQL/React checks are documented at the top of that script.
 
+- General (non-session) check-in also goes through `/api/checkin/[surveyId]`
+  with `mode: "general"` (QR scan, manual/bulk on the attendee list, VIP Face).
+  The server checks PIN/admin like session mode, refuses unpaid registrations,
+  uses server time, keeps the first `checked_in_at` (update only where
+  `checked_in = false`), writes the log and returns an error instead of a false
+  welcome when the write fails. Forms with `sessionConfig` get `session_required`.
+  Bulk accepts up to 150 ids per request (client chunks). Already-checked-in
+  guests show no re-confirm button except at a per-hall counter, which still logs
+  the hall entry. Regression: `node --test scripts/test-checkin-sessions.cjs`.
+- The scanner handles one lookup at a time (a second code never replaces an open
+  confirmation), reports lookup/network errors separately from unknown codes,
+  only accepts full `/checkin/<uuid>` links, and pages session counters by id
+  (500/page, every 15s, paused while the tab is hidden) instead of hitting the
+  1,000-row API cap.
+- Public registration with an email that already registered no longer shows the
+  existing registration's QR (an entry credential) and never attaches the new
+  browser's face to it; the screen points to the registered mailbox/organizers.
+
 ### Excel attendance / CME and one QR
 
 - Form editor Check-in tab can add the optional “Đăng ký cấp CME” Có/Không
@@ -355,6 +373,31 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   pagination, failed recipient reads, drag/resize/font autosave, queued edits and
   save-error retry. No real email or storage writes.
 
+## Invitation / QR email delivery
+
+- `sendCheckinEmail`: an admin's explicit `to` wins over the stored address;
+  registrations without a valid email fail early with a clear status. Starting a
+  new attempt (`pending`) clears `email_delivered_at/opened_at/bounced_at` and
+  `email_last_event`, so an old bounce no longer labels a corrected resend.
+- Template attachments that cannot be downloaded, exceed 10MB/file (same as the
+  editor) or 20MB total fail the email with the file name instead of silently
+  sending without them. Merge values are inserted literally (`$&`, `$'` in an
+  answer no longer corrupt the HTML). Combined overlay+blocks emails place the
+  invitation image inside `<body>`.
+- Resend requests carry an `Idempotency-Key` reused by the single retry, a 12s
+  timeout per attempt and omit an empty `reply_to`.
+- Form email save keeps an SMTP account chosen by another admin when it is
+  unchanged; email/PDF saves report 404 when no form row was updated.
+- `/api/cron/email-campaigns` claims a scheduled campaign before creating jobs
+  (overlapping runs cannot double-send), pages recipients by id, claims each job
+  via `attempts`, stops starting sends after ~40s, skips jobs of cancelled
+  campaigns and never relabels a cancelled campaign as sent.
+- The Resend webhook rejects signatures older than 5 minutes and invalid JSON.
+- Attendee list: badge printing escapes registrant text, CSV export neutralizes
+  formula cells, manual guests store `email`/`hall` columns, bulk QR emails
+  refresh the access token per message and authorization/cooldown refusals
+  (`expired`, `too_soon`) do not mark the email as failed.
+
 ## Standalone Resend / SMTP mail merge
 
 - `/admin/tools/mail-merge`: import Excel/CSV or paste a tab/comma/semicolon
@@ -543,6 +586,17 @@ This app is intended for its own Vercel, Supabase, and Resend projects.
   second draw. All API calls are mocked.
 
 - `/admin/tools/booth-draw` - booth lucky draw (admin); public at `/booth-draw`.
+  Booth availability = no current assignment (`booth_assignments`), in SQL and
+  UI alike: a booth vacated by "Chuyển sang gian trống" returns to the wheel, and
+  a booth held ("gán trước") for a company that has not drawn cannot be a move
+  target (`BOOTH_RESERVED`). The wheel leaves off booths held for other undrawn
+  companies (they can never be won); the selected company's own held booth
+  stays, and the counters still show every free booth. Draw history (`booth_draw_results`) may list a booth
+  twice. Existing projects run `supabase/booth-draw-reuse-booths.sql` once,
+  together with deploying the code. A free-session passcode only acts on its own
+  session (never `create_session`). The shared map `/booth-map/[token]`
+  refreshes every 30s while visible and keeps the map image while its signed URL
+  is fresh. Regression: `node --test scripts/test-booth-draw.cjs`.
 - `/admin/tools/flap` - MC console for the "Lắc điện thoại, Đại bàng tung cánh"
   team game; creates a room, shows the join QR and the LED board link.
 - `/flap/[code]` - player screen (shakes the phone; falls back to tap when the

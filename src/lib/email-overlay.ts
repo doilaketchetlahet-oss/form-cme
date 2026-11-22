@@ -138,8 +138,8 @@ export async function composeInviteImage(
     if (!Number.isInteger(overlay.width) || !Number.isInteger(overlay.height) || overlay.width < 1 || overlay.height < 1 || overlay.width * overlay.height > 16_000_000) throw new Error("Kích thước thiệp không hợp lệ.");
     image = sharp({ create: { width: overlay.width, height: overlay.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
   } else {
-    const response = await fetch(overlay.imageUrl);
-    if (!response.ok) throw new Error("Không tải được ảnh thiệp.");
+    const response = await fetch(overlay.imageUrl, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+    if (!response?.ok) throw new Error("Không tải được ảnh thiệp.");
     image = sharp(Buffer.from(await response.arrayBuffer()), { failOn: "none" }).rotate();
   }
   const meta = await image.metadata();
@@ -205,28 +205,32 @@ export type ResendAttachment = {
   contentType?: string;
 };
 
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+// Matches the 10MB/file limit of EmailAttachmentEditor (previously 8MB here,
+// which silently dropped 8–10MB files the editor had accepted).
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
+/**
+ * Download the template's shared files. Any missing, oversized or unreachable
+ * file throws a message naming it, so the caller can mark the email failed
+ * instead of delivering an invitation without its attachment.
+ */
 export async function fetchFileAttachments(list: EmailAttachment[]): Promise<ResendAttachment[]> {
+  if (list.length > 10) throw new Error("Thư chỉ được đính kèm tối đa 10 tệp. Bỏ bớt tệp trong mẫu thư.");
   const result: ResendAttachment[] = [];
   let total = 0;
-  for (const attachment of list.slice(0, 10)) {
-    try {
-      const response = await fetch(attachment.url);
-      if (!response.ok) continue;
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > MAX_FILE_BYTES) continue;
-      total += buffer.length;
-      if (total > MAX_TOTAL_BYTES) break;
-      result.push({
-        filename: attachment.name,
-        content: buffer.toString("base64"),
-        contentType: attachment.type || undefined,
-      });
-    } catch {
-      continue;
-    }
+  for (const attachment of list) {
+    const response = await fetch(attachment.url, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+    if (!response?.ok) throw new Error(`Không tải được tệp đính kèm “${attachment.name}”. Kiểm tra lại tệp trong mẫu thư.`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_FILE_BYTES) throw new Error(`Tệp đính kèm “${attachment.name}” vượt quá 10MB.`);
+    total += buffer.length;
+    if (total > MAX_TOTAL_BYTES) throw new Error("Tổng dung lượng tệp đính kèm vượt quá 20MB.");
+    result.push({
+      filename: attachment.name,
+      content: buffer.toString("base64"),
+      contentType: attachment.type || undefined,
+    });
   }
   return result;
 }

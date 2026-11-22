@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Building2,
@@ -66,13 +66,35 @@ export function PublicBoothMapView({ token }: { token: string }) {
   const [selectedBoothId, setSelectedBoothId] = useState("");
   const [copied, setCopied] = useState(false);
 
+  const mapUrlIssuedAt = useRef(0);
+
   useEffect(() => {
     let active = true;
-    loadSharedBoothMap(token)
-      .then((next) => { if (active) setData(next); })
-      .catch((reason) => { if (active) setError(errorText(reason)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    const load = (initial: boolean) => loadSharedBoothMap(token)
+      .then((next) => {
+        if (!active) return;
+        setData((previous) => {
+          // Keep the already-loaded map image while it is the same file and its
+          // signed URL (valid 4h) is still fresh; a new URL every refresh would
+          // re-download a large image for every viewer.
+          const samePath = (url: string | null) => url?.split("?")[0] ?? null;
+          if (previous?.mapUrl && next.mapUrl && samePath(previous.mapUrl) === samePath(next.mapUrl)
+            && Date.now() - mapUrlIssuedAt.current < 3 * 60 * 60 * 1000) {
+            return { ...next, mapUrl: previous.mapUrl };
+          }
+          mapUrlIssuedAt.current = Date.now();
+          return next;
+        });
+      })
+      .catch((reason) => { if (active && initial) setError(errorText(reason)); })
+      .finally(() => { if (active && initial) setLoading(false); });
+    void load(true);
+    // Guests often keep this page open during the live draw: refresh results
+    // every 30s while the tab is visible (a failed refresh keeps the last data).
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load(false);
+    }, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [token]);
 
   const lookup = useMemo(() => {

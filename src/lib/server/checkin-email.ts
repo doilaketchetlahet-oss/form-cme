@@ -52,15 +52,23 @@ export async function markEmailStatus(
   if (providerMessageId) patch.resend_email_id = providerMessageId;
   if (provider) patch.email_provider = provider;
   if (status === "sent") patch.email_last_event = "sent";
+  if (status === "pending") {
+    // A new message starts clean: delivered/opened/bounced belonged to the
+    // previous one (e.g. a bounce before the address was corrected).
+    patch.email_last_event = null;
+    patch.email_delivered_at = null;
+    patch.email_opened_at = null;
+    patch.email_bounced_at = null;
+  }
 
   const { error: updateError } = await supabase.from("survey_responses").update(patch).eq("id", responseId);
 
   if (updateError) {
     // Retry without columns that may not exist on older projects.
     const fallback: Record<string, string | null> = { ...patch };
-    delete fallback.resend_email_id;
-    delete fallback.email_provider;
-    delete fallback.email_last_event;
+    for (const column of ["resend_email_id", "email_provider", "email_last_event", "email_delivered_at", "email_opened_at", "email_bounced_at"]) {
+      delete fallback[column];
+    }
     await supabase.from("survey_responses").update(fallback).eq("id", responseId);
   }
 }
@@ -196,7 +204,9 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       resolvedSurveyId = response.survey_id as string;
       resolvedAnswers = (response.answers ?? resolvedAnswers) as Record<string, unknown>;
       resolvedHall = response.hall || resolvedHall;
-      resolvedEmail = response.email || resolvedEmail;
+      // An explicit recipient (only a verified admin can pass one) wins over the
+      // stored address; otherwise the registration's own email is used.
+      resolvedEmail = resolvedEmail.trim() || response.email || "";
       let { data: survey } = await supabase
         .from("surveys")
         .select("title, email_subject, email_body, checkin_theme, email_provider, pdf_template, pdf_attach_email, smtp_account_id")
@@ -240,6 +250,12 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
       // a name before loading question labels (e.g. payment confirmations).
       resolvedName = findAttendeeName(resolvedAnswers, questions);
     }
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) {
+    const detail = resolvedEmail ? `Địa chỉ email không hợp lệ: ${resolvedEmail}` : "Đăng ký này chưa có email.";
+    await markEmailStatus(responseId, "failed", detail);
+    return { ok: false, messageId: null, provider: resolveProvider(providerOverride), error: detail };
   }
 
   const isReminder = mode === "reminder";
@@ -295,7 +311,14 @@ export async function sendCheckinEmail(input: SendCheckinEmailInput): Promise<Se
     }
   }
   if (template.attachments && template.attachments.length > 0) {
-    attachments.push(...await fetchFileAttachments(template.attachments));
+    try {
+      attachments.push(...await fetchFileAttachments(template.attachments));
+    } catch (error) {
+      // Never send an invitation silently missing the program/agenda file.
+      const detail = error instanceof Error ? error.message : "Không tải được tệp đính kèm.";
+      await markEmailStatus(responseId, "failed", detail);
+      return { ok: false, messageId: null, provider: resolveProvider(providerOverride), error: detail };
+    }
   }
 
   // Personalized invitation PDF (background + name + QR) attached per recipient.

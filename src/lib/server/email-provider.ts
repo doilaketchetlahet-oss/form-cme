@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import type { SmtpAccount } from "@/lib/mail-merge";
 import { sendMergeSmtp } from "./mail-merge-smtp";
@@ -69,7 +70,8 @@ async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
   const payload = JSON.stringify({
     from: email.from,
     to: [email.to],
-    reply_to: email.replyTo,
+    // An empty reply_to (no RESEND_REPLY_TO configured) is not a valid address.
+    ...(email.replyTo?.trim() ? { reply_to: email.replyTo.trim() } : {}),
     subject: email.subject,
     html: email.html,
     text: email.text,
@@ -77,21 +79,33 @@ async function sendViaResend(email: OutgoingEmail): Promise<SendResult> {
     headers: email.headers,
   });
 
+  // The same key on the retry lets Resend drop the duplicate if the first
+  // attempt was accepted but its response was lost (timeout / 5xx).
+  const idempotencyKey = `form-cme/${randomUUID()}`;
   let lastError = "";
   // Resend can answer 429 (rate limit) or a transient 5xx; retry once.
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: payload,
-    });
+    let response: Response;
+    try {
+      response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+        body: payload,
+        // Keep both attempts inside the API route's 30-second budget.
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? `Không kết nối được Resend: ${error.message}` : "Không kết nối được Resend";
+      if (attempt === 0) { await new Promise((resolve) => setTimeout(resolve, 1500)); continue; }
+      break;
+    }
 
     if (response.ok) {
       const data = await response.json().catch(() => null);
       return { ok: true, messageId: (data?.id as string) ?? null, provider: "resend" };
     }
 
-    lastError = (await response.text()) || `HTTP ${response.status}`;
+    lastError = (await response.text().catch(() => "")) || `HTTP ${response.status}`;
     if (response.status !== 429 && response.status < 500) break;
     if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1500));
   }

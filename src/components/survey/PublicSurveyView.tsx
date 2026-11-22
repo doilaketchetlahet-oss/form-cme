@@ -290,7 +290,8 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
         return;
       }
 
-      if (paymentResult.responseId && faceDataRef.current) {
+      // Never attach this browser's face to an existing registration found by email.
+      if (paymentResult.responseId && faceDataRef.current && !paymentResult.duplicate) {
         saveFaceRegistration(supabase, {
           response_id: paymentResult.responseId,
           survey_id: survey.id,
@@ -333,8 +334,10 @@ export function PublicSurveyView({ surveyId, preview = false }: Props) {
       setIsDuplicate(!!result.duplicate);
       setSubmitted(true);
 
-      // Save face registration data if face_checkin question was answered
-      if (allowCheckin && result.responseId && faceDataRef.current) {
+      // Save face registration data if face_checkin question was answered.
+      // A duplicate email points at someone's existing registration: attaching
+      // this face to it would let another person pass VIP face check-in.
+      if (allowCheckin && result.responseId && faceDataRef.current && !result.duplicate) {
         saveFaceRegistration(supabase, {
           response_id: result.responseId,
           survey_id: survey.id,
@@ -828,11 +831,13 @@ function ThankYouScreen({
   const initialDelay = survey?.redirect_delay ?? 5;
   const [countdown, setCountdown] = useState(initialDelay);
 
-  // Build check-in QR data
-  const checkinUrl = allowCheckin && responseId && typeof window !== "undefined"
+  const duplicate = allowCheckin && isDuplicate;
+  // Build check-in QR data. A duplicate email may belong to someone else, so
+  // the existing registration's QR (an entry credential) is not shown here;
+  // it was emailed to the registered address.
+  const checkinUrl = allowCheckin && responseId && !duplicate && typeof window !== "undefined"
     ? buildPublicUrl(`/checkin/${responseId}`)
     : null;
-  const duplicate = allowCheckin && isDuplicate;
 
   useEffect(() => {
     if (!redirectUrl) return;
@@ -864,7 +869,7 @@ function ThankYouScreen({
         {duplicate ? "⚠️ Bạn đã đăng ký rồi!" : (survey?.thank_you_message || "Cảm ơn bạn đã phản hồi!")}
       </h2>
       <p className={`text-sm mb-6 ${duplicate ? "text-red-500 font-semibold" : "text-slate-600"}`}>
-        {duplicate ? "Email này đã đăng ký trước đó. Đây là mã QR check-in của bạn." : "Phản hồi của bạn đã được ghi nhận."}
+        {duplicate ? "Email này đã đăng ký trước đó. Mã QR check-in đã được gửi tới email đã đăng ký — vui lòng kiểm tra hộp thư (kể cả mục Spam). Cần gửi lại, vui lòng liên hệ ban tổ chức." : "Phản hồi của bạn đã được ghi nhận."}
       </p>
 
       {/* Check-in QR code */}

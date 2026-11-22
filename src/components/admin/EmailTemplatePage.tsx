@@ -395,6 +395,10 @@ export function EmailTemplatePage({ formId }: { formId: string }) {
                       className="admin-dark-select admin-field w-full rounded-xl px-4 py-3 text-sm focus:outline-none disabled:opacity-60"
                     >
                       <option value="">{loadingAccounts ? "Đang tải…" : "Chọn tài khoản…"}</option>
+                      {smtpAccountId && !loadingAccounts && !accounts.some((account) => account.id === smtpAccountId) && (
+                        // Chosen by another admin: the list only shows your own accounts.
+                        <option value={smtpAccountId}>Tài khoản đang dùng (do quản trị viên khác cấu hình)</option>
+                      )}
                       {accounts.map((account) => (
                         <option key={account.id} value={account.id}>{account.name} · {account.user}</option>
                       ))}

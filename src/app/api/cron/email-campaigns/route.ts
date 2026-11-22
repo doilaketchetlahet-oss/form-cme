@@ -8,6 +8,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const JOB_BATCH = 25;
+/** Stop starting new sends well before maxDuration so a batch is never killed
+ * mid-way (a killed run leaves sent jobs "pending" and they would be resent). */
+const TIME_BUDGET_MS = 40_000;
+const PAGE = 500;
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
   const secret = process.env.CRON_SECRET;
@@ -64,20 +68,26 @@ async function resolveRecipients(supabase: SupabaseClient, campaign: CampaignRow
   }
   if (surveyIds.length === 0) return [];
 
-  let rows: RecipientRow[] = [];
-  const full = await supabase
-    .from("survey_responses")
-    .select("id, checked_in, hall, payment_status, email")
-    .in("survey_id", surveyIds);
-  if (full.error) {
-    const basic = await supabase
-      .from("survey_responses")
-      .select("id, checked_in, hall, email")
-      .in("survey_id", surveyIds);
-    rows = (basic.data ?? []) as RecipientRow[];
-  } else {
-    rows = (full.data ?? []) as RecipientRow[];
-  }
+  // Page by id: a single request stops at PostgREST's row cap (1,000 by
+  // default), which silently dropped recipients from large events.
+  const readAll = async (columns: string) => {
+    const all: RecipientRow[] = [];
+    let after = "";
+    for (;;) {
+      let query = supabase.from("survey_responses").select(columns).in("survey_id", surveyIds).order("id").limit(PAGE);
+      if (after) query = query.gt("id", after);
+      const { data, error } = await query;
+      if (error) return { rows: all, error };
+      const page = (data ?? []) as unknown as RecipientRow[];
+      all.push(...page);
+      if (page.length !== PAGE || all.length >= 100_000) return { rows: all, error: null };
+      after = page[page.length - 1].id;
+    }
+  };
+  let result = await readAll("id, checked_in, hall, payment_status, email");
+  if (result.error) result = await readAll("id, checked_in, hall, email");
+  if (result.error) throw new Error("Không đọc được danh sách người nhận.");
+  const rows = result.rows;
 
   const filter = (campaign.filter ?? {}) as { notCheckedIn?: boolean; hall?: string; paymentStatus?: string };
   return rows
@@ -101,14 +111,31 @@ async function promoteScheduled(supabase: SupabaseClient, nowIso: string) {
 
   let promoted = 0;
   for (const campaign of (due ?? []) as CampaignRow[]) {
-    const responseIds = await resolveRecipients(supabase, campaign);
-    if (responseIds.length > 0) {
-      const jobs = responseIds.map((responseId) => ({
-        campaign_id: campaign.id,
-        response_id: responseId,
-        status: "pending" as const,
-      }));
-      await supabase.from("email_jobs").insert(jobs);
+    // Claim first: overlapping runs (GitHub Actions, Vercel cron, manual
+    // trigger) must not each create a job set and email everyone twice.
+    const { data: claimed } = await supabase
+      .from("email_campaigns")
+      .update({ status: "sending", updated_at: nowIso })
+      .eq("id", campaign.id)
+      .eq("status", "scheduled")
+      .select("id");
+    if (!claimed?.length) continue;
+
+    let responseIds: string[] = [];
+    try {
+      responseIds = await resolveRecipients(supabase, campaign);
+      for (let start = 0; start < responseIds.length; start += PAGE) {
+        const jobs = responseIds.slice(start, start + PAGE).map((responseId) => ({
+          campaign_id: campaign.id,
+          response_id: responseId,
+          status: "pending" as const,
+        }));
+        const { error } = await supabase.from("email_jobs").insert(jobs);
+        if (error) throw new Error(error.message);
+      }
+    } catch {
+      await supabase.from("email_campaigns").update({ status: "failed", updated_at: nowIso }).eq("id", campaign.id);
+      continue;
     }
     await supabase
       .from("email_campaigns")
@@ -123,7 +150,7 @@ async function promoteScheduled(supabase: SupabaseClient, nowIso: string) {
   return promoted;
 }
 
-async function processJobs(supabase: SupabaseClient, origin: string) {
+async function processJobs(supabase: SupabaseClient, origin: string, startedAt: number) {
   const { data: jobs } = await supabase
     .from("email_jobs")
     .select("id, campaign_id, response_id, attempts")
@@ -137,16 +164,36 @@ async function processJobs(supabase: SupabaseClient, origin: string) {
   const campaignIds = [...new Set(list.map((job) => job.campaign_id as string))];
   const { data: campaigns } = await supabase
     .from("email_campaigns")
-    .select("id, email_subject, email_body")
+    .select("id, email_subject, email_body, status")
     .in("id", campaignIds);
   const campaignById = new Map((campaigns ?? []).map((row) => [row.id as string, row]));
 
   let sent = 0;
   let failed = 0;
+  let processed = 0;
 
   for (const job of list) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) break;
     const responseId = job.response_id as string;
     const campaign = campaignById.get(job.campaign_id as string);
+    const attempts = (job.attempts as number) ?? 0;
+    if (!campaign || campaign.status === "cancelled") {
+      // "Huỷ" must actually stop the queue, not just relabel the campaign.
+      await supabase.from("email_jobs").update({ status: "skipped", last_error: "Chiến dịch đã huỷ" })
+        .eq("id", job.id).eq("status", "pending");
+      continue;
+    }
+
+    // Optimistic claim: only the run that bumps `attempts` sends this job.
+    const { data: claimed } = await supabase
+      .from("email_jobs")
+      .update({ attempts: attempts + 1 })
+      .eq("id", job.id)
+      .eq("status", "pending")
+      .eq("attempts", attempts)
+      .select("id");
+    if (!claimed?.length) continue;
+    processed += 1;
 
     const { data: response } = await supabase
       .from("survey_responses")
@@ -160,27 +207,32 @@ async function processJobs(supabase: SupabaseClient, origin: string) {
       continue;
     }
 
-    const result = await sendCheckinEmail({
-      responseId,
-      to,
-      checkinUrl: `${origin}/checkin/${responseId}`,
-      customSubject: campaign?.email_subject ?? "",
-      customBody: campaign?.email_body ?? "",
-      mode: "campaign",
-      origin,
-    });
+    let result: Awaited<ReturnType<typeof sendCheckinEmail>>;
+    try {
+      result = await sendCheckinEmail({
+        responseId,
+        to,
+        checkinUrl: `${origin}/checkin/${responseId}`,
+        customSubject: campaign?.email_subject ?? "",
+        customBody: campaign?.email_body ?? "",
+        mode: "campaign",
+        origin,
+      });
+    } catch (error) {
+      result = { ok: false, messageId: null, provider: "resend", error: error instanceof Error ? error.message : "Gửi thất bại" };
+    }
 
     if (result.ok) {
       sent += 1;
       await supabase
         .from("email_jobs")
-        .update({ status: "sent", sent_at: new Date().toISOString(), attempts: (job.attempts as number) + 1, last_error: null })
+        .update({ status: "sent", sent_at: new Date().toISOString(), last_error: null })
         .eq("id", job.id);
     } else {
       failed += 1;
       await supabase
         .from("email_jobs")
-        .update({ status: "failed", attempts: (job.attempts as number) + 1, last_error: result.error ?? "Gửi thất bại" })
+        .update({ status: "failed", last_error: result.error ?? "Gửi thất bại" })
         .eq("id", job.id);
     }
   }
@@ -198,11 +250,12 @@ async function processJobs(supabase: SupabaseClient, origin: string) {
       failed: failedCount ?? 0,
       updated_at: new Date().toISOString(),
     };
-    if (!pendingCount) patch.status = "sent";
     await supabase.from("email_campaigns").update(patch).eq("id", campaignId);
+    // Only a running campaign completes; a cancelled one keeps its status.
+    if (!pendingCount) await supabase.from("email_campaigns").update({ status: "sent" }).eq("id", campaignId).eq("status", "sending");
   }
 
-  return { processed: list.length, sent, failed };
+  return { processed, sent, failed };
 }
 
 export async function GET(request: NextRequest) {
@@ -218,8 +271,9 @@ export async function GET(request: NextRequest) {
   const nowIso = new Date().toISOString();
   const origin = getConfiguredSiteUrl() || request.nextUrl.origin;
 
+  const startedAt = Date.now();
   const promoted = await promoteScheduled(supabase, nowIso);
-  const processed = await processJobs(supabase, origin);
+  const processed = await processJobs(supabase, origin, startedAt);
 
   return NextResponse.json({ ok: true, promoted, ...processed });
 }

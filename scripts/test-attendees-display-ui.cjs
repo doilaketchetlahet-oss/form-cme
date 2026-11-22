@@ -161,6 +161,7 @@ async function run(viewport) {
     await addForm.getByRole('button', { name: 'Thêm vào danh sách' }).click();
     await page.getByRole('heading', { name: 'Thêm người mới' }).waitFor({ state: 'hidden' });
     assert.equal(savedRecords[0].answers.email, 'new-guest@example.test');
+    assert.equal(savedRecords[0].email, 'new-guest@example.test', 'Manual guests store the email column used for QR mail and duplicate checks');
     assert.equal(emails.length, 1, 'Adding a guest with an email must not send mail');
     assert.deepEqual(errors, []);
     assert.equal(writes.includes('DELETE'), false, 'Attendee operations must never issue a deletion while paused');

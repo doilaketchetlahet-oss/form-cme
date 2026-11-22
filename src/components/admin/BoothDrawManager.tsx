@@ -113,6 +113,16 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Có lỗi xảy ra.";
 }
 
+/** crypto.randomUUID only exists in secure contexts (https/localhost). */
+function newRequestKey() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function BoothDrawManager() {
   const { canManageForms } = useAdminAccess();
   return (
@@ -994,6 +1004,7 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh, onTrackSave }:
     const state = drag.current;
     if (!state || state.pointerId !== event.pointerId) return;
     drag.current = null;
+    if (state.nextX === state.x && state.nextY === state.y) return;
     const zone = localBooths.find((item) => item.id === state.id);
     if (zone) void saveZone({ ...zone, x: state.nextX, y: state.nextY });
   };
@@ -1056,7 +1067,7 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh, onTrackSave }:
           {canManage && current.session.status !== "finalized" && (
             <label className={cn(secondaryButton, "cursor-pointer")}>
               {uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} {current.mapUrl ? "Thay ảnh" : "Tải sơ đồ"}
-              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={uploading || busy} onChange={(event) => void upload(event.target.files?.[0])} />
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={uploading || busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void upload(file); }} />
             </label>
           )}
         </div>
@@ -1110,12 +1121,21 @@ function MapTab({ current, canManage, busy, setNotice, onRefresh, onTrackSave }:
 
 function ZoneField({ label, value, min = 0, max, disabled, onChange, onCommit }: { label: string; value: number; min?: number; max: number; disabled: boolean; onChange: (value: number) => void; onCommit: () => void }) {
   const safeMax = Math.max(min, max);
+  // While typing, show the raw text; reformatting to one decimal on every
+  // keystroke turned "12" into "1.0" and made multi-digit values impossible.
+  const [draft, setDraft] = useState<string | null>(null);
   const update = (raw: string) => {
-    if (raw === "") return;
+    setDraft(raw);
+    if (raw.trim() === "") return;
     const number = Number(raw);
     if (Number.isFinite(number)) onChange(Math.max(min, Math.min(safeMax, number)));
   };
-  return <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span><div className="grid grid-cols-[1fr_82px] items-center gap-3"><input type="range" value={value} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} className="w-full accent-sky-500" /><input type="number" value={Number(value).toFixed(1)} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => update(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit(); } }} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs font-semibold text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-50" /></div></label>;
+  const finish = () => {
+    if (draft === null) return;
+    setDraft(null);
+    onCommit();
+  };
+  return <label className="block"><span className="mb-1 block text-xs font-semibold text-slate-500">{label}</span><div className="grid grid-cols-[1fr_82px] items-center gap-3"><input type="range" value={value} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} onPointerUp={onCommit} onKeyUp={onCommit} className="w-full accent-sky-500" /><input type="number" value={draft ?? Number(value).toFixed(1)} min={min} max={safeMax} step="0.2" disabled={disabled} onChange={(event) => update(event.target.value)} onBlur={finish} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); finish(); } }} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs font-semibold text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-50" /></div></label>;
 }
 
 function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { current: BoothDrawState; canManage: boolean; busy: boolean; run: RunOperation; refresh: () => Promise<void>; waitForMapSaves: () => Promise<void> }) {
@@ -1132,10 +1152,20 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
   const pool = current.pools.find((item) => item.id === activePoolId);
   const assignedCompanies = useMemo(() => new Set(current.assignments.map((item) => item.company_id)), [current.assignments]);
   const assignedBooths = useMemo(() => new Set(current.assignments.map((item) => item.booth_id)), [current.assignments]);
-  const drawnBooths = useMemo(() => new Set(current.results.map((item) => item.booth_id)), [current.results]);
   const companies = current.companies.filter((item) => item.pool_id === activePoolId && item.active && !assignedCompanies.has(item.id));
-  const booths = current.booths.filter((item) => item.pool_id === activePoolId && item.active && !assignedBooths.has(item.id) && !drawnBooths.has(item.id));
+  // Same rule as draw_booth_for_company: a booth is available while no company
+  // occupies it, so a booth vacated by "chuyển gian" returns to the draw.
+  const freeBooths = current.booths.filter((item) => item.pool_id === activePoolId && item.active && !assignedBooths.has(item.id));
   const selectedCompanyId = companies.some((item) => item.id === companyId) ? companyId : companies[0]?.id ?? "";
+  // The wheel only shows booths this company can actually win: a booth held
+  // ("gán trước") for another company that has not drawn yet is never picked
+  // by draw_booth_for_company, so it is left off the wheel. The company's own
+  // held booth stays on it. Viewers never receive preferred_booth_id, so for
+  // them this is simply every free booth.
+  const heldForOthers = new Set(current.companies
+    .filter((item) => item.active && item.preferred_booth_id && item.id !== selectedCompanyId && !assignedCompanies.has(item.id))
+    .map((item) => item.preferred_booth_id));
+  const booths = freeBooths.filter((item) => !heldForOthers.has(item.id));
 
   useEffect(() => {
     const handleFullscreen = () => setFullscreen(document.fullscreenElement === drawScreenRef.current);
@@ -1157,7 +1187,7 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
     let result: BoothDrawRpcResult;
     try {
       await waitForMapSaves();
-      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult; results: BoothDrawRpcResult[] }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: crypto.randomUUID() }, apiOptions);
+      const response = await mutateBoothDraw<{ result: BoothDrawRpcResult; results: BoothDrawRpcResult[] }>({ action: "draw", sessionId: current.session.id, companyId: selectedCompanyId, requestKey: newRequestKey() }, apiOptions);
       result = response.result;
       if (!result) throw new Error("Không nhận được kết quả quay.");
       const selectedIndex = Math.max(0, booths.findIndex((item) => item.id === result.booth_id));
@@ -1188,7 +1218,7 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
   const poolStats = current.pools.map((item) => {
     const totalCompanies = current.companies.filter((company) => company.pool_id === item.id).length;
     const done = current.assignments.filter((assignment) => assignment.pool_id === item.id).length;
-    const available = current.booths.filter((booth) => booth.pool_id === item.id && !assignedBooths.has(booth.id) && !drawnBooths.has(booth.id)).length;
+    const available = current.booths.filter((booth) => booth.pool_id === item.id && booth.active && !assignedBooths.has(booth.id)).length;
     return { ...item, totalCompanies, done, available };
   });
 
@@ -1200,9 +1230,10 @@ function DrawTab({ current, canManage, busy, run, refresh, waitForMapSaves }: { 
           <div className="mt-4 space-y-4">
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Pool tài trợ</span><select value={activePoolId} onChange={(event) => { setPoolId(event.target.value); setCompanyId(""); }} className={fieldClass}>{current.pools.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label className="block"><span className="mb-1.5 block text-xs font-semibold text-slate-500">Công ty</span><select value={selectedCompanyId} onChange={(event) => setCompanyId(event.target.value)} className={fieldClass}><option value="">Chọn công ty…</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>
-            <div className="grid grid-cols-2 gap-3"><Metric value={companies.length} label="Công ty chưa quay" /><Metric value={booths.length} label="Gian còn lại" /></div>
-            {companies.length === 2 && booths.length === 2 && <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-700">Đây là lượt quay áp chót. Sau khi có kết quả, hệ thống sẽ tự gán gian còn lại cho công ty cuối và hiển thị cả hai vị trí.</p>}
-            {companies.length > booths.length && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-700">Pool {pool?.name} thiếu {companies.length - booths.length} gian hàng. Hãy bổ sung trước khi quay hết.</p>}
+            <div className="grid grid-cols-2 gap-3"><Metric value={companies.length} label="Công ty chưa quay" /><Metric value={freeBooths.length} label="Gian còn lại" /></div>
+            {companies.length === 2 && freeBooths.length === 2 && <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-700">Đây là lượt quay áp chót. Sau khi có kết quả, hệ thống sẽ tự gán gian còn lại cho công ty cuối và hiển thị cả hai vị trí.</p>}
+            {companies.length > freeBooths.length && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-700">Pool {pool?.name} thiếu {companies.length - freeBooths.length} gian hàng. Hãy bổ sung trước khi quay hết.</p>}
+            {selectedCompanyId && booths.length === 0 && freeBooths.length > 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-700">Các gian trống còn lại đều đang được giữ trước cho công ty khác. Hãy quay các công ty đó trước, hoặc bỏ gán trước ở tab Thiết lập.</p>}
             <button onClick={() => void spin()} disabled={!canManage || busy || spinning || !selectedCompanyId || booths.length === 0 || current.session.status === "finalized"} className={cn(primaryButton, "w-full py-3")}><Dices size={18} /> {spinning ? "Đang quay…" : "Quay gian hàng"}</button>
             {current.session.status === "finalized" && <p className="text-center text-xs text-slate-500">Phiên đã chốt, không thể quay thêm.</p>}
           </div>
@@ -1291,7 +1322,10 @@ function ExchangeTab({ current, canManage, busy, run, refresh }: { current: Boot
   const assignmentByCompany = useMemo(() => new Map(current.assignments.map((item) => [item.company_id, item])), [current.assignments]);
   const occupied = useMemo(() => new Set(current.assignments.map((item) => item.booth_id)), [current.assignments]);
   const poolAssignments = current.assignments.filter((item) => item.pool_id === activePoolId);
-  const emptyBooths = current.booths.filter((item) => item.pool_id === activePoolId && item.active && !occupied.has(item.id));
+  const reservedBooths = useMemo(() => new Set(current.companies
+    .filter((company) => company.active && company.preferred_booth_id && !assignmentByCompany.has(company.id))
+    .map((company) => company.preferred_booth_id)), [current.companies, assignmentByCompany]);
+  const emptyBooths = current.booths.filter((item) => item.pool_id === activePoolId && item.active && !occupied.has(item.id) && !reservedBooths.has(item.id));
 
   const submit = () => run(async () => {
     if (mode === "swap") {

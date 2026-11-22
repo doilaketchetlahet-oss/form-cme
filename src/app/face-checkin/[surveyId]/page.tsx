@@ -3,8 +3,7 @@ import { useEffect, useState } from "react";
 import { VIPFaceCheckin } from "@/components/ekyc/VIPFaceCheckin";
 import { PinGate } from "@/components/ui/PinGate";
 import { supabase } from "@/lib/supabase";
-import { logCheckinEvent } from "@/lib/checkinLogs";
-import { recordSessionCheckin } from "@/lib/session-checkin-client";
+import { recordGeneralCheckin, recordSessionCheckin } from "@/lib/session-checkin-client";
 import { normalizeSessionConfig, type CheckinSession } from "@/lib/checkin-sessions";
 
 function getInitialFaceCheckinQuery() {
@@ -60,11 +59,10 @@ function VIPFaceCheckinInner({ surveyId, hall, session }: { surveyId: string; ha
       const { data: form, error } = await supabase.from("surveys").select("checkin_theme").eq("id", surveyId).single();
       if (error) throw new Error("Không tải được cấu hình check-in.");
       if (normalizeSessionConfig(form?.checkin_theme?.sessionConfig)) throw new Error("Mở link VIP Face của từng buổi từ Danh sách khách.");
-      await supabase
-        .from("survey_responses")
-        .update({ checked_in: true, checked_in_at: new Date().toISOString() })
-        .eq("id", responseId);
-      await logCheckinEvent({ surveyId, responseId, action: "checkin", method: "face", hall });
+      // Server-side: refuses unpaid registrations, keeps the first arrival time
+      // and reports a failed write instead of showing a false welcome.
+      const result = await recordGeneralCheckin(surveyId, responseId, "checkin", "face", hall);
+      if (!result.ok) throw new Error(result.error ?? "Chưa ghi nhận được check-in.");
     }
   };
 

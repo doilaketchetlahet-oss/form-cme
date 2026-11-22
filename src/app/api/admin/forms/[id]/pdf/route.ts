@@ -66,10 +66,11 @@ export async function POST(request: Request, context: RouteContext) {
   const update: Record<string, unknown> = { pdf_template: payload.pdf_template ?? null };
   if (typeof payload.pdf_attach_email === "boolean") update.pdf_attach_email = payload.pdf_attach_email;
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("surveys")
     .update(update)
-    .eq("id", surveyId);
+    .eq("id", surveyId)
+    .select("id");
 
   if (error) {
     const message = (error.message ?? "").toLowerCase();
@@ -80,6 +81,10 @@ export async function POST(request: Request, context: RouteContext) {
       }, { status: 400 });
     }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+  // RLS or a wrong id updates nothing without an error; never report that as saved.
+  if (!updated?.length) {
+    return NextResponse.json({ ok: false, error: "Không tìm thấy form hoặc bạn không có quyền sửa form này." }, { status: 404 });
   }
 
   return NextResponse.json({ ok: true });

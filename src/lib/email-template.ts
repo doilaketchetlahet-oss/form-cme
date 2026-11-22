@@ -433,15 +433,18 @@ export function fillMergeTokens(template: string, values: Record<string, string>
     : "";
 
   const safeQr = values.qr_image || escapeHtml(qrImgUrl);
+  // Replacement callbacks keep registrant text literal: a string replacement
+  // would expand "$&", "$'" or "$`" typed into an answer into template HTML.
   let result = template
-    .replace(/src=(["'])\{\{qr_url\}\}\1/g, `src=$1${safeQr}$1`)
-    .replace(/href=(["'])\{\{qr_url\}\}\1/g, `href=$1${safeQr}$1`)
-    .replace(/\{\{qr_image\}\}/g, safeQr)
-    .replace(/\{\{qr_url\}\}/g, qrImageHtml);
+    .replace(/src=(["'])\{\{qr_url\}\}\1/g, (_match, quote: string) => `src=${quote}${safeQr}${quote}`)
+    .replace(/href=(["'])\{\{qr_url\}\}\1/g, (_match, quote: string) => `href=${quote}${safeQr}${quote}`)
+    .replace(/\{\{qr_image\}\}/g, () => safeQr)
+    .replace(/\{\{qr_url\}\}/g, () => qrImageHtml);
 
   for (const [key, value] of Object.entries(values)) {
     if (key === "qr_image" || key === "qr_url") continue;
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), value);
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`\\{\\{${escapedKey}\\}\\}`, "g"), () => value);
   }
   return result;
 }

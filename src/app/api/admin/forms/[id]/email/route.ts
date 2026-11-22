@@ -61,18 +61,19 @@ export async function POST(request: Request, context: RouteContext) {
     ? payload.email_provider
     : null;
 
-  // Tài khoản SMTP phải tồn tại và thuộc đúng người đang lưu.
+  // Tài khoản SMTP mới chọn phải tồn tại và thuộc đúng người đang lưu.
   // Bảng smtp_accounts không mở cho trình duyệt nên phải kiểm tra bằng service role.
+  // Giữ nguyên tài khoản form đang dùng (do quản trị viên khác chọn) thì được phép,
+  // để người cùng quản lý form vẫn sửa được nội dung thư.
   let smtpAccountId: string | null = null;
   if (provider === "smtp" && payload.smtp_account_id) {
     const admin = createSupabaseAdmin();
+    const { data: current } = await supabase.from("surveys").select("smtp_account_id").eq("id", surveyId).maybeSingle();
+    const unchanged = (current as { smtp_account_id?: string | null } | null)?.smtp_account_id === payload.smtp_account_id;
     const { data: account } = admin
-      ? await admin
-          .from("smtp_accounts")
-          .select("id")
-          .eq("id", payload.smtp_account_id)
-          .eq("owner_email", email)
-          .maybeSingle()
+      ? await (unchanged
+          ? admin.from("smtp_accounts").select("id").eq("id", payload.smtp_account_id).maybeSingle()
+          : admin.from("smtp_accounts").select("id").eq("id", payload.smtp_account_id).eq("owner_email", email).maybeSingle())
       : { data: null };
     if (!account) {
       return NextResponse.json({ ok: false, error: "Tài khoản SMTP không tồn tại hoặc bạn không có quyền dùng." }, { status: 400 });
@@ -85,10 +86,11 @@ export async function POST(request: Request, context: RouteContext) {
     email_body: payload.email_body?.trim() || null,
   };
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("surveys")
     .update({ ...baseUpdate, email_provider: provider, smtp_account_id: smtpAccountId })
-    .eq("id", surveyId);
+    .eq("id", surveyId)
+    .select("id");
 
   if (error) {
     const message = (error.message ?? "").toLowerCase();
@@ -103,6 +105,9 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+  if (!updated?.length) {
+    return NextResponse.json({ ok: false, error: "Không tìm thấy form hoặc bạn không có quyền sửa form này." }, { status: 404 });
   }
 
   return NextResponse.json({ ok: true });

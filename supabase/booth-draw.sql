@@ -90,8 +90,7 @@ create table if not exists booth_draw_results (
   request_key uuid not null unique,
   drawn_by text,
   drawn_at timestamptz not null default now(),
-  unique (session_id, company_id),
-  unique (session_id, booth_id)
+  unique (session_id, company_id)
 );
 
 create table if not exists booth_assignments (
@@ -148,6 +147,12 @@ alter table booth_zones enable row level security;
 alter table booth_draw_results enable row level security;
 alter table booth_assignments enable row level security;
 alter table booth_exchange_logs enable row level security;
+
+-- A booth may appear in the draw history more than once: its first company
+-- can move away, after which the booth is drawn again. Current occupancy is
+-- enforced by booth_assignments (one company per booth).
+alter table booth_draw_results drop constraint if exists booth_draw_results_session_id_booth_id_key;
+create index if not exists idx_booth_draw_results_booth on booth_draw_results(session_id, booth_id);
 
 -- Draw one booth from the company's own pool. Locking the session serializes
 -- spins, while the unique constraints provide a final no-duplicate guard.
@@ -224,10 +229,6 @@ begin
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
       )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
-      )
     for update;
   else
     select z.* into v_booth
@@ -238,10 +239,6 @@ begin
       and not exists (
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
-      )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
       )
       and not exists (
         select 1
@@ -286,6 +283,8 @@ begin
 
   -- When this draw leaves exactly one company and one booth in the pool,
   -- assign that unavoidable final pairing in the same locked transaction.
+  -- Availability always means "no current assignment": a booth vacated by a
+  -- move returns to the draw instead of being lost.
   select count(*) into v_remaining_companies
   from booth_companies c
   where c.session_id = p_session_id
@@ -304,10 +303,6 @@ begin
     and not exists (
       select 1 from booth_assignments a
       where a.session_id = p_session_id and a.booth_id = z.id
-    )
-    and not exists (
-      select 1 from booth_draw_results r
-      where r.session_id = p_session_id and r.booth_id = z.id
     );
 
   if v_remaining_companies = 1 and v_remaining_booths = 1 then
@@ -331,10 +326,6 @@ begin
       and not exists (
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
-      )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
       )
     limit 1
     for update;
@@ -445,6 +436,18 @@ begin
     select 1 from booth_assignments
     where session_id = p_session_id and booth_id = p_target_booth_id
   ) then raise exception 'BOOTH_OCCUPIED'; end if;
+  -- A booth held for a company that has not drawn yet stays held.
+  if exists (
+    select 1 from booth_companies reserved
+    where reserved.session_id = p_session_id
+      and reserved.preferred_booth_id = p_target_booth_id
+      and reserved.active = true
+      and reserved.id <> p_company_id
+      and not exists (
+        select 1 from booth_assignments assigned
+        where assigned.session_id = p_session_id and assigned.company_id = reserved.id
+      )
+  ) then raise exception 'BOOTH_RESERVED'; end if;
 
   update booth_assignments
   set booth_id = p_target_booth_id, source = 'move', updated_by = p_actor, updated_at = now()

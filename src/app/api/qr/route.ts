@@ -3,6 +3,8 @@ import { qrRenderStyle, renderQrPng, renderQrSvg } from "@/lib/server/qr-image";
 
 export const runtime = "nodejs";
 
+const MAX_QR_DATA = 1024;
+
 export async function GET(request: NextRequest) {
   const value = request.nextUrl.searchParams.get("data");
   const sizeParam = Number(request.nextUrl.searchParams.get("size") || "220");
@@ -21,19 +23,28 @@ export async function GET(request: NextRequest) {
   if (!value) {
     return NextResponse.json({ error: "Missing QR data" }, { status: 400 });
   }
+  // Check-in links are ~80 characters; refuse oversized payloads instead of
+  // letting the encoder throw (500) or burning CPU on a public endpoint.
+  if (value.length > MAX_QR_DATA) {
+    return NextResponse.json({ error: "QR data too long" }, { status: 400 });
+  }
 
   const cacheHeaders = { "Cache-Control": "public, max-age=31536000, immutable" };
 
-  // Outlook on Windows cannot render SVG, so email clients use format=png.
-  if (format === "png") {
-    const png = await renderQrPng(value, size, style);
-    return new NextResponse(new Uint8Array(png), {
-      headers: { ...cacheHeaders, "Content-Type": "image/png" },
-    });
-  }
+  try {
+    // Outlook on Windows cannot render SVG, so email clients use format=png.
+    if (format === "png") {
+      const png = await renderQrPng(value, size, style);
+      return new NextResponse(new Uint8Array(png), {
+        headers: { ...cacheHeaders, "Content-Type": "image/png" },
+      });
+    }
 
-  const svg = await renderQrSvg(value, size, style);
-  return new NextResponse(svg, {
-    headers: { ...cacheHeaders, "Content-Type": "image/svg+xml; charset=utf-8" },
-  });
+    const svg = await renderQrSvg(value, size, style);
+    return new NextResponse(svg, {
+      headers: { ...cacheHeaders, "Content-Type": "image/svg+xml; charset=utf-8" },
+    });
+  } catch {
+    return NextResponse.json({ error: "Cannot render QR" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
 }

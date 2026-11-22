@@ -206,10 +206,18 @@ export async function renderCheckinEmailHtml(
 
   const template = parseEmailTemplate(source);
   const flags = getTemplateFlags(source);
-  const parts: string[] = [];
+  const overlay = flags.overlay && template.overlay?.imageUrl ? overlayEmailHtml() : "";
+  if (!flags.blocks) return fillMergeTokens(overlay, values, qrImgUrl);
 
-  if (flags.overlay && template.overlay?.imageUrl) parts.push(overlayEmailHtml());
-  if (flags.blocks) parts.push(await renderBlocksToHtml(template.blocks, template.theme, qrImgUrl));
-
-  return fillMergeTokens(parts.join(""), values, qrImgUrl);
+  let html = await renderBlocksToHtml(template.blocks, template.theme, qrImgUrl);
+  if (overlay) {
+    // Combined mode: place the invitation image inside <body>. Prepending it to
+    // the rendered document would put markup before <!DOCTYPE>/<html>, which
+    // some clients (Outlook desktop) drop or render inconsistently.
+    const body = html.match(/<body[^>]*>/i);
+    html = body && body.index !== undefined
+      ? `${html.slice(0, body.index + body[0].length)}${overlay}${html.slice(body.index + body[0].length)}`
+      : `${overlay}${html}`;
+  }
+  return fillMergeTokens(html, values, qrImgUrl);
 }

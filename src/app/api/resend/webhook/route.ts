@@ -26,6 +26,10 @@ function verifySvix(secret: string, headers: Headers, rawBody: string): boolean 
   const timestamp = headers.get("svix-timestamp");
   const signature = headers.get("svix-signature");
   if (!id || !timestamp || !signature) return false;
+  // Svix signs every delivery attempt with a fresh timestamp; rejecting old
+  // ones stops a captured request from being replayed later.
+  const sentAt = Number(timestamp);
+  if (!Number.isFinite(sentAt) || Math.abs(Date.now() / 1000 - sentAt) > 5 * 60) return false;
 
   const secretBytes = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
   const signedContent = `${id}.${timestamp}.${rawBody}`;
@@ -54,7 +58,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid signature" }, { status: 401 });
   }
 
-  const event = JSON.parse(rawBody) as ResendEvent;
+  let event: ResendEvent;
+  try {
+    event = JSON.parse(rawBody) as ResendEvent;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
   const messageId = event.data?.email_id;
 
   const supabase = createSupabaseAdmin();

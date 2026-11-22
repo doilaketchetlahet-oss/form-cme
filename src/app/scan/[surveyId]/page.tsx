@@ -6,11 +6,10 @@ import { supabase } from "@/lib/supabase";
 import { PinGate } from "@/components/ui/PinGate";
 import { CheckinThemeLayer } from "@/components/ui/CheckinThemeLayer";
 import type { CheckinTheme } from "@/lib/surveys";
-import { logCheckinEvent } from "@/lib/checkinLogs";
 import { useQrCamera } from "@/hooks/useQrCamera";
 import { useFullscreen } from "@/hooks/useFullscreen";
 import { canAttendSession, normalizeSessionConfig } from "@/lib/checkin-sessions";
-import { recordSessionCheckin } from "@/lib/session-checkin-client";
+import { recordGeneralCheckin, recordSessionCheckin } from "@/lib/session-checkin-client";
 import { assignedHallForDisplay, attendanceDetails, attendanceQuestionPriority, formatAttendanceAnswer, type DisplayQuestion } from "@/lib/attendance-display";
 import { findAttendeeName } from "@/lib/email-template";
 
@@ -38,6 +37,25 @@ interface PendingCheckin {
 
 function isPaymentSettled(status: unknown) {
   return !status || status === "not_required" || status === "paid";
+}
+
+const CHECKIN_URL_ID = /\/checkin\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i;
+const COUNT_PAGE = 500;
+
+/** Session counters need every registration, not PostgREST's default 1,000-row page. */
+async function fetchSessionRows(surveyId: string) {
+  const rows: { id: string; answers: Record<string, string | number | number[]> | null; hall: string | null; session_checkins: Record<string, string> | null }[] = [];
+  let after = "";
+  for (;;) {
+    let query = supabase.from("survey_responses").select("id, answers, hall, session_checkins").eq("survey_id", surveyId).order("id").limit(COUNT_PAGE);
+    if (after) query = query.gt("id", after);
+    const { data, error } = await query;
+    if (error || !data) return null;
+    rows.push(...data);
+    // A short (or oversized, if a proxy ignored the limit) page is the last one.
+    if (data.length !== COUNT_PAGE || rows.length >= 100_000) return rows;
+    after = data[data.length - 1].id;
+  }
 }
 
 interface ScanResult {
@@ -97,6 +115,16 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   const hallRef = useRef(initialQuery.hall);
   const sessionRef = useRef(initialQuery.session);
   const busyRef = useRef(false); // true while modal/welcome is showing — blocks scanning
+  const lookupRef = useRef(false); // one lookup at a time, so a later code never replaces the modal
+  const timersRef = useRef<number[]>([]);
+  const later = (callback: () => void, ms: number) => {
+    const timer = window.setTimeout(() => {
+      timersRef.current = timersRef.current.filter((item) => item !== timer);
+      callback();
+    }, ms);
+    timersRef.current.push(timer);
+  };
+  useEffect(() => () => { timersRef.current.forEach((timer) => window.clearTimeout(timer)); }, []);
 
   useEffect(() => { hallRef.current = hall; }, [hall]);
   useEffect(() => { sessionRef.current = session; }, [session]);
@@ -126,13 +154,15 @@ function ScanInner({ surveyId }: { surveyId: string }) {
   // Realtime counter
   useEffect(() => {
     if (!surveyId) return;
+    let active = true;
     const fetchCount = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       if (session) {
-        const { data: rows, error } = await supabase.from("survey_responses").select("answers, hall, session_checkins").eq("survey_id", surveyId);
-        if (error) return;
-        setAssignedHalls([...new Set((rows ?? []).map((row) => row.hall as string).filter(Boolean))].sort());
+        const rows = await fetchSessionRows(surveyId);
+        if (!rows || !active) return;
+        setAssignedHalls([...new Set(rows.map((row) => row.hall as string).filter(Boolean))].sort());
         const checksHall = !sessionConfig || sessionConfig.sessions.find((s) => s.id === session)?.checkHall;
-        const eligible = (rows ?? []).filter((row) => canAttendSession(sessionConfig, session, row.answers ?? {}) && (!checksHall || !hall || row.hall === hall));
+        const eligible = rows.filter((row) => canAttendSession(sessionConfig, session, row.answers ?? {}) && (!checksHall || !hall || row.hall === hall));
         setTotalCount(eligible.length);
         setCheckedCount(eligible.filter((row) => row.session_checkins?.[session]).length);
       } else {
@@ -140,15 +170,22 @@ function ScanInner({ surveyId }: { surveyId: string }) {
         if (hall) totalQ.eq("hall", hall);
         const checkedQ = supabase.from("survey_responses").select("*", { count: "exact", head: true }).eq("survey_id", surveyId).eq("checked_in", true);
         if (hall) checkedQ.eq("hall", hall);
-        const [{ count: total }, { count: checked }] = await Promise.all([totalQ, checkedQ]);
+        const [{ count: total, error: totalError }, { count: checked, error: checkedError }] = await Promise.all([totalQ, checkedQ]);
+        if (totalError || checkedError || !active) return;
         setTotalCount(total ?? 0);
         setCheckedCount(checked ?? 0);
       }
     };
-    fetchCount();
-    const interval = setInterval(fetchCount, 5000);
-    return () => clearInterval(interval);
+    void fetchCount();
+    // Session counters download every registration; poll them less often.
+    const interval = setInterval(fetchCount, session ? 15000 : 5000);
+    return () => { active = false; clearInterval(interval); };
   }, [surveyId, hall, session, sessionConfig]);
+
+  const showPending = (next: PendingCheckin) => {
+    busyRef.current = true;
+    setPending(next);
+  };
 
   const handleScan = async (responseId: string) => {
     if (!surveyReadyRef.current) return;
@@ -158,12 +195,17 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       setScanResult({ type: "error", message: "Mở link quét của từng buổi từ Danh sách khách trước khi check-in." });
       return;
     }
-    const { data: resp } = await supabase
+    const { data: resp, error: lookupError } = await supabase
       .from("survey_responses")
-      .select("id, survey_id, answers, checked_in, hall, session_checkins, payment_status")
+      .select("id, survey_id, answers, checked_in, checked_in_at, hall, session_checkins, payment_status")
       .eq("id", responseId)
-      .single();
+      .maybeSingle();
 
+    if (lookupError) {
+      playBeep(false);
+      setScanResult({ type: "error", message: "Không kiểm tra được mã. Kiểm tra kết nối mạng rồi quét lại." });
+      return;
+    }
     if (!resp) {
       playBeep(false);
       setScanResult({ type: "error", message: "Mã không hợp lệ — không tìm thấy" });
@@ -185,7 +227,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     const answersArr = attendanceDetails(questionsRef.current, resp, sessionConfigRef.current);
     const identityDetails = [...questionsRef.current].sort((a, b) => attendanceQuestionPriority(a) - attendanceQuestionPriority(b)).flatMap((question) => {
       const rank = attendanceQuestionPriority(question);
-      const value = resp.answers[question.id];
+      const value = resp.answers?.[question.id];
       return rank >= 1 && rank <= 3 && value != null && value !== ""
         ? [{ label: question.text, value: formatAttendanceAnswer(value, question) }] : [];
     });
@@ -197,7 +239,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     // Check hall mismatch (applies in both modes)
     if (!sessionConfigRef.current && currentHall && resp.hall && resp.hall !== currentHall) {
       playBeep(false);
-      setPending({ ...attendee, alreadyCheckedIn: false, wrongHall: resp.hall });
+      showPending({ ...attendee, alreadyCheckedIn: false, wrongHall: resp.hall });
       return;
     }
 
@@ -206,25 +248,25 @@ function ScanInner({ surveyId }: { surveyId: string }) {
       const result = await recordSessionCheckin(sid, responseId, currentSession, "preview", "qr", currentHall);
       if (!result.ok) {
         playBeep(false);
-        setPending({ ...attendee, alreadyCheckedIn: false, blockedReason: result.error ?? "Không được tham dự buổi này." });
+        showPending({ ...attendee, alreadyCheckedIn: false, blockedReason: result.error ?? "Không được tham dự buổi này." });
         return;
       }
       const alreadyInSession = result.code === "already";
       playBeep(!alreadyInSession);
-      setPending({ ...attendee, alreadyCheckedIn: alreadyInSession, checkedInAt: result.checkedInAt });
+      showPending({ ...attendee, alreadyCheckedIn: alreadyInSession, checkedInAt: result.checkedInAt });
       return;
     }
 
     // GENERAL/HALL MODE (original logic)
     if (resp.checked_in && !currentHall) {
       playBeep(false);
-      setPending({ ...attendee, alreadyCheckedIn: true });
+      showPending({ ...attendee, alreadyCheckedIn: true, checkedInAt: resp.checked_in_at });
     } else if (!resp.checked_in && currentHall) {
       playBeep(true);
-      setPending({ ...attendee, alreadyCheckedIn: false, notCheckedInGeneral: true });
+      showPending({ ...attendee, alreadyCheckedIn: false, notCheckedInGeneral: true });
     } else {
       playBeep(true);
-      setPending({ ...attendee, alreadyCheckedIn: false });
+      showPending({ ...attendee, alreadyCheckedIn: false });
     }
   };
 
@@ -233,53 +275,65 @@ function ScanInner({ surveyId }: { surveyId: string }) {
     setConfirming(true);
     const currentHall = hallRef.current;
     const currentSession = sessionRef.current;
+    const fail = (type: ScanResult["type"], message: string) => {
+      playBeep(false);
+      setScanResult({ type, message });
+      lastScannedRef.current = pending.responseId;
+      later(() => { lastScannedRef.current = ""; }, 3000);
+      setPending(null);
+      setConfirming(false);
+    };
 
-    if (currentSession) {
-      const result = await recordSessionCheckin(surveyId, pending.responseId, currentSession, "checkin", "qr", currentHall);
-      if (!result.ok || result.code === "already") {
-        playBeep(false);
-        setScanResult({ type: result.code === "already" ? "already" : "error", message: result.code === "already" ? "Đã check-in buổi này. Không ghi nhận thêm." : result.error ?? "Chưa ghi nhận được check-in." });
-        setPending(null);
-        setConfirming(false);
-        return;
-      }
-    } else {
-      // General/hall mode: update checked_in boolean
-      await supabase.from("survey_responses")
-        .update({ checked_in: true, checked_in_at: new Date().toISOString() })
-        .eq("id", pending.responseId);
-      await logCheckinEvent({ surveyId, responseId: pending.responseId, action: "checkin", method: "qr", hall: currentHall });
+    // Both modes go through the server: a failed write is never shown as success,
+    // and an earlier arrival time is never overwritten.
+    const result = currentSession
+      ? await recordSessionCheckin(surveyId, pending.responseId, currentSession, "checkin", "qr", currentHall)
+      : await recordGeneralCheckin(surveyId, pending.responseId, "checkin", "qr", currentHall);
+    if (!result.ok) return fail("error", result.error ?? "Chưa ghi nhận được check-in.");
+    if (result.code === "already" && (currentSession || !currentHall)) {
+      return fail("already", currentSession ? "Đã check-in buổi này. Không ghi nhận thêm." : "Đã check-in trước đó. Giữ nguyên giờ check-in đầu tiên.");
     }
 
-    setCheckedCount((c) => c + 1);
+    if (result.code === "checked_in") setCheckedCount((c) => c + 1);
     setConfirming(false);
     lastScannedRef.current = pending.responseId;
-    setTimeout(() => { lastScannedRef.current = ""; }, 3000);
+    later(() => { lastScannedRef.current = ""; }, 3000);
     setWelcome({ name: pending.name, hall: pending.assignedHall, details: pending.identityDetails });
-    setTimeout(() => setWelcome(null), 2000);
+    later(() => setWelcome(null), 2000);
     setPending(null);
   };
 
   const cancelCheckin = () => {
     if (pending) {
       lastScannedRef.current = pending.responseId;
-      setTimeout(() => { lastScannedRef.current = ""; }, 3000);
+      later(() => { lastScannedRef.current = ""; }, 3000);
     }
     setPending(null);
   };
 
   const handleScannedUrl = (url: string) => {
-    if (busyRef.current || !surveyReadyRef.current) return;
-    const match = url.match(/\/checkin\/([a-f0-9-]+)/i);
+    if (busyRef.current || lookupRef.current || !surveyReadyRef.current) return;
+    const match = url.match(CHECKIN_URL_ID);
     if (!match) {
-      if (url && url.length > 5) setScanResult({ type: "error", message: "Mã QR không phải mã check-in" });
+      if (url && url.length > 5 && url !== lastScannedRef.current) {
+        // Remember the foreign code briefly so it does not re-alert 6 times a second.
+        lastScannedRef.current = url;
+        later(() => { if (lastScannedRef.current === url) lastScannedRef.current = ""; }, 2000);
+        setScanResult({ type: "error", message: "Mã QR không phải mã check-in" });
+      }
       return;
     }
-    const responseId = match[1];
+    const responseId = match[1].toLowerCase();
     if (responseId === lastScannedRef.current) return;
     lastScannedRef.current = responseId;
-    setTimeout(() => { lastScannedRef.current = ""; }, 2000);
-    handleScan(responseId);
+    later(() => { if (lastScannedRef.current === responseId) lastScannedRef.current = ""; }, 2000);
+    lookupRef.current = true;
+    void handleScan(responseId)
+      .catch(() => {
+        playBeep(false);
+        setScanResult({ type: "error", message: "Không kiểm tra được mã. Kiểm tra kết nối mạng rồi quét lại." });
+      })
+      .finally(() => { lookupRef.current = false; });
   };
 
   const camera = useQrCamera(videoRef, handleScannedUrl, !!pending || !!welcome);
@@ -468,7 +522,7 @@ function ScanInner({ surveyId }: { surveyId: string }) {
                   className="flex-1 py-3 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors">
                   Đóng
                 </button>
-                {!pending.blockedReason && !pending.wrongHall && !(session && pending.alreadyCheckedIn) && (
+                {!pending.blockedReason && !pending.wrongHall && !pending.alreadyCheckedIn && (
                   <button onClick={confirmCheckin} disabled={confirming}
                     className="flex-1 py-3 rounded-xl text-sm font-bold text-on-brand bg-sky-600 hover:bg-sky-500 transition-colors">
                     {confirming ? "Đang ghi nhận…" : "✓ Check-in"}

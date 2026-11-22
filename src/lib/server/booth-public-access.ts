@@ -13,6 +13,13 @@ type AccessFailure = { error: string; status: number };
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
 
+// In-memory counters live as long as a warm server instance; drop expired
+// entries so a long-lived instance does not grow without bound.
+function pruneAttempts(now: number) {
+  if (attempts.size < 5000) return;
+  for (const [key, value] of attempts) if (value.resetAt <= now) attempts.delete(key);
+}
+
 function clientKey(request: Request, scope: string) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ip = forwarded || request.headers.get("x-real-ip") || "unknown";
@@ -22,6 +29,7 @@ function clientKey(request: Request, scope: string) {
 export function checkPublicBoothRateLimit(request: Request, scope: string, maximum: number, windowMs: number) {
   const key = clientKey(request, scope);
   const now = Date.now();
+  pruneAttempts(now);
   const current = attempts.get(key);
   if (!current || current.resetAt <= now) {
     attempts.set(key, { count: 1, resetAt: now + windowMs });

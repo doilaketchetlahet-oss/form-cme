@@ -136,6 +136,105 @@ test("API translates authoritative denial/window errors and never reports succes
   assert.ok(!(await failed.text()).includes("private database details"));
 });
 
+function generalHarness({ pin = null, sessionConfig = null, rows = [] } = {}) {
+  const db = { responses: rows.map((row) => ({ survey_id: surveyId, checked_in: false, checked_in_at: null, hall: null, payment_status: "not_required", ...row })), logs: [], updates: 0, failUpdate: false };
+  const service = {
+    from(table) {
+      const q = { filters: [], op: "select", patch: null, rows: null };
+      const run = async () => {
+        if (table === "surveys") return { data: [{ checkin_pin: pin, checkin_theme: sessionConfig ? { sessionsEnabled: true, sessionConfig } : {} }], error: null };
+        if (table === "checkin_logs") { db.logs.push(...q.rows); return { data: null, error: null }; }
+        const match = db.responses.filter((row) => q.filters.every((filter) => filter(row)));
+        if (q.op === "update") {
+          if (db.failUpdate) return { data: null, error: { message: "private database details" } };
+          db.updates++;
+          match.forEach((row) => Object.assign(row, q.patch));
+          return { data: match.map((row) => ({ id: row.id, checked_in_at: row.checked_in_at })), error: null };
+        }
+        return { data: match.map((row) => ({ ...row })), error: null };
+      };
+      const api = {
+        select() { return api; }, order() { return api; }, limit() { return api; },
+        eq(column, value) { q.filters.push((row) => row[column] === value); return api; },
+        in(column, values) { q.filters.push((row) => values.includes(row[column])); return api; },
+        update(patch) { q.op = "update"; q.patch = patch; return api; },
+        insert(rows) { q.op = "insert"; q.rows = rows; return api; },
+        async maybeSingle() { const result = await run(); return { data: Array.isArray(result.data) ? result.data[0] ?? null : result.data, error: result.error }; },
+        then(resolve, reject) { return run().then(resolve, reject); },
+      };
+      return api;
+    },
+    async rpc() { throw new Error("general check-in must not call the session RPC"); },
+  };
+  const route = loadSource("src/app/api/checkin/[surveyId]/route.ts", {
+    "@supabase/supabase-js": { createClient: () => service },
+    "@/lib/server/admin-api": { authorizeAdminApi: async () => ({ error: "denied" }) },
+    "@/lib/checkin-sessions": helpers,
+  });
+  return {
+    db,
+    async post(patch = {}) {
+      process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "test-only";
+      const response = await route.POST(new Request("https://example.test/api/checkin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "general", responseId, action: "checkin", method: "qr", ...patch }) }), { params: Promise.resolve({ surveyId }) });
+      return { status: response.status, body: await response.json() };
+    },
+  };
+}
+
+test("general check-in keeps the first arrival, refuses unpaid guests and never reports a failed write as success", async () => {
+  const unpaid = randomUUID(), other = randomUUID(), second = randomUUID();
+  const api = generalHarness({ rows: [{ id: responseId, hall: "A" }, { id: unpaid, payment_status: "pending" }, { id: other, survey_id: randomUUID() }, { id: second, checked_in: true, checked_in_at: "2026-10-06T01:00:00.000Z" }] });
+  for (const patch of [{ sessionId: "conference" }, { action: "preview" }, { method: "unknown" }, { responseId: "wrong" }, { responseId: undefined, responseIds: [] },
+    { responseId: undefined, responseIds: [responseId, responseId] }, { responseId: undefined, responseIds: Array.from({ length: 151 }, () => randomUUID()) },
+    { responseId: undefined, responseIds: [responseId], action: "undo" }, { hall: 5 }]) {
+    assert.equal((await api.post(patch)).status, 400, JSON.stringify(patch).slice(0, 80));
+  }
+  const first = await api.post();
+  assert.equal(first.status, 200);
+  assert.equal(first.body.code, "checked_in");
+  const firstAt = first.body.checkedInAt;
+  assert.ok(firstAt);
+  assert.deepEqual(api.db.logs.map(({ action, method, hall }) => ({ action, method, hall })), [{ action: "checkin", method: "qr", hall: null }]);
+  const again = await api.post();
+  assert.deepEqual([again.status, again.body.code, again.body.checkedInAt], [200, "already", firstAt]);
+  assert.equal(api.db.logs.length, 1, "A repeated general scan is not logged twice");
+  const hallEntry = await api.post({ hall: "A" });
+  assert.equal(hallEntry.body.code, "already");
+  assert.equal(api.db.logs.at(-1).hall, "A", "A per-hall counter still logs the hall entry");
+  assert.equal(api.db.responses[0].checked_in_at, firstAt);
+  assert.deepEqual([(await api.post({ responseId: unpaid })).status, api.db.responses[1].checked_in], [409, false]);
+  assert.equal((await api.post({ responseId: other })).status, 404);
+  assert.equal((await api.post({ responseId: randomUUID() })).status, 404);
+  const undo = await api.post({ action: "undo", method: "manual" });
+  assert.deepEqual([undo.status, undo.body.code, api.db.responses[0].checked_in, api.db.responses[0].checked_in_at], [200, "unchecked", false, null]);
+  assert.equal(api.db.logs.at(-1).action, "undo_checkin");
+  assert.equal(api.db.logs.at(-1).hall, "A", "Manual actions log the attendee's assigned hall");
+
+  const bulk = await api.post({ responseId: undefined, responseIds: [responseId, unpaid, other, second], method: "bulk" });
+  assert.equal(bulk.status, 200);
+  assert.deepEqual(Object.keys(bulk.body.checkedIn), [responseId]);
+  assert.deepEqual([bulk.body.already, bulk.body.skipped], [1, 2]);
+  assert.equal(api.db.responses[3].checked_in_at, "2026-10-06T01:00:00.000Z", "Bulk check-in never overwrites an earlier arrival");
+
+  api.db.responses[0].checked_in = false;
+  api.db.failUpdate = true;
+  const failed = await api.post();
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.ok, false);
+  assert.ok(!JSON.stringify(failed.body).includes("private database details"));
+});
+
+test("general check-in requires the PIN and is refused for forms with managed sessions", async () => {
+  const locked = generalHarness({ pin: "1234", rows: [{ id: responseId }] });
+  assert.equal((await locked.post({ pin: "0000" })).status, 403);
+  assert.equal(locked.db.updates, 0);
+  assert.equal((await locked.post({ pin: "1234" })).body.code, "checked_in");
+  const managed = generalHarness({ sessionConfig: config, rows: [{ id: responseId }] });
+  const refused = await managed.post();
+  assert.deepEqual([refused.status, refused.body.code, managed.db.updates], [409, "session_required", 0]);
+});
+
 const extraRequire = process.env.CHECKIN_TEST_DEPS ? createRequire(path.join(process.env.CHECKIN_TEST_DEPS, "package.json")) : null;
 test('form save refuses enabling hall checks before the new SQL exists, without changing the form', async () => {
   let writes = 0, probes = 0;

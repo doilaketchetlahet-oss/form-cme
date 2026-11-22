@@ -6,20 +6,33 @@ import { useConfirm } from "@/lib/ui/confirm";
 import { Users, UserCheck, Search, QrCode, Trash2, RotateCcw, Download, Plus, Save, X, Pencil, Printer, Mail, ShieldCheck, Upload, CreditCard, BarChart3 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { SurveyResponse } from "@/lib/surveys";
-import { logCheckinEvent, type CheckinLog } from "@/lib/checkinLogs";
+import type { CheckinLog } from "@/lib/checkinLogs";
 import { PinGate } from "@/components/ui/PinGate";
 import Link from "next/link";
 import { buildPublicUrl } from "@/lib/site-url";
 import { buildQrImagePath } from "@/lib/qr-style";
 import type { QRBranding } from "@/lib/surveys";
 import { arrivalSummary, canAttendSession, normalizeSessionConfig, sessionLabel, type CheckinSessionConfig } from "@/lib/checkin-sessions";
-import { recordSessionCheckin } from "@/lib/session-checkin-client";
+import { recordGeneralCheckin, recordGeneralCheckinBulk, recordSessionCheckin } from "@/lib/session-checkin-client";
 import { fetchBrandedQrPng, qrExportLabel, uniqueQrFilename } from "@/lib/qr-export";
 import { assignedHallForDisplay, attendanceQuestionPriority, formatAttendanceAnswer } from "@/lib/attendance-display";
 import { startAttendeeSync } from "@/lib/attendee-sync";
 
 // Temporary pause: restore this flag to re-enable both controls and handlers.
 const ATTENDEE_DELETION_ENABLED = false;
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Registrant-supplied text must never become markup in the badge print window. */
+function escapeHtml(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/** Spreadsheet apps execute cells starting with = + - @ as formulas. */
+function csvCell(value: string) {
+  const text = /^\s*[=+@-]/.test(value) ? `'${value}` : value;
+  return `"${text.replace(/"/g, '""')}"`;
+}
 
 export default function AttendeesPage({ params }: { params: Promise<{ surveyId: string }> }) {
   const [sid, setSid] = useState("");
@@ -180,10 +193,11 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       toast.error("Người này chưa hoàn tất thanh toán, chưa thể check-in.");
       return;
     }
-    await supabase.from("survey_responses").update({ checked_in: true, checked_in_at: new Date().toISOString() }).eq("id", id);
-    await logCheckinEvent({ surveyId, responseId: id, action: "checkin", method: "manual", hall: response?.hall });
+    const result = await recordGeneralCheckin(surveyId, id, "checkin", "manual", response?.hall);
+    if (!result.ok) { toast.error(result.error ?? "Chưa ghi nhận được check-in."); return; }
+    patchResponse(id, { checked_in: true, checked_in_at: result.checkedInAt ?? response?.checked_in_at ?? new Date().toISOString() });
+    if (result.code === "already") toast.info("Khách đã check-in trước đó; giữ nguyên giờ check-in đầu tiên.");
     if (selectedResponse?.id === id) await loadCheckinLogs(id);
-    setResponses((prev) => prev.map((r) => r.id === id ? { ...r, checked_in: true, checked_in_at: new Date().toISOString() } : r));
   };
 
   const undoCheckin = async (id: string) => {
@@ -193,10 +207,10 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       if (response) await toggleSession(response, sessionFilter);
       return;
     }
-    await supabase.from("survey_responses").update({ checked_in: false, checked_in_at: null }).eq("id", id);
-    await logCheckinEvent({ surveyId, responseId: id, action: "undo_checkin", method: "manual", hall: response?.hall });
+    const result = await recordGeneralCheckin(surveyId, id, "undo", "manual", response?.hall);
+    if (!result.ok) { toast.error(result.error ?? "Chưa huỷ được check-in."); return; }
+    patchResponse(id, { checked_in: false, checked_in_at: null });
     if (selectedResponse?.id === id) await loadCheckinLogs(id);
-    setResponses((prev) => prev.map((r) => r.id === id ? { ...r, checked_in: false, checked_in_at: null } : r));
   };
 
   const deleteResponse = async (id: string) => {
@@ -297,21 +311,32 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
 
   const addNew = async () => {
     const answers: SurveyResponse["answers"] = {};
+    let hall: string | null = null;
     for (const [key, raw] of Object.entries(newAnswers)) {
       const meta = questionMeta[key];
       answers[key] = meta?.type === "choice"
         ? meta.allowMultiple ? raw.split(",").filter(Boolean).map(Number) : raw === "" ? "" : Number(raw)
         : raw;
+      // Same columns as public registration/import: hall-checked sessions and
+      // QR emails read survey_responses.hall/email, not only the answers.
+      const value = answers[key];
+      if (meta?.isHall && typeof value === "number" && meta.options?.[value] !== undefined) hall = meta.options[value];
     }
-    const { data } = await supabase.from("survey_responses").insert({
+    const email = Object.values(answers)
+      .find((value): value is string => typeof value === "string" && EMAIL_PATTERN.test(value.trim()))?.trim().toLowerCase();
+    const { data, error } = await supabase.from("survey_responses").insert({
       survey_id: surveyId,
       answers,
+      ...(email ? { email } : {}),
+      ...(hall ? { hall } : {}),
     }).select("*").single();
-    if (data) {
-      setResponses((prev) => [data, ...prev.filter((r) => r.id !== data.id)]);
-      setShowAddForm(false);
-      setNewAnswers({});
+    if (error || !data) {
+      toast.error(error?.code === "23505" ? "Email này đã có trong danh sách đăng ký của form." : "Chưa thêm được khách. Vui lòng thử lại.");
+      return;
     }
+    setResponses((prev) => [data, ...prev.filter((r) => r.id !== data.id)]);
+    setShowAddForm(false);
+    setNewAnswers({});
   };
 
   const exportCSV = async (excel = false) => {
@@ -378,7 +403,7 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       } catch { toast.error("Không xuất được Excel. Vui lòng thử lại."); }
       return;
     }
-    const csv = [headers, ...rows].map((row) => row.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
     const bom = "\uFEFF";
     const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -551,13 +576,18 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       toast.warning("Các dòng đã chọn đều chưa hoàn tất thanh toán.");
       return;
     }
-    await Promise.all(ids.map((id) => supabase.from("survey_responses").update({ checked_in: true, checked_in_at: new Date().toISOString() }).eq("id", id)));
-    await Promise.all(ids.map((id) => {
-      const response = responses.find((r) => r.id === id);
-      return logCheckinEvent({ surveyId, responseId: id, action: "checkin", method: "bulk", hall: response?.hall });
-    }));
-    setResponses((prev) => prev.map((r) => ids.includes(r.id) ? { ...r, checked_in: true, checked_in_at: new Date().toISOString() } : r));
+    const result = await recordGeneralCheckinBulk(surveyId, ids);
+    const recorded = result.checkedIn;
+    setResponses((prev) => prev.map((r) => recorded[r.id] ? { ...r, checked_in: true, checked_in_at: recorded[r.id] } : r));
+    const count = Object.keys(recorded).length;
+    if (!result.ok) {
+      toast.error(`${result.error ?? "Chưa ghi nhận được check-in."} Đã ghi nhận ${count} khách trước khi lỗi.`);
+      return;
+    }
     setSelectedIds(new Set());
+    const notes = [result.already ? `${result.already} khách đã check-in trước đó` : "", result.skipped ? `${result.skipped} khách bị bỏ qua (chưa thanh toán hoặc không tồn tại)` : ""].filter(Boolean);
+    if (notes.length) toast.warning(`Đã check-in ${count} khách; ${notes.join("; ")}.`);
+    else toast.success(`Đã check-in ${count} khách.`);
   };
   const bulkAssignHall = async (hallName: string) => {
     const ids = [...selectedIds];
@@ -583,7 +613,17 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     setSelectedResponse((current) => current && ids.includes(current.id) ? null : current);
   };
 
-  const sendCheckinFor = async (response: SurveyResponse, email: string): Promise<boolean> => {
+  /** Authorization/cooldown refusals are not delivery failures: keep the email badge unchanged. */
+  const describeSendFailure = (status: number, body: { error?: string; detail?: string } | null) => ({
+    markFailed: status !== 403 && status !== 429,
+    text: body?.error === "expired"
+      ? "Chỉ tài khoản quản trị (owner/admin) đã đăng nhập mới gửi lại được QR cho đăng ký cũ."
+      : body?.error === "too_soon"
+        ? "Vừa gửi cho người này, vui lòng đợi một chút rồi thử lại."
+        : body?.detail || body?.error || "Gửi thất bại",
+  });
+
+  const sendCheckinFor = async (response: SurveyResponse, email: string): Promise<{ ok: boolean; error?: string }> => {
     setResending(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -599,11 +639,13 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       });
       if (res.ok) {
         await markEmailStatus(response.id, "sent");
-        return true;
+        return { ok: true };
       }
-      const body = await res.json().catch(() => null);
-      await markEmailStatus(response.id, "failed", body?.detail || body?.error || "Gửi thất bại");
-      return false;
+      const failure = describeSendFailure(res.status, await res.json().catch(() => null));
+      if (failure.markFailed) await markEmailStatus(response.id, "failed", failure.text);
+      return { ok: false, error: failure.text };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Mất kết nối, chưa gửi được." };
     } finally {
       setResending(false);
     }
@@ -612,9 +654,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
   const resendEmail = async (r: SurveyResponse) => {
     const email = findEmail(r);
     if (!email) { toast.error("Không tìm thấy email của người này."); return; }
-    const ok = await sendCheckinFor(r, email);
-    if (ok) toast.success(`Đã gửi lại QR đến ${email}`);
-    else toast.error("Gửi thất bại. Thử lại.");
+    const result = await sendCheckinFor(r, email);
+    if (result.ok) toast.success(`Đã gửi lại QR đến ${email}`);
+    else toast.error(`Gửi thất bại: ${result.error ?? "vui lòng thử lại."}`);
   };
 
   const sendBulkEmails = async (
@@ -625,40 +667,45 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
     if (targets.length === 0) { toast.error("Không có ai để gửi."); return; }
     if (!(await confirm({ title: label, description: `${targets.length} người? (Resend free: tối đa 100 email/ngày)`, confirmText: "Gửi" }))) return;
     setResending(true);
-    let sent = 0, failed = 0;
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    // Send sequentially to respect rate limits
-    for (const { r, email } of targets) {
-      try {
-        const res = await fetch("/api/send-checkin-email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            responseId: r.id,
-            to: email,
-            ...(mode === "reminder" ? { mode: "reminder" } : {}),
-          }),
-        });
-        if (res.ok) {
-          sent++;
-          await markEmailStatus(r.id, "sent");
-        } else {
+    let sent = 0, failed = 0, lastError = "";
+    try {
+      // Send sequentially to respect rate limits
+      for (const { r, email } of targets) {
+        try {
+          // Long batches outlive a 1-hour access token; getSession refreshes it.
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData.session?.access_token;
+          const res = await fetch("/api/send-checkin-email", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              responseId: r.id,
+              to: email,
+              ...(mode === "reminder" ? { mode: "reminder" } : {}),
+            }),
+          });
+          if (res.ok) {
+            sent++;
+            await markEmailStatus(r.id, "sent");
+          } else {
+            failed++;
+            const failure = describeSendFailure(res.status, await res.json().catch(() => null));
+            lastError = failure.text;
+            if (failure.markFailed) await markEmailStatus(r.id, "failed", failure.text);
+          }
+        } catch (error) {
           failed++;
-          const body = await res.json().catch(() => null);
-          await markEmailStatus(r.id, "failed", body?.detail || body?.error || "Gửi thất bại");
+          await markEmailStatus(r.id, "failed", error instanceof Error ? error.message : "Gửi thất bại");
         }
-      } catch (error) {
-        failed++;
-        await markEmailStatus(r.id, "failed", error instanceof Error ? error.message : "Gửi thất bại");
+        await new Promise((res) => setTimeout(res, 600)); // ~1.6/s to stay under limits
       }
-      await new Promise((res) => setTimeout(res, 600)); // ~1.6/s to stay under limits
+    } finally {
+      setResending(false);
     }
-    setResending(false);
-    if (failed > 0) toast.warning(`Đã gửi ${sent}. ${failed} thất bại.`);
+    if (failed > 0) toast.warning(`Đã gửi ${sent}. ${failed} thất bại${lastError ? ` (${lastError})` : ""}.`);
     else toast.success(`Đã gửi ${sent}.`);
   };
 
@@ -740,9 +787,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       .qr{margin:8px auto;display:block}
       @media print{body{padding:0}.badge{border:1px solid #000}}</style></head>
       <body><div class="badge">
-      <div class="name">${name}</div>
-      ${r.hall ? `<div class="hall">🏛 ${r.hall}</div>` : ""}
-      <img class="qr" src="${qrImg}" width="180" height="180" />
+      <div class="name">${escapeHtml(name)}</div>
+      ${r.hall ? `<div class="hall">🏛 ${escapeHtml(r.hall)}</div>` : ""}
+      <img class="qr" src="${escapeHtml(qrImg)}" width="180" height="180" />
       </div>
       <script>window.onload=function(){var img=document.querySelector('.qr');if(img.complete){window.print()}else{img.onload=function(){window.print()}}}<\/script>
       </body></html>`);
@@ -759,9 +806,9 @@ function AttendeesInner({ surveyId }: { surveyId: string }) {
       const checkinUrl = buildPublicUrl(`/checkin/${r.id}`);
       const qrImg = buildPublicUrl(buildQrImagePath(checkinUrl, 140, qrBranding));
       return `<div class="badge">
-        <div class="name">${name}</div>
-        ${r.hall ? `<div class="hall">🏛 ${r.hall}</div>` : '<div class="hall"></div>'}
-        <img class="qr" src="${qrImg}" width="140" height="140" />
+        <div class="name">${escapeHtml(name)}</div>
+        ${r.hall ? `<div class="hall">🏛 ${escapeHtml(r.hall)}</div>` : '<div class="hall"></div>'}
+        <img class="qr" src="${escapeHtml(qrImg)}" width="140" height="140" />
       </div>`;
     }).join("");
     w.document.write(`<!DOCTYPE html><html><head><title>Badges (${list.length})</title>

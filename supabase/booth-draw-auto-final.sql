@@ -20,6 +20,12 @@ create unique index if not exists idx_booth_companies_preferred_booth
   on booth_companies(session_id, preferred_booth_id)
   where preferred_booth_id is not null;
 
+-- A booth may appear in the draw history more than once: its first company
+-- can move away, after which the booth is drawn again. Current occupancy is
+-- enforced by booth_assignments (one company per booth).
+alter table booth_draw_results drop constraint if exists booth_draw_results_session_id_booth_id_key;
+create index if not exists idx_booth_draw_results_booth on booth_draw_results(session_id, booth_id);
+
 create or replace function draw_booth_for_company(
   p_session_id uuid,
   p_company_id uuid,
@@ -93,10 +99,6 @@ begin
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
       )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
-      )
     for update;
   else
     select z.* into v_booth
@@ -107,10 +109,6 @@ begin
       and not exists (
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
-      )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
       )
       and not exists (
         select 1
@@ -153,6 +151,10 @@ begin
   return query select v_result.id, v_company.id, v_company.name, v_booth.id,
     v_booth.booth_code, v_pool.id, v_pool.name, v_pool.color;
 
+  -- When this draw leaves exactly one company and one booth in the pool,
+  -- assign that unavoidable final pairing in the same locked transaction.
+  -- Availability always means "no current assignment": a booth vacated by a
+  -- move returns to the draw instead of being lost.
   select count(*) into v_remaining_companies
   from booth_companies c
   where c.session_id = p_session_id
@@ -171,10 +173,6 @@ begin
     and not exists (
       select 1 from booth_assignments a
       where a.session_id = p_session_id and a.booth_id = z.id
-    )
-    and not exists (
-      select 1 from booth_draw_results r
-      where r.session_id = p_session_id and r.booth_id = z.id
     );
 
   if v_remaining_companies = 1 and v_remaining_booths = 1 then
@@ -198,10 +196,6 @@ begin
       and not exists (
         select 1 from booth_assignments a
         where a.session_id = p_session_id and a.booth_id = z.id
-      )
-      and not exists (
-        select 1 from booth_draw_results r
-        where r.session_id = p_session_id and r.booth_id = z.id
       )
     limit 1
     for update;

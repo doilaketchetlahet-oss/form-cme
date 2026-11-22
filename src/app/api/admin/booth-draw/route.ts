@@ -21,6 +21,8 @@ const DEFAULT_POOLS = [
   { code: "BRONZE", name: "Đồng", color: "#b45309", sort_order: 50 },
 ] as const;
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const CUSTOM_POOL_COLORS = ["#38bdf8", "#8b5cf6", "#f59e0b", "#64748b", "#b45309", "#10b981", "#ec4899", "#0ea5e9"];
 
 function jsonError(error: string, status = 400) {
@@ -48,12 +50,16 @@ function databaseError(error: { code?: string; message?: string } | null | undef
   if (message.includes("POOL_MISMATCH")) return "Chỉ được đổi hoặc chuyển gian trong cùng pool.";
   if (message.includes("SAME_COMPANY")) return "Hãy chọn hai công ty khác nhau.";
   if (message.includes("BOOTH_OCCUPIED")) return "Gian hàng đích đã có công ty.";
+  if (message.includes("BOOTH_RESERVED")) return "Gian này đang được giữ trước cho một công ty chưa quay. Bỏ gán trước hoặc chọn gian khác.";
   if (message.includes("ASSIGNMENT_NOT_FOUND")) return "Công ty chưa có gian hàng để trao đổi.";
   if (message.includes("COMPANY_NOT_FOUND")) return "Không tìm thấy công ty trong phiên này.";
   if (message.includes("BOOTH_NOT_FOUND")) return "Không tìm thấy gian hàng trong phiên này.";
   if (message.includes("INVALID_SIZE")) return "Kích thước gian hàng không hợp lệ.";
   if (message.includes("violates foreign key constraint")) return "Dữ liệu đã được sử dụng và không thể xóa.";
-  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("passcode_lookup") || message.includes("share_token") || message.includes("starts_at") || message.includes("preferred_booth_id")) {
+  if (message.includes("preferred_booth_id")) {
+    return "Chưa cập nhật chức năng gán trước vị trí. Hãy chạy supabase/booth-draw-auto-final.sql.";
+  }
+  if (message.includes("access_mode") || message.includes("expires_at") || message.includes("passcode_hash") || message.includes("passcode_lookup") || message.includes("share_token") || message.includes("starts_at")) {
     return "Chưa cập nhật chức năng phiên công khai. Hãy chạy supabase/booth-draw-public.sql.";
   }
   return message;
@@ -373,6 +379,9 @@ export async function POST(request: Request) {
   }
 
   if (action === "create_session") {
+    // A passcode only unlocks its own free session; it must never create
+    // admin sessions attached to real events.
+    if (publicWrite) return jsonError("Passcode không có quyền tạo phiên quản trị.", 403);
     const eventId = cleanText(payload.eventId, 80);
     const name = cleanText(payload.name) || "Bốc thăm gian hàng";
     const seenPoolNames = new Set<string>();
@@ -593,11 +602,11 @@ export async function POST(request: Request) {
     if (!booth || !booth.active) return jsonError("Không tìm thấy gian hàng đang hoạt động.", 404);
     if (booth.pool_id !== company.pool_id) return jsonError("Chỉ được gán công ty vào gian hàng cùng pool.", 409);
 
-    const [{ data: boothAssignment }, { data: boothResult }] = await Promise.all([
-      auth.service.from("booth_assignments").select("id").eq("session_id", sessionId).eq("booth_id", boothId).maybeSingle(),
-      auth.service.from("booth_draw_results").select("id").eq("session_id", sessionId).eq("booth_id", boothId).maybeSingle(),
-    ]);
-    if (boothAssignment || boothResult) return jsonError("Gian hàng này đã có kết quả quay.", 409);
+    // Only current occupancy matters: a booth vacated by a move is free again
+    // (draw history may still mention it; see booth-draw-reuse-booths.sql).
+    const { data: boothAssignment } = await auth.service
+      .from("booth_assignments").select("id").eq("session_id", sessionId).eq("booth_id", boothId).maybeSingle();
+    if (boothAssignment) return jsonError("Gian hàng này đang có công ty.", 409);
 
     const { error } = await auth.service
       .from("booth_companies")
@@ -681,7 +690,7 @@ export async function POST(request: Request) {
   if (action === "draw") {
     const companyId = cleanText(payload.companyId, 80);
     const requestKey = cleanText(payload.requestKey, 80);
-    if (!companyId || !requestKey) return jsonError("Thiếu công ty hoặc mã lượt quay.");
+    if (!UUID_PATTERN.test(companyId) || !UUID_PATTERN.test(requestKey)) return jsonError("Thiếu công ty hoặc mã lượt quay.");
     const { data, error } = await auth.service.rpc("draw_booth_for_company", {
       p_session_id: sessionId,
       p_company_id: companyId,
